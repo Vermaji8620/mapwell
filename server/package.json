@@ -1,0 +1,25 @@
+{
+  "name": "mapwell-server",
+  "version": "1.0.0",
+  "description": "MapWell Geospatial Health Data Visualization and CHNA Backend API",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "seed": "node src/scripts/seed.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5",
+    "morgan": "^1.10.0",
+    "zod": "^3.24.1",
+    "csv-parser": "^3.2.0",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.3"
+  }
+}
