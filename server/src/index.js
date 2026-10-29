@@ -4,6 +4,18 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { connectDB } from './config/db.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { Jurisdiction } from './models/Jurisdiction.js';
+import { seedDatabase } from './scripts/seed.js';
+
+// Route Imports
+import jurisdictionRoutes from './routes/jurisdictionRoutes.js';
+import tractRoutes from './routes/tractRoutes.js';
+import analyticsRoutes from './routes/analyticsRoutes.js';
+import assessmentRoutes from './routes/assessmentRoutes.js';
+import findingRoutes from './routes/findingRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
+import dataManagementRoutes from './routes/dataManagementRoutes.js';
+import sessionRoutes from './routes/sessionRoutes.js';
 
 dotenv.config();
 
@@ -12,7 +24,7 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: '*', // Allow development and production origins
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -25,9 +37,20 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'MapWell Geospatial Health Platform API',
+    version: '1.0.0',
     timestamp: new Date().toISOString()
   });
 });
+
+// Mount Routes
+app.use('/api/jurisdictions', jurisdictionRoutes);
+app.use('/api/tracts', tractRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/assessments', assessmentRoutes);
+app.use('/api/findings', findingRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/data', dataManagementRoutes);
+app.use('/api/session', sessionRoutes);
 
 // Central Error Handler
 app.use(errorHandler);
@@ -36,9 +59,19 @@ app.use(errorHandler);
 async function startServer() {
   try {
     await connectDB();
-    app.listen(PORT, () => {
+
+    // Auto-seed if database is empty
+    const count = await Jurisdiction.countDocuments();
+    if (count === 0) {
+      console.log('[Auto-Seed] Database is empty. Running initial seed...');
+      await seedDatabase();
+    }
+
+    const server = app.listen(PORT, () => {
       console.log(`[MapWell Server Running] http://localhost:${PORT}`);
     });
+
+    return server;
   } catch (err) {
     console.error('[Startup Failure]:', err);
     process.exit(1);
