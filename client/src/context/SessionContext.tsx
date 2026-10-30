@@ -138,6 +138,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         updated = current.length >= 4 ? [...current.slice(1), geoid] : [...current, geoid];
       }
 
+      // Optimistic update so checkboxes and comparison tray respond immediately
+      setSession(prev => prev ? { ...prev, compareTracts: updated } : null);
+
       const res = await fetch('/api/session', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },

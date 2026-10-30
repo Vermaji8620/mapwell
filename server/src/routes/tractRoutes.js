@@ -53,70 +53,29 @@ router.get('/', async (req, res, next) => {
 });
 
 /**
- * GET /api/tracts/:geoid
- * Retrieve single tract details with county baseline comparisons
+ * Multi-tract side-by-side comparison handler (GET & POST)
+ * Supports query params ?ids=id1,id2 and body { tractIds: [...] }
  */
-router.get('/:geoid', async (req, res, next) => {
+const handleCompare = async (req, res, next) => {
   try {
-    const { geoid } = req.params;
-    const tract = await CensusTract.findById(geoid).lean();
-
-    if (!tract) {
-      return res.status(404).json({ error: `Census tract '${geoid}' not found.` });
+    let tractIds = req.body?.tractIds;
+    if (!tractIds && req.query.ids) {
+      tractIds = String(req.query.ids).split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (!tractIds && req.query.tractIds) {
+      tractIds = Array.isArray(req.query.tractIds) ? req.query.tractIds : String(req.query.tractIds).split(',').map(s => s.trim()).filter(Boolean);
     }
 
-    const county = await Jurisdiction.findById(tract.countyFips).lean();
-
-    // Attach indicator comparison against county
-    const comparison = {};
-    const coreMetrics = ['svi', 'poverty', 'uninsured', 'noVehicle', 'noDiploma', 'diabetes', 'asthma', 'lifeExp', 'access'];
-    
-    for (const key of coreMetrics) {
-      const meta = METRICS[key] || { bad: 'high' };
-      const tractVal = getMetricValue(tract, key);
-      const countyVal = county ? getMetricValue(county, key) : null;
-      const isWorse = meta.bad === 'low' ? tractVal < countyVal : tractVal > countyVal;
-
-      comparison[key] = {
-        tractValue: tractVal,
-        countyValue: countyVal,
-        isWorse
-      };
+    if (!Array.isArray(tractIds) || tractIds.length === 0) {
+      return res.json({ tracts: [], lifeExpGap: null, matrix: [] });
     }
 
-    res.json({
-      ...tract,
-      county,
-      comparison
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * POST /api/tracts/compare
- * Multi-tract side-by-side comparison (2 to 4 tracts)
- * Edge Case Guards:
- * - Rejects if fewer than 2 or more than 4 tracts are provided
- * - Computes life expectancy gap
- */
-router.post('/compare', async (req, res, next) => {
-  try {
-    const { tractIds } = req.body;
-
-    if (!Array.isArray(tractIds) || tractIds.length < 2 || tractIds.length > 4) {
-      return res.status(400).json({
-        error: 'Comparison requires between 2 and 4 tract IDs.'
-      });
-    }
-
-    const tracts = await CensusTract.find({ _id: { $in: tractIds } }).lean();
+    // Limit to max 4
+    const queryIds = tractIds.slice(0, 4);
+    const tracts = await CensusTract.find({ _id: { $in: queryIds } }).lean();
 
     if (tracts.length < 2) {
-      return res.status(404).json({
-        error: 'Could not find at least two of the specified tracts for comparison.'
-      });
+      return res.json({ tracts, lifeExpGap: null, matrix: [] });
     }
 
     // Life Expectancy Gap calculation
@@ -155,6 +114,55 @@ router.post('/compare', async (req, res, next) => {
       tracts,
       lifeExpGap,
       matrix
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Route: /api/tracts/compare
+ * MUST come before /:geoid to avoid param collision
+ */
+router.get('/compare', handleCompare);
+router.post('/compare', handleCompare);
+
+/**
+ * GET /api/tracts/:geoid
+ * Retrieve single tract details with county baseline comparisons
+ */
+router.get('/:geoid', async (req, res, next) => {
+  try {
+    const { geoid } = req.params;
+    const tract = await CensusTract.findById(geoid).lean();
+
+    if (!tract) {
+      return res.status(404).json({ error: `Census tract '${geoid}' not found.` });
+    }
+
+    const county = await Jurisdiction.findById(tract.countyFips).lean();
+
+    // Attach indicator comparison against county
+    const comparison = {};
+    const coreMetrics = ['svi', 'poverty', 'uninsured', 'noVehicle', 'noDiploma', 'diabetes', 'asthma', 'lifeExp', 'access'];
+    
+    for (const key of coreMetrics) {
+      const meta = METRICS[key] || { bad: 'high' };
+      const tractVal = getMetricValue(tract, key);
+      const countyVal = county ? getMetricValue(county, key) : null;
+      const isWorse = meta.bad === 'low' ? tractVal < countyVal : tractVal > countyVal;
+
+      comparison[key] = {
+        tractValue: tractVal,
+        countyValue: countyVal,
+        isWorse
+      };
+    }
+
+    res.json({
+      ...tract,
+      county,
+      comparison
     });
   } catch (err) {
     next(err);
