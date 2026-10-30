@@ -338,14 +338,14 @@ function CensusTractsContent() {
     }
   };
 
-  // Comparison metrics grouped multi-bar configuration
+  // Comparison metrics grouped multi-bar configuration (matching prototype)
   const compareMetrics = [
-    { key: 'poverty', label: 'Poverty %' },
-    { key: 'uninsured', label: 'Uninsured %' },
-    { key: 'noVehicle', label: 'No Vehicle %' },
-    { key: 'diabetes', label: 'Diabetes %' },
-    { key: 'asthma', label: 'Asthma %' },
-    { key: 'unemployment', label: 'Unemp %' }
+    { key: 'poverty', label: 'Poverty' },
+    { key: 'uninsured', label: 'Uninsured' },
+    { key: 'noVehicle', label: 'No vehicle' },
+    { key: 'diabetes', label: 'Diabetes' },
+    { key: 'asthma', label: 'Asthma' },
+    { key: 'unemployment', label: 'Unemployment' }
   ];
 
   const comparePalette = ['#2584EB', '#8B5CF6', '#F59E0B', '#F43F5E'];
@@ -882,9 +882,12 @@ function CensusTractsContent() {
                 series={comparedTracts.map((t, i) => ({
                   name: t.name.replace('Census Tract ', 'Tract ').replace('Census ', ''),
                   color: comparePalette[i % 4],
-                  values: compareMetrics.map(m => (t.indicators as any)?.[m.key] || 0)
+                  values: compareMetrics.map(m => {
+                    const val = (t.indicators as any)?.[m.key] ?? (t as any)?.[m.key] ?? 0;
+                    return typeof val === 'number' ? val : parseFloat(val) || 0;
+                  })
                 }))}
-                height={240}
+                height={250}
               />
 
               {/* Legend Row under the Graph */}
