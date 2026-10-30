@@ -1,15 +1,31 @@
 # Dependencies
 node_modules/
+*/node_modules/
 /.pnp
 .pnp.js
+.yarn/install-state.gz
 
-# Environment and Secrets
+# Environment and Secrets (Never commit secrets or local credentials)
 .env
+.env*.local
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 *.pem
+
+# Next.js Build Outputs and Caches
+.next/
+*/.next/
+out/
+*/out/
+dist/
+build/
+*.tsbuildinfo
+
+# Deployment & Monorepo Caches
+.vercel/
+.turbo/
 
 # Logs
 npm-debug.log*
@@ -18,12 +34,6 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 *.log
-
-# Build Outputs
-dist/
-build/
-out/
-.next/
 
 # In-memory MongoDB cache & binaries
 .mongodb/
@@ -37,7 +47,8 @@ Thumbs.db
 *.swp
 *.swo
 
-# Temporary directories
+# Temporary directories & Testing
 tmp/
 temp/
 coverage/
+.nyc_output/
