@@ -48,6 +48,14 @@ export function calculateQuintiles(units) {
   const n = sorted.length;
   if (n === 0) return [[], [], [], [], []];
 
+  if (n < 5) {
+    // If fewer than 5 units, populate the available ends so Q1 is lowest and Q5 is highest
+    const q = [[], [], [], [], []];
+    q[0] = [sorted[0]];
+    q[4] = [sorted[sorted.length - 1]];
+    return q;
+  }
+
   return [0, 1, 2, 3, 4].map(i => {
     const start = Math.floor((i * n) / 5);
     const end = Math.floor(((i + 1) * n) / 5);
