@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #EEF2FB;
+  --bg2: #E3E9F8;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-solid: #FFFFFF;
+  --surface-2: rgba(240, 244, 253, 0.9);
+  --line: rgba(30, 50, 130, 0.12);
+  --line-strong: rgba(30, 50, 130, 0.22);
+  --text: #0B1438;
+  --muted: #56628A;
+  --faint: #8A94B8;
+  --cyan: #0090C2;
+  --teal: #079A7E;
+  --violet: #6A55E8;
+  --rose: #E0336A;
+  --amber: #C9810A;
+  --green: #1C9F5E;
+  --glow: rgba(0, 144, 194, 0.18);
+  --shadow: 0 18px 50px -20px rgba(20, 40, 120, 0.28);
+  --map-low: #E4ECFA;
+  --map-line: rgba(20, 40, 120, 0.18);
+  --map-state: rgba(20, 40, 120, 0.55);
+  --grid: rgba(30, 50, 130, 0.08);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #060A1C;
+  --bg2: #0A1130;
+  --surface: rgba(18, 28, 68, 0.52);
+  --surface-solid: #0D1534;
+  --surface-2: rgba(24, 36, 84, 0.6);
+  --line: rgba(130, 170, 255, 0.13);
+  --line-strong: rgba(130, 170, 255, 0.26);
+  --text: #E8EEFF;
+  --muted: #8F9CC8;
+  --faint: #5E6A96;
+  --cyan: #38E1FF;
+  --teal: #1ED6B0;
+  --violet: #9A85FF;
+  --rose: #FF5D8F;
+  --amber: #FFB648;
+  --green: #3BE38E;
+  --glow: rgba(56, 225, 255, 0.22);
+  --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
+  --map-low: #101B45;
+  --map-line: rgba(140, 180, 255, 0.12);
+  --map-state: rgba(170, 200, 255, 0.45);
+  --grid: rgba(130, 170, 255, 0.07);
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Glassmorphism panel helper */
+.glass-panel {
+  background: var(--surface);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.glass-solid {
+  background: var(--surface-solid);
+  border: 1px solid var(--line);
+}
