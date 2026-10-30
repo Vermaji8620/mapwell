@@ -7,18 +7,24 @@ export interface TrendSeries {
   name: string;
   color: string;
   values: number[];
+  dash?: string;
+  width?: number;
 }
 
 interface TrendLineChartProps {
   years: (string | number)[];
   series: TrendSeries[];
   height?: number;
+  unit?: string;
+  showArea?: boolean;
 }
 
 export function TrendLineChart({
   years,
   series,
-  height = 230
+  height = 230,
+  unit = '%',
+  showArea = true
 }: TrendLineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -47,8 +53,8 @@ export function TrendLineChart({
     const defs = svg.append('defs');
     const gid = `trend-area-${Math.random().toString(36).substring(2, 7)}`;
     const gr = defs.append('linearGradient').attr('id', gid).attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1);
-    gr.append('stop').attr('offset', '0%').attr('stop-color', '#F43F5E').attr('stop-opacity', 0.35);
-    gr.append('stop').attr('offset', '100%').attr('stop-color', '#F43F5E').attr('stop-opacity', 0.0);
+    gr.append('stop').attr('offset', '0%').attr('stop-color', series[0]?.color || '#F43F5E').attr('stop-opacity', 0.35);
+    gr.append('stop').attr('offset', '100%').attr('stop-color', series[0]?.color || '#F43F5E').attr('stop-opacity', 0.0);
 
     const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
@@ -73,7 +79,7 @@ export function TrendLineChart({
       .attr('stroke', 'var(--line, rgba(255,255,255,0.08))')
       .attr('stroke-dasharray', '3 3');
 
-    // Axes
+    // Left Y Axis Labels
     g.append('g')
       .selectAll('text.y-lbl')
       .data(y.ticks(4))
@@ -85,12 +91,16 @@ export function TrendLineChart({
       .attr('fill', 'var(--faint, rgba(255,255,255,0.45))')
       .attr('font-size', '10px')
       .attr('font-family', 'var(--font-m, monospace)')
-      .text(d => `${d.toFixed(1)}%`);
+      .text(d => `${d.toFixed(1)}${unit}`);
+
+    // Bottom X Axis Labels (skip if too many, e.g. 52 weeks)
+    const tickInterval = Math.ceil(years.length / Math.max(3, Math.floor(chartW / 65)));
+    const tickYears = years.filter((_, i) => i % tickInterval === 0 || i === years.length - 1);
 
     g.append('g')
       .attr('transform', `translate(0,${chartH})`)
       .selectAll('text.x-lbl')
-      .data(years.map(String))
+      .data(tickYears.map(String))
       .enter()
       .append('text')
       .attr('x', d => x(d) || 0)
@@ -101,8 +111,8 @@ export function TrendLineChart({
       .attr('font-family', 'var(--font-m, monospace)')
       .text(d => d);
 
-    // Area under primary series
-    if (series.length > 0) {
+    // Area under primary series (Animated Fade In)
+    if (showArea && series.length > 0 && !series[0].dash) {
       const areaGen = d3.area<number>()
         .x((_, i) => x(String(years[i])) || 0)
         .y0(chartH)
@@ -112,23 +122,45 @@ export function TrendLineChart({
       g.append('path')
         .datum(series[0].values)
         .attr('d', areaGen)
-        .attr('fill', `url(#${gid})`);
+        .attr('fill', `url(#${gid})`)
+        .attr('opacity', 0)
+        .transition()
+        .duration(900)
+        .delay(300)
+        .attr('opacity', 1);
     }
 
-    // Lines
-    const lineGen = d3.line<number>()
-      .x((_, i) => x(String(years[i])) || 0)
-      .y(d => y(d))
-      .curve(d3.curveMonotoneX);
+    // Lines with animated stroke draw-in
+    series.forEach((s, si) => {
+      const lineGen = d3.line<number>()
+        .x((_, i) => x(String(years[i])) || 0)
+        .y(d => y(d))
+        .curve(d3.curveMonotoneX);
 
-    series.forEach(s => {
-      g.append('path')
+      const path = g.append('path')
         .datum(s.values)
         .attr('d', lineGen)
         .attr('fill', 'none')
         .attr('stroke', s.color)
-        .attr('stroke-width', 2.4)
+        .attr('stroke-width', s.width || 2.4)
         .attr('stroke-linecap', 'round');
+
+      if (s.dash) {
+        path.attr('stroke-dasharray', s.dash);
+      } else {
+        const node = path.node() as SVGPathElement | null;
+        if (node) {
+          const totalLength = node.getTotalLength();
+          path
+            .attr('stroke-dasharray', `${totalLength} ${totalLength}`)
+            .attr('stroke-dashoffset', totalLength)
+            .transition()
+            .duration(1100)
+            .delay(si * 140)
+            .ease(d3.easeCubicInOut)
+            .attr('stroke-dashoffset', 0);
+        }
+      }
     });
 
     // Hover overlay & Crosshair
@@ -155,18 +187,28 @@ export function TrendLineChart({
       .attr('fill', 'transparent')
       .on('pointermove', (event) => {
         const [mx] = d3.pointer(event);
-        const step = chartW / (years.length - 1);
+        const step = chartW / Math.max(1, years.length - 1);
         const idx = Math.max(0, Math.min(years.length - 1, Math.round(mx / step)));
         const cx = x(String(years[idx])) || 0;
 
-        crosshair.attr('x1', cx).attr('x2', cx).attr('opacity', 1);
+        crosshair
+          .attr('x1', cx)
+          .attr('x2', cx)
+          .attr('opacity', 1);
+
         circles.forEach((c, si) => {
-          c.attr('cx', cx).attr('cy', y(series[si].values[idx] || 0)).attr('opacity', 1);
+          const val = series[si].values[idx] ?? 0;
+          c.attr('cx', cx)
+            .attr('cy', y(val))
+            .attr('opacity', 1);
         });
 
-        const b = container.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
         setHoverIndex(idx);
-        setTooltipPos({ x: event.clientX - b.left + 10, y: event.clientY - b.top - 10 });
+        setTooltipPos({
+          x: mx + margin.left,
+          y: Math.min(margin.top + 30, chartH / 2)
+        });
       })
       .on('pointerleave', () => {
         crosshair.attr('opacity', 0);
@@ -175,7 +217,7 @@ export function TrendLineChart({
         setTooltipPos(null);
       });
 
-  }, [years, series, height]);
+  }, [years, series, height, unit, showArea]);
 
   return (
     <div className="relative w-full" style={{ height: `${height}px` }}>
@@ -183,16 +225,23 @@ export function TrendLineChart({
 
       {hoverIndex !== null && tooltipPos && (
         <div
-          className="absolute z-50 pointer-events-none px-3 py-2 rounded-xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-xl text-left animate-in fade-in"
-          style={{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y}px` }}
+          className="absolute z-20 pointer-events-none px-3 py-2 rounded-xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-xl text-left text-[11px] animate-in fade-in duration-100"
+          style={{
+            left: `${Math.min(tooltipPos.x + 12, (containerRef.current?.clientWidth || 400) - 150)}px`,
+            top: `${tooltipPos.y}px`
+          }}
         >
-          <div className="text-[11px] font-bold text-[var(--muted)]">{years[hoverIndex]}</div>
-          <div className="space-y-0.5 mt-1">
+          <div className="font-bold text-[var(--muted)] mb-1">{years[hoverIndex]}</div>
+          <div className="space-y-1">
             {series.map(s => (
-              <div key={s.name} className="flex items-center gap-2 text-[11.5px]">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
-                <span className="text-[var(--text)]">{s.name}:</span>
-                <span className="font-bold text-[var(--cyan)] num">{(s.values[hoverIndex] || 0).toFixed(1)}%</span>
+              <div key={s.name} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                  <span className="text-[var(--text)] font-medium">{s.name}</span>
+                </div>
+                <span className="font-bold text-[var(--text)] num">
+                  {(s.values[hoverIndex] ?? 0).toFixed(1)}{unit}
+                </span>
               </div>
             ))}
           </div>
