@@ -6,6 +6,7 @@ import * as topojson from 'topojson-client';
 
 export interface StateCoverageMapProps {
   height?: number;
+  coverageOverrides?: Record<string, number>;
   onSelectState?: (stateName: string, covPct: number) => void;
 }
 
@@ -66,7 +67,7 @@ export const STATE_COVERAGE: Record<string, { name: string; abbr: string; cov: n
 
 let topoCache: any = null;
 
-export function StateCoverageMap({ height = 360, onSelectState }: StateCoverageMapProps) {
+export function StateCoverageMap({ height = 360, coverageOverrides, onSelectState }: StateCoverageMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const svgRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
@@ -144,8 +145,9 @@ export function StateCoverageMap({ height = 360, onSelectState }: StateCoverageM
         .attr('d', (d: any) => pathGen(d) || '')
         .attr('class', 'state-poly cursor-pointer transition-colors duration-150')
         .attr('fill', (d: any) => {
-          const st = STATE_COVERAGE[d.id] || { cov: 92 };
-          return colorScale(st.cov);
+          const defaultCov = STATE_COVERAGE[d.id]?.cov ?? 92.0;
+          const covVal = coverageOverrides?.[d.id] ?? defaultCov;
+          return colorScale(covVal);
         })
         .attr('stroke', 'var(--map-line)')
         .attr('stroke-width', 0.9)
@@ -165,11 +167,12 @@ export function StateCoverageMap({ height = 360, onSelectState }: StateCoverageM
       // Pointer interactions
       paths
         .on('pointerenter', function (event, d: any) {
-          const st = STATE_COVERAGE[d.id] || {
+          const defaultSt = STATE_COVERAGE[d.id] || {
             name: d.properties?.name || `State ${d.id}`,
             abbr: 'US',
             cov: 92.0
           };
+          const covVal = coverageOverrides?.[d.id] ?? defaultSt.cov;
 
           d3.select(this)
             .attr('stroke', 'var(--cyan)')
@@ -181,9 +184,9 @@ export function StateCoverageMap({ height = 360, onSelectState }: StateCoverageM
             visible: true,
             x: event.clientX - cRect.left + 14,
             y: event.clientY - cRect.top - 14,
-            name: st.name,
-            abbr: st.abbr,
-            cov: st.cov
+            name: defaultSt.name,
+            abbr: defaultSt.abbr,
+            cov: covVal
           });
         })
         .on('pointermove', function (event) {
@@ -203,14 +206,15 @@ export function StateCoverageMap({ height = 360, onSelectState }: StateCoverageM
           setTooltip(prev => ({ ...prev, visible: false }));
         })
         .on('click', function (_, d: any) {
-          const st = STATE_COVERAGE[d.id] || {
+          const defaultSt = STATE_COVERAGE[d.id] || {
             name: d.properties?.name || `State ${d.id}`,
             abbr: 'US',
             cov: 92.0
           };
+          const covVal = coverageOverrides?.[d.id] ?? defaultSt.cov;
           setActiveStateFips(d.id);
           if (onSelectState) {
-            onSelectState(st.name, st.cov);
+            onSelectState(defaultSt.name, covVal);
           }
         });
     }

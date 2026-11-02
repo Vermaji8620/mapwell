@@ -184,7 +184,7 @@ const INITIAL_ERRORS: ProcessingErrorItem[] = [
   }
 ];
 
-const QUALITY_INDICATORS = [
+const DEFAULT_QUALITY_INDICATORS = [
   { label: 'Completeness', value: 96.8, desc: 'Tracts with complete indicator fields' },
   { label: 'Validity', value: 94.1, desc: 'Values conforming to expected numerical ranges' },
   { label: 'Geographic match', value: 98.6, desc: 'GEOIDs resolving to valid census tract geometry' },
@@ -199,6 +199,9 @@ function DataManagementContent() {
   const [sources, setSources] = useState<DataSourceItem[]>(INITIAL_SOURCES);
   const [imports, setImports] = useState<ImportHistoryItem[]>(INITIAL_IMPORTS);
   const [errors, setErrors] = useState<ProcessingErrorItem[]>(INITIAL_ERRORS);
+  const [qualityIndicators, setQualityIndicators] = useState(DEFAULT_QUALITY_INDICATORS);
+  const [compositeScore, setCompositeScore] = useState<number>(92.4);
+  const [stateCoverage, setStateCoverage] = useState<Record<string, number>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Sync All state
@@ -215,13 +218,29 @@ function DataManagementContent() {
   const [validationLogs, setValidationLogs] = useState<ValidationLog[]>([]);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
-  // Load backend data if available
+  // Fetch dynamic quality metrics & stats from MongoDB
+  const refreshStats = async () => {
+    try {
+      const res = await fetch('/api/data/stats');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.qualityIndicators) setQualityIndicators(data.qualityIndicators);
+        if (data.compositeScore != null) setCompositeScore(data.compositeScore);
+        if (data.lastSync) setLastSyncTime(data.lastSync);
+        if (data.stateCoverage) setStateCoverage(data.stateCoverage);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Load backend data from MongoDB
   useEffect(() => {
     fetch('/api/data/sources')
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
         if (data && data.length > 0) {
-          setSources(prev =>
+          setSources(
             data.map((d: any) => ({
               _id: d._id,
               name: d.name,
@@ -249,6 +268,8 @@ function DataManagementContent() {
         if (data && data.length > 0) setErrors(data);
       })
       .catch(e => console.error(e));
+
+    refreshStats();
   }, []);
 
   // Auto-scroll validation terminal log
@@ -277,110 +298,146 @@ function DataManagementContent() {
     return errors.filter(e => e.open).length;
   }, [errors]);
 
-  // Trigger individual sync
+  // Trigger individual sync against MongoDB
   const handleSyncSource = async (id: string) => {
     const src = sources.find(s => s._id === id);
     if (!src || src.isSyncing) return;
 
     // Start progress animation
     setSources(prev =>
-      prev.map(s => (s._id === id ? { ...s, isSyncing: true, syncProgress: 10 } : s))
+      prev.map(s => (s._id === id ? { ...s, isSyncing: true, syncProgress: 15 } : s))
     );
 
-    let progress = 10;
+    let progress = 15;
     const interval = setInterval(() => {
-      progress += Math.floor(14 + Math.random() * 20);
-      if (progress >= 100) {
+      progress += Math.floor(16 + Math.random() * 22);
+      if (progress >= 95) {
         clearInterval(interval);
-        finalizeSync(id);
       } else {
         setSources(prev =>
           prev.map(s => (s._id === id ? { ...s, syncProgress: progress } : s))
         );
       }
-    }, 180);
+    }, 120);
 
-    // Call backend API in parallel
     try {
-      await fetch(`/api/data/sources/${id}/sync`, { method: 'POST' });
+      const res = await fetch(`/api/data/sources/${id}/sync`, { method: 'POST' });
+      if (res.ok) {
+        const { source, log } = await res.json();
+        clearInterval(interval);
+
+        const now = new Date(source.lastSync || Date.now());
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setLastSyncTime(timeStr);
+
+        setSources(prev =>
+          prev.map(s =>
+            s._id === id
+              ? {
+                  ...s,
+                  status: source.status,
+                  meta: source.meta,
+                  lastSync: `Today ${timeStr}`,
+                  isSyncing: false,
+                  syncProgress: 100
+                }
+              : s
+          )
+        );
+
+        if (log) {
+          const formattedLog: ImportHistoryItem = {
+            _id: log._id,
+            name: log.name,
+            src: log.src,
+            rows: log.rows,
+            status: log.status,
+            duration: log.duration,
+            startedAt: `Today ${timeStr}`
+          };
+          setImports(prev => [formattedLog, ...prev.filter(i => i._id !== log._id)]);
+        }
+
+        showToast(`${source.name} synchronized successfully`);
+        refreshStats();
+      }
     } catch (e) {
-      console.warn('Backend sync API simulated:', e);
+      console.error(e);
+      clearInterval(interval);
+      setSources(prev => prev.map(s => (s._id === id ? { ...s, isSyncing: false } : s)));
     }
   };
 
-  const finalizeSync = (id: string) => {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setLastSyncTime(timeStr);
-
-    setSources(prev =>
-      prev.map(s => {
-        if (s._id === id) {
-          const isReconnect = s.status === 'bad';
-          const nextStatus = isReconnect ? 'warn' : s.status;
-          const nextMeta = [...s.meta];
-          if (isReconnect) {
-            nextMeta[2] = ['Issue', 'Reconnected. 1,204 retired GEOIDs pending'];
-          }
-          return {
-            ...s,
-            status: nextStatus,
-            meta: nextMeta,
-            lastSync: `Today ${timeStr}`,
-            isSyncing: false,
-            syncProgress: 100
-          };
-        }
-        return s;
-      })
-    );
-
-    const sourceObj = sources.find(s => s._id === id);
-    const newImport: ImportHistoryItem = {
-      _id: `IMP-${3410 + imports.length}`,
-      name: `${sourceObj?.name || id} sync`,
-      src: sourceObj?.name || id,
-      rows: Math.floor(18000 + Math.random() * 120000),
-      status: sourceObj?.status === 'ok' ? 'Completed' : 'Completed with warnings',
-      duration: `0m ${Math.floor(12 + Math.random() * 32)}s`,
-      startedAt: `Today ${timeStr}`
-    };
-
-    setImports(prev => [newImport, ...prev]);
-    showToast(`${sourceObj?.name || id} synchronized successfully`);
-  };
-
-  // Sync All sources in sequence
-  const handleSyncAll = () => {
+  // Sync All sources against MongoDB in parallel/sequence
+  const handleSyncAll = async () => {
     if (syncingAll) return;
     setSyncingAll(true);
     showToast('Initiating synchronization across all upstream connectors...');
 
-    sources.forEach((s, idx) => {
-      setTimeout(() => {
-        handleSyncSource(s._id);
-        if (idx === sources.length - 1) {
-          setTimeout(() => setSyncingAll(false), 2000);
+    try {
+      const res = await fetch('/api/data/sources/sync-all', { method: 'POST' });
+      if (res.ok) {
+        const { sources: updatedSources, logs, message } = await res.json();
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setLastSyncTime(timeStr);
+
+        if (updatedSources) {
+          setSources(
+            updatedSources.map((d: any) => ({
+              _id: d._id,
+              name: d.name,
+              icon: d.icon || 'cloud',
+              status: d.status || 'ok',
+              desc: d.desc || '',
+              meta: d.meta || [],
+              lastSync: `Today ${timeStr}`,
+              isSyncing: false,
+              syncProgress: 100
+            }))
+          );
         }
-      }, idx * 350);
-    });
+
+        if (logs && logs.length > 0) {
+          const formattedLogs: ImportHistoryItem[] = logs.map((l: any) => ({
+            _id: l._id,
+            name: l.name,
+            src: l.src,
+            rows: l.rows,
+            status: l.status,
+            duration: l.duration,
+            startedAt: `Today ${timeStr}`
+          }));
+          setImports(prev => [...formattedLogs, ...prev]);
+        }
+
+        showToast(message || 'All data sources synchronized successfully');
+        refreshStats();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSyncingAll(false);
+    }
   };
 
-  // Mark processing error resolved
+  // Mark processing error resolved in MongoDB
   const handleResolveError = async (id: string) => {
     try {
-      await fetch(`/api/data/errors/${id}/resolve`, { method: 'PATCH' });
+      const res = await fetch(`/api/data/errors/${id}/resolve`, { method: 'PATCH' });
+      if (res.ok) {
+        setErrors(prev =>
+          prev.map(e => (e._id === id ? { ...e, open: false } : e))
+        );
+        showToast(`Issue ${id} marked as resolved`);
+        refreshStats();
+      }
     } catch (e) {
-      console.warn('Backend resolve API fallback:', e);
+      console.error(e);
     }
-
-    setErrors(prev =>
-      prev.map(e => (e._id === id ? { ...e, open: false } : e))
-    );
-    showToast(`Issue ${id} marked as resolved`);
   };
 
-  // CSV Validation Pipeline
+  // CSV Validation Pipeline with automatic MongoDB ingestion
   const runValidation = (fileName: string, text: string) => {
     setIsUploading(true);
     setUploadFileName(fileName);
@@ -411,7 +468,7 @@ function DataManagementContent() {
 
     let issuesCount = 0;
 
-    const stepInterval = setInterval(() => {
+    const stepInterval = setInterval(async () => {
       currentStageIndex++;
       setUploadProgress(Math.min(100, (currentStageIndex / stages.length) * 100));
 
@@ -472,33 +529,36 @@ function DataManagementContent() {
           geoidIndex === -1 ? 'Failed' : issuesCount > 0 ? 'Completed with warnings' : 'Completed';
         setUploadStage(finalStatus);
 
-        const newImport: ImportHistoryItem = {
-          _id: `IMP-${3410 + imports.length}`,
-          name: fileName.replace(/\.csv$/i, ''),
-          src: 'Dataset Upload',
-          rows: rows.length,
-          status: finalStatus,
-          duration: '0m 04s',
-          startedAt: 'Just now'
-        };
-        setImports(prev => [newImport, ...prev]);
+        // Submit to MongoDB backend
+        try {
+          const blob = new Blob([text], { type: 'text/csv' });
+          const formData = new FormData();
+          formData.append('file', blob, fileName);
 
-        if (issuesCount > 0) {
-          const newErr: ProcessingErrorItem = {
-            _id: `E-${555 + errors.length}`,
-            dataset: fileName,
-            msg: `${issuesCount} rows failed schema validation during upload`,
-            severity: 'bad',
-            open: true
-          };
-          setErrors(prev => [newErr, ...prev]);
+          const uploadRes = await fetch('/api/data/upload', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            if (uploadData.importLog) {
+              setImports(prev => [uploadData.importLog, ...prev.filter(i => i._id !== uploadData.importLog._id)]);
+            }
+            if (uploadData.processingError) {
+              setErrors(prev => [uploadData.processingError, ...prev.filter(e => e._id !== uploadData.processingError._id)]);
+            }
+            refreshStats();
+          }
+        } catch (uploadErr) {
+          console.error('Backend upload API error:', uploadErr);
         }
 
         setIsUploading(false);
         showToast(
           finalStatus === 'Failed'
             ? 'Import failed: missing GEOID column'
-            : `Validated & ingested ${rows.length} records (${finalStatus})`
+            : `Validated & ingested ${rows.length} records into database (${finalStatus})`
         );
       }
     }, 450);
@@ -638,7 +698,7 @@ function DataManagementContent() {
           </span>
           <div className="mt-2 flex items-baseline gap-1.5">
             <strong className="text-2xl sm:text-3xl font-bold font-display text-[var(--teal)] num">
-              92.4
+              {compositeScore.toFixed(1)}
             </strong>
             <span className="text-[13px] text-[var(--muted)] font-semibold">/ 100</span>
           </div>
@@ -882,6 +942,7 @@ function DataManagementContent() {
         <section className="lg:col-span-6 rounded-2xl glass-panel p-0 overflow-hidden min-h-[380px] relative border border-[var(--line)]">
           <StateCoverageMap
             height={380}
+            coverageOverrides={stateCoverage}
             onSelectState={(name, cov) => {
               showToast(`${name}: ${cov.toFixed(1)}% of tracts have complete data`);
             }}
@@ -897,11 +958,11 @@ function DataManagementContent() {
                 <h3 className="text-base font-bold text-[var(--text)]">Data quality indicators</h3>
                 <p className="text-[12px] text-[var(--muted)]">Across all active surveillance feeds</p>
               </div>
-              <span className="text-[11px] font-bold text-[var(--teal)]">92.4 Composite</span>
+              <span className="text-[11px] font-bold text-[var(--teal)]">{compositeScore.toFixed(1)} Composite</span>
             </div>
 
             <div className="space-y-3 mt-4">
-              {QUALITY_INDICATORS.map(ind => (
+              {qualityIndicators.map(ind => (
                 <div key={ind.label} className="space-y-1">
                   <div className="flex justify-between text-[11.5px]">
                     <span className="font-semibold text-[var(--text)]">{ind.label}</span>
