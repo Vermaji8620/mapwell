@@ -2,13 +2,16 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useSession } from '@/context/SessionContext';
+import { useAuth } from '@/context/AuthContext';
 import {
   MapPin,
   Search,
   Calendar,
   Sun,
   Moon,
-  ChevronDown
+  ChevronDown,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -25,18 +28,24 @@ export function Topbar() {
     setWorkflowDrawerOpen
   } = useSession();
 
+  const { user, logout } = useAuth();
   const [jurOpen, setJurOpen] = useState(false);
   const [jurSearch, setJurSearch] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResultsOpen, setSearchResultsOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   const jurRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (jurRef.current && !jurRef.current.contains(e.target as Node)) {
         setJurOpen(false);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -197,15 +206,53 @@ export function Topbar() {
           {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
         </button>
 
-        {/* Public Health Analyst Role Tag */}
-        <div className="hidden lg:flex items-center gap-2 pl-2 border-l border-[var(--line)]">
-          <div className="w-8 h-8 rounded-full bg-[var(--glow)] border border-[var(--cyan)] flex items-center justify-center font-bold text-[11px] text-[var(--cyan)]">
-            PA
-          </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-[12px] font-bold text-[var(--text)]">Public Health Analyst</span>
-            <span className="text-[10px] text-[var(--faint)]">County Health Dept</span>
-          </div>
+        {/* User Role & Sign Out Menu */}
+        <div className="relative" ref={userMenuRef}>
+          <button
+            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            className="flex items-center gap-2 pl-2 border-l border-[var(--line)] cursor-pointer hover:opacity-90 transition-opacity"
+            title="Account & Sign out"
+          >
+            <div className="w-8 h-8 rounded-full bg-[var(--glow)] border border-[var(--cyan)] flex items-center justify-center font-bold text-[11px] text-[var(--cyan)] uppercase">
+              {user?.avatar || 'PA'}
+            </div>
+            <div className="hidden lg:flex flex-col text-left leading-tight">
+              <span className="text-[12px] font-bold text-[var(--text)]">
+                {user?.roleName || 'Public Health Analyst'}
+              </span>
+              <span className="text-[10px] text-[var(--faint)]">
+                {user?.organization || 'County Health Dept'}
+              </span>
+            </div>
+            <ChevronDown className="w-3.5 h-3.5 text-[var(--faint)] ml-0.5" />
+          </button>
+
+          {userMenuOpen && (
+            <div className="absolute top-11 right-0 w-64 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-3 z-[70]">
+              <div className="pb-2.5 mb-2 border-b border-[var(--line)]">
+                <div className="text-[12px] font-bold text-[var(--text)] truncate">
+                  {user?.roleName || 'Public Health Analyst'}
+                </div>
+                <div className="text-[11px] text-[var(--cyan)] truncate mt-0.5">
+                  {user?.email || 'analyst@health.gov'}
+                </div>
+                <div className="text-[10px] text-[var(--faint)] mt-0.5">
+                  {user?.organization || 'County Health Department'}
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  logout();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-[12.5px] font-semibold text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition-all cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign out</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

@@ -160,3 +160,12 @@ export interface ResourceAllocation {
     projectedUtilization: number;
   }[];
 }
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: 'analyst' | 'manager' | 'admin';
+  roleName: string;
+  organization: string;
+  avatar: string;
+}

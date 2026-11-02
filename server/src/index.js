@@ -17,6 +17,7 @@ import findingRoutes from './routes/findingRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import dataManagementRoutes from './routes/dataManagementRoutes.js';
 import sessionRoutes from './routes/sessionRoutes.js';
+import authRoutes from './routes/authRoutes.js';
 
 dotenv.config();
 
@@ -76,6 +77,7 @@ app.use('/api/findings', findingRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/data', dataManagementRoutes);
 app.use('/api/session', sessionRoutes);
+app.use('/api/auth', authRoutes);
 
 // Central Error Handler
 app.use(errorHandler);
