@@ -13,7 +13,8 @@ import {
   Crosshair,
   X,
   FileText,
-  Flag
+  Flag,
+  Layers
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -130,6 +131,7 @@ export function HealthMapCanvas({
   const [markersEnabled, setMarkersEnabled] = useState(true);
 
   // UI state
+  const [mobileLayersOpen, setMobileLayersOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [recolorPerf, setRecolorPerf] = useState<{ n: number; ms: number }>({ n: 3142, ms: 10 });
   const [legendInfo, setLegendInfo] = useState<{
@@ -1065,8 +1067,17 @@ export function HealthMapCanvas({
       {/* Full-bleed Map Viewport */}
       <div ref={containerRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
 
+      {/* Mobile Layers Toggle Button */}
+      <button
+        onClick={() => setMobileLayersOpen(!mobileLayersOpen)}
+        className="md:hidden absolute top-3 left-3 z-30 px-2.5 py-1.5 rounded-xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.18)] shadow-lg text-[11px] font-bold text-white flex items-center gap-1.5 cursor-pointer"
+      >
+        <Layers className="w-3.5 h-3.5 text-[var(--cyan)]" />
+        <span>Layers</span>
+      </button>
+
       {/* Floating Top Breadcrumb Bar */}
-      <div className="absolute top-4 left-[310px] z-20 flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] text-[12px] font-bold shadow-md">
+      <div className="absolute top-3 left-24 sm:left-28 md:top-4 md:left-[310px] z-20 flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] text-[11px] sm:text-[12px] font-bold shadow-md max-w-[calc(100%-110px)] md:max-w-none overflow-x-auto whitespace-nowrap">
         <button
           onClick={() => resetMapFnRef.current?.()}
           className={`hover:text-[var(--cyan)] transition-colors ${!selectedState && !selectedCounty ? 'text-white' : 'text-[rgba(255,255,255,0.6)]'}`}
@@ -1107,7 +1118,11 @@ export function HealthMapCanvas({
       </div>
 
       {/* Floating Left Layers & Indicators Panel */}
-      <aside className="absolute top-4 left-4 z-20 w-[285px] p-4 rounded-2xl bg-[#0c1427]/92 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl max-h-[calc(100%-32px)] overflow-y-auto flex flex-col justify-between text-white">
+      <aside className={`absolute z-30 transition-all ${
+        mobileLayersOpen
+          ? 'top-12 left-3 w-[285px] max-w-[85vw] max-h-[70vh] flex'
+          : 'hidden md:flex top-4 left-4 w-[285px] max-h-[calc(100%-32px)]'
+      } p-4 rounded-2xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl overflow-y-auto flex-col justify-between text-white`}>
         <div className="space-y-4">
           {/* Search a County */}
           <div className="relative">
@@ -1232,7 +1247,7 @@ export function HealthMapCanvas({
       </aside>
 
       {/* Floating Performance Readout */}
-      <div className="absolute bottom-[80px] left-[310px] z-20 px-3 py-1.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-md text-[11px] text-[rgba(255,255,255,0.7)] flex items-center gap-2">
+      <div className="hidden xl:flex absolute bottom-[80px] left-[310px] z-20 px-3 py-1.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-md text-[11px] text-[rgba(255,255,255,0.7)] items-center gap-2">
         <span className="w-2 h-2 rounded-full bg-[var(--teal)] animate-pulse" />
         <span>
           <b className="num text-white">{recolorPerf.n.toLocaleString()}</b> counties recolored in{' '}
@@ -1241,7 +1256,7 @@ export function HealthMapCanvas({
       </div>
 
       {/* Floating Legend */}
-      <div className="absolute bottom-4 left-[310px] z-20 px-3.5 py-2.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-lg min-w-[210px] text-[11px] text-white">
+      <div className="hidden sm:block absolute bottom-3 md:bottom-4 left-3 md:left-[310px] z-20 px-3.5 py-2.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-lg min-w-[210px] text-[11px] text-white">
         <span className="font-bold text-white block mb-1">{legendInfo.title}</span>
         <div className="flex h-2.5 rounded overflow-hidden mb-1.5">
           {legendInfo.bins.map((c, i) => (
@@ -1256,39 +1271,39 @@ export function HealthMapCanvas({
       </div>
 
       {/* Floating Map HUD Controls (Bottom Right) */}
-      <div className="absolute bottom-4 right-[350px] z-20 flex items-center gap-1 bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] p-1 rounded-xl shadow-lg">
+      <div className="absolute bottom-3 right-3 md:bottom-4 md:right-[350px] z-20 flex items-center gap-1 bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] p-1 rounded-xl shadow-lg">
         <button
           onClick={() => svgRef.current?.transition().duration(300).call(zoomBehaviorRef.current!.scaleBy, 1.4)}
           title="Zoom In"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
           <ZoomIn className="w-4 h-4" />
         </button>
         <button
           onClick={() => svgRef.current?.transition().duration(300).call(zoomBehaviorRef.current!.scaleBy, 1 / 1.4)}
           title="Zoom Out"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
           <ZoomOut className="w-4 h-4" />
         </button>
         <button
           onClick={() => resetMapFnRef.current?.()}
           title="Reset to Full Country"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={() => selectCountyFnRef.current?.('17031', true)}
           title="Go to Jurisdiction"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--cyan)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--cyan)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
           <Crosshair className="w-3.5 h-3.5" />
         </button>
       </div>
 
       {/* Floating Right Inspector Panel */}
-      <aside className="absolute top-4 right-4 bottom-4 z-20 w-[330px] p-5 rounded-2xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl overflow-y-auto flex flex-col justify-between text-white">
+      <aside className="absolute z-20 max-md:bottom-2 max-md:left-2 max-md:right-2 max-md:top-auto max-md:w-auto max-md:max-h-[50vh] md:top-4 md:right-4 md:bottom-4 md:w-[330px] p-4 sm:p-5 rounded-2xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl overflow-y-auto flex flex-col justify-between text-white">
         {selectedTract ? (
           <div className="space-y-4">
             <div className="flex items-center justify-between">

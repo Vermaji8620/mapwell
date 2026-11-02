@@ -124,7 +124,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[1240px] min-h-[640px] grid grid-cols-1 lg:grid-cols-[minmax(440px,500px)_1fr] gap-6 my-auto">
         
         {/* Left Column: Sign-in Card */}
-        <section className="bg-[var(--surface-solid,#0f1c2e)] border border-[var(--line-strong,#1e3450)] rounded-3xl p-7 sm:p-10 flex flex-col justify-between shadow-2xl relative overflow-hidden backdrop-blur-xl">
+        <section className="bg-[var(--surface-solid,#0f1c2e)] border border-[var(--line-strong,#1e3450)] rounded-3xl p-5 sm:p-8 md:p-10 flex flex-col justify-between shadow-2xl relative overflow-hidden backdrop-blur-xl">
           {/* Subtle Ambient Light */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-[var(--glow)] rounded-full blur-3xl pointer-events-none -mr-20 -mt-20 opacity-30" />
 
@@ -182,7 +182,7 @@ export default function LoginPage() {
                 <label className="block text-[12px] font-semibold text-[var(--muted,#94a3b8)] uppercase tracking-wider mb-2">
                   Sign in as
                 </label>
-                <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Sign in role">
+                <div className="flex flex-col sm:grid sm:grid-cols-3 gap-2.5 sm:gap-2" role="radiogroup" aria-label="Sign in role">
                   {ROLES.map((r) => {
                     const isSelected = selectedRole === r.id;
                     return (
@@ -192,16 +192,16 @@ export default function LoginPage() {
                         role="radio"
                         aria-checked={isSelected}
                         onClick={() => setSelectedRole(r.id)}
-                        className={`p-2.5 rounded-xl border text-left transition-all relative ${
+                        className={`p-3 sm:p-2.5 rounded-xl border text-left transition-all relative ${
                           isSelected
                             ? 'border-[var(--cyan,#22d3ee)] bg-[var(--glow,#22d3ee1f)] ring-1 ring-[var(--cyan,#22d3ee)] shadow-md shadow-cyan-500/10'
                             : 'border-[var(--line,#1e293b)] bg-[var(--surface-2,#132238)] hover:border-[var(--line-strong,#334155)] opacity-80 hover:opacity-100'
                         }`}
                       >
-                        <div className={`text-[12px] font-bold truncate ${isSelected ? 'text-[var(--cyan,#22d3ee)]' : 'text-white'}`}>
+                        <div className={`text-[13px] sm:text-[12px] font-bold ${isSelected ? 'text-[var(--cyan,#22d3ee)]' : 'text-white'}`}>
                           {r.title}
                         </div>
-                        <div className="text-[10px] text-[var(--faint,#64748b)] truncate mt-0.5">
+                        <div className="text-[11px] sm:text-[10px] text-[var(--faint,#64748b)] mt-0.5">
                           {r.org}
                         </div>
                       </button>

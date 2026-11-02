@@ -311,33 +311,39 @@ export default function DashboardPage() {
             </span>.
           </p>
         </div>
-        <div className="flex items-center gap-2.5">
-          <span className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-[var(--amber)]/10 text-[var(--amber)] border border-[var(--amber)]/25 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--amber)]" />
-            <span>Synthetic demo data</span>
-          </span>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full sm:w-auto">
+          {/* Layer 1: Synthetic demo badge */}
+          <div className="flex items-center">
+            <span className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-[var(--amber)]/10 text-[var(--amber)] border border-[var(--amber)]/25 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--amber)]" />
+              <span>Synthetic demo data</span>
+            </span>
+          </div>
 
-          <Link
-            href="/assessments"
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs transition-all"
-          >
-            <ClipboardList className="w-4 h-4 text-[var(--violet)]" />
-            <span>New assessment</span>
-          </Link>
+          {/* Layer 2: Action Buttons */}
+          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto">
+            <Link
+              href="/assessments"
+              className="flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12px] sm:text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs transition-all text-center"
+            >
+              <ClipboardList className="w-4 h-4 text-[var(--violet)] flex-shrink-0" />
+              <span className="truncate">New assessment</span>
+            </Link>
 
-          <Link
-            href="/health-map"
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-[12.5px] font-bold text-[#07111F] shadow-md transition-all"
-          >
-            <MapPin className="w-4 h-4" />
-            <span>Open health map</span>
-          </Link>
+            <Link
+              href="/health-map"
+              className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-[12px] sm:text-[12.5px] font-bold text-[#07111F] shadow-md transition-all text-center"
+            >
+              <MapPin className="w-4 h-4 flex-shrink-0" />
+              <span className="truncate">Open health map</span>
+            </Link>
+          </div>
         </div>
       </div>
 
       {/* 2. Top Metrics Strip (4 Ruled Cards matching prototype) */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 rounded-2xl glass-panel">
-        <div className="p-3 border-r border-[var(--line)] last:border-r-0">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4 rounded-2xl glass-panel">
+        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
           <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
             <Grid className="w-4 h-4 text-[var(--cyan)]" />
             <span>Census tracts analyzed</span>
@@ -351,7 +357,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="p-3 border-r border-[var(--line)] last:border-r-0">
+        <div className="p-3 border-b sm:border-b-0 lg:border-r border-[var(--line)]">
           <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
             <MapPin className="w-4 h-4 text-[var(--teal)]" />
             <span>Geographic coverage</span>
@@ -364,7 +370,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="p-3 border-r border-[var(--line)] last:border-r-0">
+        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
           <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
             <Activity className="w-4 h-4 text-[var(--violet)]" />
             <span>Health indicators</span>
@@ -1048,17 +1054,19 @@ export default function DashboardPage() {
             {(importsData || RECENT_DATA_IMPORTS).map((imp) => (
               <div
                 key={imp.id}
-                className="p-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/50 flex items-center justify-between text-[12px]"
+                className="p-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/50 flex flex-col gap-1.5 text-[12px]"
               >
-                <div className="min-w-0 flex-1 pr-2">
-                  <b className="block text-[12.5px] font-bold text-[var(--text)] truncate">{imp.name}</b>
-                  <small className="block text-[10.5px] text-[var(--faint)] truncate">
+                <div className="min-w-0">
+                  <b className="block text-[12.5px] font-bold text-[var(--text)] leading-snug">{imp.name}</b>
+                  <small className="block text-[10.5px] text-[var(--faint)] mt-0.5">
                     {imp.src} • {imp.rows} • {imp.when}
                   </small>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold border flex-shrink-0 ${imp.statusClass}`}>
-                  {imp.status}
-                </span>
+                <div className="flex items-center pt-0.5">
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10.5px] font-bold border ${imp.statusClass}`}>
+                    {imp.status}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

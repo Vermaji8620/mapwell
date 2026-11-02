@@ -471,8 +471,8 @@ function HealthDisparitiesContent() {
       </div>
 
       {/* 4 Ruled Disparity KPI Cards (Matching Prototype lines 2185-2189) */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 rounded-2xl glass-panel">
-        <div className="p-3 border-r border-[var(--line)] last:border-r-0">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4 rounded-2xl glass-panel">
+        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
           <div className="text-[11.5px] font-bold text-[var(--muted)]">
             Disparity Ratio (Q5 vs Q1)
           </div>
@@ -485,7 +485,7 @@ function HealthDisparitiesContent() {
           </div>
         </div>
 
-        <div className="p-3 border-r border-[var(--line)] last:border-r-0">
+        <div className="p-3 border-b sm:border-b-0 lg:border-r border-[var(--line)]">
           <div className="text-[11.5px] font-bold text-[var(--muted)]">
             Burden Held by Top 20%
           </div>
@@ -498,7 +498,7 @@ function HealthDisparitiesContent() {
           </div>
         </div>
 
-        <div className="p-3 border-r border-[var(--line)] last:border-r-0">
+        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
           <div className="text-[11.5px] font-bold text-[var(--muted)]">
             10-Yr Gap Change (Since 2016)
           </div>

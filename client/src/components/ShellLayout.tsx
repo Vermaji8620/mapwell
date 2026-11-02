@@ -11,11 +11,17 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 
 function InnerShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const { user, loading } = useAuth();
 
   const isLoginPage = pathname === '/login';
+
+  // Close mobile drawer on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!loading && !user && !isLoginPage) {
@@ -25,7 +31,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
 
   // If on login page, render clean page without dashboard shell
   if (isLoginPage) {
-    return <main className="min-h-screen w-full bg-[var(--bg,#0a1324)]">{children}</main>;
+    return <main className="min-h-screen w-full bg-[var(--bg,#0a1324)] overflow-x-hidden">{children}</main>;
   }
 
   // Show loading indicator while session state is being verified
@@ -58,10 +64,15 @@ function InnerShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[var(--bg)]">
       <Backdrop />
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <Sidebar
+        collapsed={collapsed}
+        setCollapsed={setCollapsed}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
+      />
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
-        <Topbar />
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 relative z-0 focus:outline-none">
+        <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+        <main className="flex-1 overflow-y-auto p-3 sm:p-5 md:p-6 relative z-0 focus:outline-none min-w-0">
           {children}
         </main>
       </div>

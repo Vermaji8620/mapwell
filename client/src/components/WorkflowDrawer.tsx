@@ -42,7 +42,7 @@ export function WorkflowDrawer() {
         className="relative w-full max-w-[420px] h-screen max-h-screen bg-[var(--surface-solid)] border-l border-[var(--line-strong)] shadow-2xl flex flex-col z-[151] animate-in slide-in-from-right duration-300"
       >
         {/* Drawer Header (Fixed at top) */}
-        <div className="p-5 sm:p-6 border-b border-[var(--line)] flex items-start justify-between gap-3 flex-shrink-0 bg-[var(--surface-solid)]">
+        <div className="p-4 sm:p-6 border-b border-[var(--line)] flex items-start justify-between gap-3 flex-shrink-0 bg-[var(--surface-solid)]">
           <div>
             <h3 className="text-lg font-bold text-[var(--text)] tracking-tight">
               Guided Analysis Workflow

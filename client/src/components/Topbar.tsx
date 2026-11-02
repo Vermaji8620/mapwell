@@ -11,11 +11,16 @@ import {
   Moon,
   ChevronDown,
   LogOut,
+  Menu,
   User as UserIcon
 } from 'lucide-react';
 import Link from 'next/link';
 
-export function Topbar() {
+interface TopbarProps {
+  onOpenMobileMenu?: () => void;
+}
+
+export function Topbar({ onOpenMobileMenu }: TopbarProps) {
   const {
     session,
     jurisdictions,
@@ -61,27 +66,139 @@ export function Topbar() {
   );
 
   return (
-    <header className="h-[72px] flex-shrink-0 flex items-center justify-between gap-4 px-6 border-b border-[var(--line)] bg-[var(--surface)] backdrop-blur-xl relative z-40">
-      {/* Jurisdiction Selector */}
-      <div className="relative z-50" ref={jurRef}>
+    <header className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 px-3 sm:px-6 py-2.5 sm:py-0 sm:h-[72px] border-b border-[var(--line)] bg-[var(--surface)] backdrop-blur-xl relative z-40">
+      
+      {/* Mobile Layer 1 / Desktop Left Area */}
+      <div className="flex items-center justify-between sm:justify-start gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2">
+          {/* Mobile Menu Hamburger Button */}
+          <button
+            onClick={onOpenMobileMenu}
+            aria-label="Open navigation menu"
+            className="lg:hidden p-1.5 sm:p-2 rounded-xl text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors flex-shrink-0 cursor-pointer"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+
+          {/* Mobile Mini Logo */}
+          <div className="lg:hidden flex items-center gap-1 font-bold text-[16px] text-[var(--text)]">
+            <span>Map<span className="text-[var(--cyan)]">Well</span></span>
+          </div>
+        </div>
+
+        {/* Action Controls shown in Layer 1 on mobile */}
+        <div className="flex sm:hidden items-center gap-2 flex-shrink-0">
+          {/* Guided Workflow Chip */}
+          <button
+            onClick={() => setWorkflowDrawerOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--cyan)] transition-colors text-[11px] font-bold text-[var(--cyan)] cursor-pointer"
+          >
+            <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--teal)] flex items-center justify-center text-[8.5px]">
+              {completedStepsCount}
+            </div>
+            <span>{completedStepsCount}/10</span>
+          </button>
+
+          {/* Dark/Light Theme Toggle */}
+          <button
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            aria-label="Toggle theme"
+            className="w-7 h-7 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
+          >
+            {theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* User Role & Sign Out Menu (Mobile) */}
+          <button
+            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            className="w-7 h-7 rounded-full bg-[var(--glow)] border border-[var(--cyan)] flex items-center justify-center font-bold text-[10px] text-[var(--cyan)] uppercase cursor-pointer"
+          >
+            {user?.avatar || 'PA'}
+          </button>
+        </div>
+
+        {/* Jurisdiction Selector (Desktop view: sits inline in row 1) */}
+        <div className="relative z-50 hidden sm:block" ref={jurRef}>
+          <button
+            onClick={() => setJurOpen(!jurOpen)}
+            className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--line-strong)] transition-colors cursor-pointer"
+          >
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-[var(--cyan)] to-[var(--violet)] flex items-center justify-center text-white flex-shrink-0">
+              <MapPin className="w-4 h-4" />
+            </div>
+            <div className="flex flex-col text-left leading-tight max-w-[170px]">
+              <span className="text-[9.5px] font-bold text-[var(--faint)] uppercase">Jurisdiction</span>
+              <span className="text-[13px] font-bold text-[var(--text)] truncate">
+                {activeCounty?.name || 'King County'}, {activeCounty?.stateAbbr || 'WA'}
+              </span>
+            </div>
+            <ChevronDown className="w-4 h-4 text-[var(--faint)] flex-shrink-0" />
+          </button>
+
+          {jurOpen && (
+            <div className="absolute top-[52px] left-0 w-72 max-w-[90vw] rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-[60] animate-in fade-in zoom-in-95">
+              <div className="p-2">
+                <span className="block text-[12px] font-bold text-[var(--text)]">Active Jurisdiction</span>
+                <span className="block text-[11px] text-[var(--faint)]">Sets analysis defaults across all 10 screens</span>
+              </div>
+              <div className="px-2 pb-2">
+                <input
+                  type="text"
+                  placeholder="Search counties or states..."
+                  value={jurSearch}
+                  onChange={(e) => setJurSearch(e.target.value)}
+                  className="w-full h-8 px-2.5 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] text-[12px] outline-none focus:border-[var(--cyan)] text-[var(--text)] placeholder:text-[var(--faint)]"
+                  autoFocus
+                />
+              </div>
+              <div className="max-h-60 overflow-y-auto space-y-0.5">
+                {filteredJurisdictions.map((j) => (
+                  <button
+                    key={j._id}
+                    onClick={() => {
+                      setActiveJurisdiction(j._id);
+                      setJurOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-2 rounded-xl text-[12.5px] transition-colors text-left ${
+                      activeCounty?._id === j._id
+                        ? 'bg-[var(--glow)] text-[var(--cyan)] font-bold'
+                        : 'hover:bg-[var(--surface-2)] text-[var(--text)]'
+                    }`}
+                  >
+                    <span className="truncate">{j.name}, {j.stateAbbr}</span>
+                    <span className="text-[11px] text-[var(--faint)] num ml-2 flex-shrink-0">
+                      {j.population ? `${(j.population / 1000).toFixed(0)}k` : ''}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Mobile Layer 2: Full-width Jurisdiction Selector (Second Layer one below the other) */}
+      <div className="w-full sm:hidden relative z-50">
         <button
           onClick={() => setJurOpen(!jurOpen)}
-          className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--line-strong)] transition-colors"
+          className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--line-strong)] transition-colors cursor-pointer"
         >
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-[var(--cyan)] to-[var(--violet)] flex items-center justify-center text-white flex-shrink-0">
-            <MapPin className="w-4 h-4" />
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-[var(--cyan)] to-[var(--violet)] flex items-center justify-center text-white flex-shrink-0">
+              <MapPin className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex flex-col text-left leading-tight truncate">
+              <span className="text-[9px] font-bold text-[var(--faint)] uppercase">Active Jurisdiction</span>
+              <span className="text-[12.5px] font-bold text-[var(--text)] truncate">
+                {activeCounty?.name || 'Harris County'}, {activeCounty?.stateAbbr || 'TX'}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col text-left leading-tight">
-            <span className="text-[10px] font-bold text-[var(--faint)] uppercase">Jurisdiction</span>
-            <span className="text-[13px] font-bold text-[var(--text)] truncate max-w-[170px]">
-              {activeCounty?.name || 'King County'}, {activeCounty?.stateAbbr || 'WA'}
-            </span>
-          </div>
-          <ChevronDown className="w-4 h-4 text-[var(--faint)]" />
+          <ChevronDown className="w-4 h-4 text-[var(--faint)] flex-shrink-0 ml-1" />
         </button>
 
         {jurOpen && (
-          <div className="absolute top-[52px] left-0 w-72 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-[60] animate-in fade-in zoom-in-95">
+          <div className="absolute top-[48px] left-0 right-0 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-[60] animate-in fade-in zoom-in-95">
             <div className="p-2">
               <span className="block text-[12px] font-bold text-[var(--text)]">Active Jurisdiction</span>
               <span className="block text-[11px] text-[var(--faint)]">Sets analysis defaults across all 10 screens</span>
@@ -92,7 +209,7 @@ export function Topbar() {
                 placeholder="Search counties or states..."
                 value={jurSearch}
                 onChange={(e) => setJurSearch(e.target.value)}
-                className="w-full h-8 px-2.5 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] text-[12px] outline-none focus:border-[var(--cyan)]"
+                className="w-full h-8 px-2.5 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] text-[12px] outline-none focus:border-[var(--cyan)] text-[var(--text)] placeholder:text-[var(--faint)]"
                 autoFocus
               />
             </div>
@@ -104,14 +221,14 @@ export function Topbar() {
                     setActiveJurisdiction(j._id);
                     setJurOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left text-[12.5px] transition-colors ${
-                    j._id === activeCounty?._id
+                  className={`w-full flex items-center justify-between p-2 rounded-xl text-[12.5px] transition-colors text-left ${
+                    activeCounty?._id === j._id
                       ? 'bg-[var(--glow)] text-[var(--cyan)] font-bold'
                       : 'hover:bg-[var(--surface-2)] text-[var(--text)]'
                   }`}
                 >
-                  <span>{j.name}, {j.stateAbbr}</span>
-                  <span className="text-[11px] text-[var(--faint)] num">
+                  <span className="truncate">{j.name}, {j.stateAbbr}</span>
+                  <span className="text-[11px] text-[var(--faint)] num ml-2 flex-shrink-0">
                     {j.population ? `${(j.population / 1000).toFixed(0)}k` : ''}
                   </span>
                 </button>
@@ -121,8 +238,8 @@ export function Topbar() {
         )}
       </div>
 
-      {/* Global Search Bar */}
-      <div className="flex-1 max-w-md relative z-40 hidden sm:block">
+      {/* Global Search Bar (Hidden on Mobile/Tablet) */}
+      <div className="flex-1 max-w-md relative z-40 hidden xl:block">
         <div className="relative flex items-center">
           <Search className="w-4 h-4 text-[var(--faint)] absolute left-3 pointer-events-none" />
           <input
@@ -141,7 +258,6 @@ export function Topbar() {
           </kbd>
         </div>
 
-        {/* Global search quick dropdown */}
         {searchResultsOpen && (
           <div className="absolute top-12 left-0 right-0 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-[60]">
             <div className="p-2 text-[11px] font-bold text-[var(--faint)] uppercase">Quick Navigation</div>
@@ -170,50 +286,51 @@ export function Topbar() {
         )}
       </div>
 
-      {/* Action Controls & Analyst Profile */}
-      <div className="flex items-center gap-3">
+      {/* Action Controls & Analyst Profile (Desktop View) */}
+      <div className="hidden sm:flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
         {/* Trend Window Selector */}
-        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12px] font-semibold text-[var(--muted)]">
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[11.5px] sm:text-[12px] font-semibold text-[var(--muted)]">
           <Calendar className="w-3.5 h-3.5 text-[var(--faint)]" />
           <select
             value={trendYears}
             onChange={(e) => setTrendYears(Number(e.target.value))}
             className="bg-transparent outline-none cursor-pointer text-[var(--text)] font-bold"
           >
-            <option value={10}>10 Years (2016 - 2026)</option>
-            <option value={5}>5 Years (2021 - 2026)</option>
-            <option value={3}>3 Years (2023 - 2026)</option>
+            <option value={10}>10 Yrs</option>
+            <option value={5}>5 Yrs</option>
+            <option value={3}>3 Yrs</option>
           </select>
         </div>
 
         {/* Guided Workflow Chip */}
         <button
           onClick={() => setWorkflowDrawerOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--cyan)] transition-colors text-[12px] font-bold text-[var(--cyan)]"
+          className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-full border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--cyan)] transition-colors text-[11px] sm:text-[12px] font-bold text-[var(--cyan)] cursor-pointer"
         >
           <div className="w-4 h-4 rounded-full border-2 border-[var(--teal)] flex items-center justify-center text-[9px]">
             {completedStepsCount}
           </div>
-          <span>Workflow {completedStepsCount}/10</span>
+          <span className="hidden xs:inline">Workflow</span>
+          <span>{completedStepsCount}/10</span>
         </button>
 
         {/* Dark/Light Theme Toggle */}
         <button
           onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
           aria-label="Toggle theme"
-          className="w-9 h-9 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
         >
-          {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+          {theme === 'light' ? <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
         </button>
 
         {/* User Role & Sign Out Menu */}
         <div className="relative" ref={userMenuRef}>
           <button
             onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="flex items-center gap-2 pl-2 border-l border-[var(--line)] cursor-pointer hover:opacity-90 transition-opacity"
+            className="flex items-center gap-1.5 sm:gap-2 pl-1 sm:pl-2 border-l border-[var(--line)] cursor-pointer hover:opacity-90 transition-opacity"
             title="Account & Sign out"
           >
-            <div className="w-8 h-8 rounded-full bg-[var(--glow)] border border-[var(--cyan)] flex items-center justify-center font-bold text-[11px] text-[var(--cyan)] uppercase">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[var(--glow)] border border-[var(--cyan)] flex items-center justify-center font-bold text-[10px] sm:text-[11px] text-[var(--cyan)] uppercase">
               {user?.avatar || 'PA'}
             </div>
             <div className="hidden lg:flex flex-col text-left leading-tight">
@@ -224,11 +341,11 @@ export function Topbar() {
                 {user?.organization || 'County Health Dept'}
               </span>
             </div>
-            <ChevronDown className="w-3.5 h-3.5 text-[var(--faint)] ml-0.5" />
+            <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[var(--faint)] ml-0.5" />
           </button>
 
           {userMenuOpen && (
-            <div className="absolute top-11 right-0 w-64 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-3 z-[70]">
+            <div className="absolute top-11 right-0 w-64 max-w-[90vw] rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-3 z-[70]">
               <div className="pb-2.5 mb-2 border-b border-[var(--line)]">
                 <div className="text-[12px] font-bold text-[var(--text)] truncate">
                   {user?.roleName || 'Public Health Analyst'}

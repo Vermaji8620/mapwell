@@ -651,7 +651,7 @@ function DataManagementContent() {
       </div>
 
       {/* 4 Metric KPI Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="p-4 rounded-2xl glass-panel flex flex-col justify-between">
           <span className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider">
             Connected sources
