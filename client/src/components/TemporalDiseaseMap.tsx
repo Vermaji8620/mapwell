@@ -53,6 +53,14 @@ export function TemporalDiseaseMap({
   const pathRef = useRef<d3.GeoPath<any, d3.GeoPermissibleObjects> | null>(null);
   const projectionRef = useRef<any>(null);
   const countiesRef = useRef<CountyRecord[]>([]);
+  const markersGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+
+  const conditionRef = useRef(condition);
+  conditionRef.current = condition;
+  const yearIndexRef = useRef(yearIndex);
+  yearIndexRef.current = yearIndex;
+  const countyTrendsRef = useRef(countyTrends);
+  countyTrendsRef.current = countyTrends;
 
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
@@ -135,6 +143,7 @@ export function TemporalDiseaseMap({
       const gZoom = svg.append('g').attr('class', 'zoom-root');
       const gMap = gZoom.append('g').attr('class', 'map-container').attr('transform', `translate(${padding},${padding})`);
       const gMarkers = gZoom.append('g').attr('class', 'markers-container').attr('transform', `translate(${padding},${padding})`);
+      markersGroupRef.current = gMarkers;
 
       // Gentle fade & scale-in animation on mount
       gZoom.attr('opacity', 0)
@@ -160,7 +169,6 @@ export function TemporalDiseaseMap({
       zoomBehaviorRef.current = zoom;
 
       // Color scale across all 10 years matching prototype fixed domain
-      const meta = METRICS_CONFIG[condition] || { label: condition, short: condition, unit: '%' };
       const allDomainValues: number[] = [];
       activePool.forEach(c => {
         const trend = countyTrends.get(c.id);
@@ -175,7 +183,7 @@ export function TemporalDiseaseMap({
         .data(activePool)
         .enter()
         .append('path')
-        .attr('class', 'county')
+        .attr('class', 'county transition-colors duration-200 hover:brightness-125')
         .attr('data-id', (c: CountyRecord) => c.id)
         .attr('d', (c: CountyRecord) => path(c.feature))
         .attr('fill', (c: CountyRecord) => {
@@ -189,22 +197,25 @@ export function TemporalDiseaseMap({
         .attr('stroke-width', (c: CountyRecord) =>
           c.id === selectedCountyId ? 2.5 : 0.6
         )
-        .attr('cursor', 'pointer')
-        .attr('class', 'transition-colors duration-200 hover:brightness-125');
+        .attr('cursor', 'pointer');
 
       paths.on('pointerenter', (event, c: CountyRecord) => {
         const cRect = container.getBoundingClientRect();
-        const trend = countyTrends.get(c.id);
-        const val = trend ? trend[yearIndex] : (c.indicators as any)[condition] ?? 10;
+        const curCond = conditionRef.current;
+        const curYi = yearIndexRef.current;
+        const curTrends = countyTrendsRef.current;
+        const curMeta = METRICS_CONFIG[curCond] || { label: curCond, short: curCond, unit: '%' };
+        const trend = curTrends.get(c.id);
+        const val = trend ? trend[curYi] : (c.indicators as any)[curCond] ?? 10;
 
         setTooltip({
           visible: true,
           x: event.clientX - cRect.left + 12,
           y: event.clientY - cRect.top - 12,
           name: `${c.name} County, ${c.stateAbbr}`,
-          conditionName: meta.short || meta.label,
-          rate: `${val.toFixed(1)}${meta.unit || '%'}`,
-          year: years[yearIndex],
+          conditionName: curMeta.short || curMeta.label,
+          rate: `${val.toFixed(1)}${curMeta.unit || '%'}`,
+          year: years[curYi],
           pop: c.pop.toLocaleString()
         });
       })
@@ -292,6 +303,44 @@ export function TemporalDiseaseMap({
         const val = trend ? trend[yearIndex] : 10;
         return getColor(val);
       });
+
+    // Update pulsing markers for active condition and year
+    if (markersGroupRef.current && pathRef.current) {
+      const gM = markersGroupRef.current;
+      gM.selectAll('*').remove();
+      const pGen = pathRef.current;
+
+      const topCounties = [...activePool].sort((a, b) => {
+        const valA = (countyTrends.get(a.id)?.[yearIndex]) || 0;
+        const valB = (countyTrends.get(b.id)?.[yearIndex]) || 0;
+        return valB - valA;
+      }).slice(0, 6);
+
+      topCounties.forEach(c => {
+        const centroid = pGen.centroid(c.feature);
+        if (!centroid || isNaN(centroid[0])) return;
+
+        gM.append('circle')
+          .attr('data-cx', centroid[0])
+          .attr('data-cy', centroid[1])
+          .attr('cx', centroid[0])
+          .attr('cy', centroid[1])
+          .attr('class', 'pulse-marker pointer-events-none')
+          .attr('fill', 'var(--rose, #FF5D8F)')
+          .attr('opacity', 0.65);
+
+        gM.append('circle')
+          .attr('data-cx', centroid[0])
+          .attr('data-cy', centroid[1])
+          .attr('cx', centroid[0])
+          .attr('cy', centroid[1])
+          .attr('r', 2.8)
+          .attr('fill', '#ffffff')
+          .attr('stroke', 'var(--rose, #FF5D8F)')
+          .attr('stroke-width', 1.2)
+          .attr('class', 'pointer-events-none');
+      });
+    }
   }, [yearIndex, condition, countyTrends]);
 
   // Zoom into selected county or clear highlight
