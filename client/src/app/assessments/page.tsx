@@ -110,6 +110,13 @@ function AssessmentsContent() {
     markWorkflowMilestone('assessment');
   }, [markWorkflowMilestone]);
 
+  // Synchronize modal jurisdiction with active county
+  useEffect(() => {
+    if (activeCounty?._id) {
+      setModalJur(activeCounty._id);
+    }
+  }, [activeCounty?._id]);
+
   // Load Assessments list
   const loadAssessments = async () => {
     try {

@@ -120,18 +120,20 @@ function ProgramUtilizationContent() {
       .finally(() => setLoading(false));
   }, [countyFips]);
 
-  // Load assessments for modal dropdown
+  // Load assessments for modal dropdown filtered by active county
   useEffect(() => {
-    fetch('/api/assessments')
+    fetch(`/api/assessments?jurisdiction=${countyFips}`)
       .then(r => (r.ok ? r.json() : []))
       .then(data => {
         setAssessmentsList(data);
-        if (data.length > 0 && !selectedAssessmentId) {
+        if (data.length > 0) {
           setSelectedAssessmentId(data[0]._id);
+        } else {
+          setSelectedAssessmentId('');
         }
       })
       .catch(e => console.error(e));
-  }, []);
+  }, [countyFips]);
 
   // Helper to extract utilization for a tract
   const getUtil = (t: CensusTract, progKey: string): number => {

@@ -86,13 +86,20 @@ function ReportsContent() {
     loadReports();
   }, []);
 
-  // Load Assessments for Modal
+  // Load Assessments for Modal (prioritizing active jurisdiction)
   useEffect(() => {
     fetch('/api/assessments')
       .then(r => (r.ok ? r.json() : []))
-      .then(data => setAssessmentsList(data))
+      .then(data => {
+        const sorted = [...data].sort((a, b) => {
+          if (a.jurisdictionId === activeCounty?._id) return -1;
+          if (b.jurisdictionId === activeCounty?._id) return 1;
+          return 0;
+        });
+        setAssessmentsList(sorted);
+      })
       .catch(e => console.error(e));
-  }, []);
+  }, [activeCounty]);
 
   // Load specific active report
   useEffect(() => {
@@ -297,6 +304,9 @@ function ReportsContent() {
     setSubmittingModal(true);
 
     try {
+      const selectedAss = assessmentsList.find(a => a._id === modalSource);
+      const jurId = selectedAss?.jurisdictionId || activeCounty?._id || '53033';
+
       const res = await fetch('/api/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -304,7 +314,7 @@ function ReportsContent() {
           title: modalTitle.trim(),
           type: modalType,
           fromAssessmentId: modalSource || null,
-          jurisdictionId: activeCounty?._id || '53033',
+          jurisdictionId: jurId,
           primaryMetric: modalMetric
         })
       });

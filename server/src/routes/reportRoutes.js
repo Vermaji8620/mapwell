@@ -2,6 +2,8 @@ import express from 'express';
 import { Report } from '../models/Report.js';
 import { Jurisdiction } from '../models/Jurisdiction.js';
 import { CensusTract } from '../models/CensusTract.js';
+import { Assessment } from '../models/Assessment.js';
+import { Finding } from '../models/Finding.js';
 import { METRICS } from '../config/metrics.js';
 
 const router = express.Router();
@@ -78,14 +80,48 @@ router.post('/', async (req, res, next) => {
 
     const id = await generateUniqueReportId();
 
+    let focusTracts = [];
+    let findingsSnapshot = [];
+    let actualJurId = jurisdictionId;
+    let actualMetric = primaryMetric;
+
+    if (fromAssessmentId) {
+      const assessment = await Assessment.findById(fromAssessmentId).lean();
+      if (assessment) {
+        actualJurId = assessment.jurisdictionId || jurisdictionId;
+        actualMetric = assessment.indicators?.[0] || primaryMetric;
+
+        const [findings, tracts] = await Promise.all([
+          Finding.find({ assessmentId: fromAssessmentId }).lean(),
+          CensusTract.find({ _id: { $in: assessment.focusTracts || [] } }).lean()
+        ]);
+
+        focusTracts = tracts.map(t => ({
+          id: t._id,
+          name: t.name,
+          svi: t.svi,
+          pop: t.population,
+          uninsured: t.indicators?.uninsured || 0,
+          diabetes: t.indicators?.diabetes || 0
+        }));
+
+        findingsSnapshot = findings.map(f => f.note);
+      }
+    }
+
     const report = await Report.create({
       _id: id,
       title: title || 'Untitled Report',
       type,
       fromAssessmentId: fromAssessmentId || null,
-      jurisdictionId,
-      primaryMetric,
-      status: 'Draft'
+      jurisdictionId: actualJurId,
+      primaryMetric: actualMetric,
+      status: 'Draft',
+      focusTracts,
+      findingsSnapshot,
+      methodNote: fromAssessmentId
+        ? `Compiled from Assessment ${fromAssessmentId}. Captures surveillance indicators across ${focusTracts.length} focus tracts.`
+        : 'Census tract boundaries and indicators conform to US Census Bureau ACS 5-year estimates and CDC PLACES modeling.'
     });
 
     res.status(201).json(report);
