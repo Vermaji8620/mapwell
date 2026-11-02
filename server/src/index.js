@@ -32,6 +32,16 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(morgan('dev'));
 
+// Ensure DB is connected for serverless invocations
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
@@ -55,7 +65,7 @@ app.use('/api/session', sessionRoutes);
 // Central Error Handler
 app.use(errorHandler);
 
-// Start server
+// Start server (only when running standalone server process)
 async function startServer() {
   try {
     await connectDB();
@@ -78,6 +88,8 @@ async function startServer() {
   }
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
 
 export default app;
