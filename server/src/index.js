@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import { connectDB } from './config/db.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { Jurisdiction } from './models/Jurisdiction.js';
@@ -32,10 +33,24 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(morgan('dev'));
 
+let isSeeded = false;
+
 // Ensure DB is connected for serverless invocations
 app.use(async (req, res, next) => {
   try {
     await connectDB();
+    if (!isSeeded && mongoose.connection.readyState === 1) {
+      isSeeded = true;
+      try {
+        const count = await Jurisdiction.countDocuments();
+        if (count === 0) {
+          console.log('[Auto-Seed] Database is empty. Running initial seed in serverless...');
+          await seedDatabase();
+        }
+      } catch (seedErr) {
+        console.warn('[Auto-Seed Warning]:', seedErr.message);
+      }
+    }
     next();
   } catch (err) {
     next(err);
