@@ -52,9 +52,9 @@ export function Topbar() {
   );
 
   return (
-    <header className="h-[72px] flex-shrink-0 flex items-center justify-between gap-4 px-6 border-b border-[var(--line)] bg-[var(--surface)] backdrop-blur-xl relative z-20">
+    <header className="h-[72px] flex-shrink-0 flex items-center justify-between gap-4 px-6 border-b border-[var(--line)] bg-[var(--surface)] backdrop-blur-xl relative z-40">
       {/* Jurisdiction Selector */}
-      <div className="relative" ref={jurRef}>
+      <div className="relative z-50" ref={jurRef}>
         <button
           onClick={() => setJurOpen(!jurOpen)}
           className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--line-strong)] transition-colors"
@@ -72,7 +72,7 @@ export function Topbar() {
         </button>
 
         {jurOpen && (
-          <div className="absolute top-[52px] left-0 w-72 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95">
+          <div className="absolute top-[52px] left-0 w-72 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-[60] animate-in fade-in zoom-in-95">
             <div className="p-2">
               <span className="block text-[12px] font-bold text-[var(--text)]">Active Jurisdiction</span>
               <span className="block text-[11px] text-[var(--faint)]">Sets analysis defaults across all 10 screens</span>
@@ -113,7 +113,7 @@ export function Topbar() {
       </div>
 
       {/* Global Search Bar */}
-      <div className="flex-1 max-w-md relative hidden sm:block">
+      <div className="flex-1 max-w-md relative z-40 hidden sm:block">
         <div className="relative flex items-center">
           <Search className="w-4 h-4 text-[var(--faint)] absolute left-3 pointer-events-none" />
           <input
@@ -134,7 +134,7 @@ export function Topbar() {
 
         {/* Global search quick dropdown */}
         {searchResultsOpen && (
-          <div className="absolute top-12 left-0 right-0 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-50">
+          <div className="absolute top-12 left-0 right-0 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-2 z-[60]">
             <div className="p-2 text-[11px] font-bold text-[var(--faint)] uppercase">Quick Navigation</div>
             <Link
               href="/health-map"
