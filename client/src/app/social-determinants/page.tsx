@@ -16,7 +16,7 @@ import {
   X
 } from 'lucide-react';
 import Link from 'next/link';
-import { StateCountyMap } from '@/components/StateCountyMap';
+import { StateCountyMap, createSdohColorScale } from '@/components/StateCountyMap';
 import { DumbbellPlot, DumbbellItem } from '@/components/DumbbellPlot';
 import { HistogramChart } from '@/components/HistogramChart';
 import {
@@ -216,6 +216,16 @@ function SocialDeterminantsContent() {
     return stateCounties.map(c => (c.indicators as any)[activeMetric] ?? 0);
   }, [stateCounties, activeMetric]);
 
+  // SDOH Color Scale & Legend Bins matching prototype
+  const scaleInfo = useMemo(() => {
+    return createSdohColorScale(
+      histogramValues,
+      activeMetric,
+      activeDomainId === 'access' ? 'access' : 'sdoh',
+      metricMeta.bad as any
+    );
+  }, [histogramValues, activeMetric, activeDomainId, metricMeta]);
+
   // State median for active metric
   const stateMedianVal = useMemo(() => {
     if (histogramValues.length === 0) return 0;
@@ -338,27 +348,25 @@ function SocialDeterminantsContent() {
               onSelectCounty={(c) => setSelectedCountyId(c.id)}
               onClearCounty={() => setSelectedCountyId(null)}
               metric={activeMetric}
+              layerId={activeDomainId === 'access' ? 'access' : 'sdoh'}
               height={490}
             />
           </div>
 
-          {/* Floating Bottom Left: Legend */}
-          <div className="absolute bottom-4 left-4 z-20 px-3.5 py-2 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-lg text-[11px]">
-            <div className="font-bold text-[var(--text)] mb-1">
-              {metricMeta.short || metricMeta.label}
+          {/* Floating Bottom Left: Legend matching prototype */}
+          <div className="absolute bottom-4 left-4 z-20 px-3.5 py-2.5 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-lg min-w-[220px] text-[11px]">
+            <div className="font-bold text-[var(--text)] mb-1.5 flex justify-between items-center">
+              <span>{metricMeta.short || metricMeta.label}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[var(--faint)]">Low</span>
-              <div
-                className="w-24 h-2 rounded-full"
-                style={{
-                  background:
-                    metricMeta.bad === 'low'
-                      ? 'linear-gradient(90deg, #F43F5E, #F59E0B, #37C8CF)'
-                      : 'linear-gradient(90deg, #1E293B, #2584EB, #8B5CF6, #F43F5E)'
-                }}
-              />
-              <span className="text-[10px] text-[var(--faint)]">High</span>
+            <div className="flex h-2.5 rounded overflow-hidden mb-1.5">
+              {scaleInfo.bins.map((c, i) => (
+                <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
+              ))}
+            </div>
+            <div className="flex justify-between items-center text-[10px] text-[var(--faint)]">
+              <span>{formatMetricVal(scaleInfo.extent[0] ?? 0)}</span>
+              <span>Quantile bins</span>
+              <span>{formatMetricVal(scaleInfo.extent[1] ?? 0)}</span>
             </div>
           </div>
 

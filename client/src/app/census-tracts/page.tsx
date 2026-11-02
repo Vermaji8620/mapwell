@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { MapViewCanvas } from '@/components/MapViewCanvas';
+import { CensusTractMap } from '@/components/CensusTractMap';
 import { GroupedBarChart } from '@/components/GroupedBarChart';
 
 function CensusTractsContent() {
@@ -715,26 +715,20 @@ function CensusTractsContent() {
 
         {/* Right Column (Col 4): Map Preview & Selected Tract Detail Card */}
         <div className="lg:col-span-4 flex flex-col gap-6">
-          {/* Top Panel: Centered D3 County Vector Map Preview (300px) */}
+          {/* Top Panel: Centered D3 County Vector Map Preview (290px) */}
           <section className="rounded-2xl glass-panel p-0 overflow-hidden relative h-[290px] border border-[var(--line)]">
-            <MapViewCanvas
+            <CensusTractMap
               countyFips={currentCountyId}
               tracts={tracts}
-              selectedTractId={selectedTractId || undefined}
+              selectedTractId={selectedTractId}
+              compareTractIds={compareIds}
               onSelectTract={(t) => setSelectedTractId(t._id)}
-              heatmap={false}
-              markers={false}
+              onCountySelect={(cid) => {
+                setCurrentCountyId(cid);
+                setSelectedTractId(null);
+              }}
               height={290}
             />
-            {/* Map Legend Overlay */}
-            <div className="absolute left-3 bottom-3 px-3 py-1.5 rounded-xl bg-[var(--surface-solid)]/90 backdrop-blur-md border border-[var(--line-strong)] text-[10.5px]">
-              <span className="font-bold text-[var(--text)] block mb-1">Vulnerability Tiers</span>
-              <div className="flex items-center gap-1">
-                {TIER_COLORS.map((c, i) => (
-                  <span key={i} className="w-4 h-2 rounded-xs" style={{ backgroundColor: c }} />
-                ))}
-              </div>
-            </div>
           </section>
 
           {/* Bottom Panel: Selected Tract Detail Card */}

@@ -15,7 +15,7 @@ import {
   Activity
 } from 'lucide-react';
 import Link from 'next/link';
-import { TemporalDiseaseMap } from '@/components/TemporalDiseaseMap';
+import { TemporalDiseaseMap, createDiseaseColorScale } from '@/components/TemporalDiseaseMap';
 import { TrendLineChart, TrendSeries } from '@/components/TrendLineChart';
 import { BarChart, BarDatum } from '@/components/BarChart';
 import { Sparkline } from '@/components/Sparkline';
@@ -162,6 +162,18 @@ function DiseaseIncidenceContent() {
     }
     return repo.counties;
   }, [repo, scopeSt]);
+
+  // Disease Color Scale & Legend Bins across all 10 years (Fixed across years matching prototype)
+  const diseaseScaleInfo = useMemo(() => {
+    const allVals: number[] = [];
+    poolCounties.forEach(c => {
+      const t = countyTrends.get(c.id);
+      if (t) allVals.push(...t);
+      else allVals.push((c.indicators as any)[condition] ?? 10);
+    });
+    if (allVals.length === 0) allVals.push(5, 25);
+    return createDiseaseColorScale(allVals);
+  }, [poolCounties, countyTrends, condition]);
 
   // Active Focus County
   const focusCounty = useMemo(() => {
@@ -481,17 +493,19 @@ function DiseaseIncidenceContent() {
         {/* Col 8: Temporal Map with Scrubbable 10-Year Timeline Bar */}
         <section className="lg:col-span-8 rounded-2xl glass-panel relative overflow-hidden flex flex-col justify-between min-h-[500px] border border-[var(--line)] bg-[var(--surface-solid)]/70">
           {/* Floating Legend Top-Left */}
-          <div className="absolute top-4 left-4 z-20 px-3.5 py-2 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-lg text-[11px]">
-            <div className="font-bold text-[var(--text)] mb-1">
-              {metricMeta.short} Rate ({YEARS[yearIndex]})
+          <div className="absolute top-4 left-4 z-20 px-3.5 py-2.5 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-lg min-w-[220px] text-[11px]">
+            <div className="font-bold text-[var(--text)] mb-1.5 flex justify-between items-center">
+              <span>{metricMeta.label}, {YEARS[yearIndex]}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[var(--faint)]">Low</span>
-              <div
-                className="w-24 h-2 rounded-full"
-                style={{ background: 'linear-gradient(90deg, #1E293B, #2584EB, #8B5CF6, #F43F5E)' }}
-              />
-              <span className="text-[10px] text-[var(--faint)]">High</span>
+            <div className="flex h-2.5 rounded overflow-hidden mb-1.5">
+              {diseaseScaleInfo.bins.map((c, i) => (
+                <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
+              ))}
+            </div>
+            <div className="flex justify-between items-center text-[10px] text-[var(--faint)]">
+              <span>{diseaseScaleInfo.extent[0]?.toFixed(1) ?? '0.0'}%</span>
+              <span>Fixed across years</span>
+              <span>{diseaseScaleInfo.extent[1]?.toFixed(1) ?? '0.0'}%</span>
             </div>
           </div>
 

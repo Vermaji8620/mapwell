@@ -1,16 +1,19 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
-import { CensusTract, Jurisdiction } from '@/types';
+import { CensusTract } from '@/types';
 import { TIER_COLORS, TIER_LABELS, METRICS_CONFIG, MAP_LAYERS } from '@/config/metrics';
+import { CountyRecord, getCountyRepository } from '@/utils/countyRepository';
+import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 interface MapViewProps {
   countyFips?: string;
-  tracts: CensusTract[];
+  tracts?: CensusTract[];
   selectedTractId?: string;
-  onSelectTract?: (tract: CensusTract) => void;
+  onSelectTract?: (tract: any) => void;
+  onSelectCounty?: (county: CountyRecord) => void;
   metric?: string;
   layer?: string;
   heatmap?: boolean;
@@ -21,13 +24,35 @@ interface MapViewProps {
 
 // Cache topology data to avoid re-fetching
 let topoDataCache: any = null;
+const tractCache = new Map<string, any[]>();
+
+export function getMetricVal(rec: any, key: string): number {
+  if (!rec) return 0;
+  if (key.startsWith('prog.')) {
+    const pk = key.slice(5);
+    return rec.prog?.[pk] ?? rec.indicators?.[pk] ?? (rec.indicators as any)?.[key] ?? 40;
+  }
+  if (rec.indicators && rec.indicators[key] !== undefined) {
+    return rec.indicators[key];
+  }
+  if (rec[key] !== undefined && typeof rec[key] === 'number') {
+    return rec[key];
+  }
+  const svi = rec.svi ?? (rec.indicators?.svi ?? 0.5);
+  const mMeta = METRICS_CONFIG[key];
+  if (mMeta?.bad === 'low') {
+    return Math.max(50, 95 - svi * 35);
+  }
+  return Math.max(3, 12 + svi * 45);
+}
 
 export function MapViewCanvas({
   countyFips = '53033',
-  tracts,
+  tracts: initialTracts,
   selectedTractId,
   onSelectTract,
-  metric = 'svi',
+  onSelectCounty,
+  metric = 'sdoh',
   layer = 'sdoh',
   heatmap = true,
   markers = true,
@@ -35,27 +60,38 @@ export function MapViewCanvas({
   zoomable = true
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
+  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const rootGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const cachedRepoRef = useRef<any>(null);
+
+  const [activeCid, setActiveCid] = useState<string>(countyFips);
+  const [activeTid, setActiveTid] = useState<string | null>(selectedTractId || null);
+
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
     y: number;
     title: string;
-    tier: string;
-    tierColor: string;
+    sub: string;
     metricLabel: string;
     metricVal: string;
-    pop: string;
   }>({
     visible: false,
     x: 0,
     y: 0,
     title: '',
-    tier: '',
-    tierColor: '',
+    sub: '',
     metricLabel: '',
-    metricVal: '',
-    pop: ''
+    metricVal: ''
   });
+
+  // Sync external countyFips prop
+  useEffect(() => {
+    if (countyFips && countyFips !== activeCid) {
+      setActiveCid(countyFips);
+    }
+  }, [countyFips]);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,7 +101,10 @@ export function MapViewCanvas({
       const container = containerRef.current;
       container.innerHTML = '';
 
-      // Load TopoJSON if not cached
+      const repo = await getCountyRepository();
+      if (!isMounted || !containerRef.current) return;
+      cachedRepoRef.current = repo;
+
       if (!topoDataCache) {
         try {
           const res = await fetch('/us-counties.json');
@@ -79,254 +118,419 @@ export function MapViewCanvas({
 
       if (!isMounted || !topoDataCache) return;
 
-      const counties = (topojson.feature(topoDataCache, topoDataCache.objects.counties) as any).features;
-      const targetCounty = counties.find((c: any) => c.id === countyFips) || counties.find((c: any) => c.id === '53033');
-
+      const pathGen = d3.geoPath();
+      const targetCounty = repo.countyById.get(activeCid) || repo.counties[0];
       if (!targetCounty) return;
 
-      const pathGen = d3.geoPath();
-      const countyD = pathGen(targetCounty) || '';
-      const [[x0, y0], [x1, y1]] = pathGen.bounds(targetCounty);
-      const countyWidth = Math.max(x1 - x0, 10);
-      const countyHeight = Math.max(y1 - y0, 10);
+      const stateCounties = repo.countiesByState.get(targetCounty.st) || [targetCounty];
 
-      // SVG dimensions
-      const width = container.clientWidth || 700;
       const svg = d3.select(container)
         .append('svg')
-        .attr('viewBox', `0 0 975 610`)
+        .attr('viewBox', '0 0 975 610')
         .attr('preserveAspectRatio', 'xMidYMid meet')
         .attr('class', 'w-full h-full block select-none')
-        .style('background', 'radial-gradient(ellipse at 50% 40%, rgba(37, 132, 235, 0.08), transparent 70%)');
+        .style('background', '#07111F');
+
+      svgRef.current = svg;
 
       const defs = svg.append('defs');
-      const clipId = `county-clip-${countyFips}-${Math.random().toString(36).substring(2, 7)}`;
 
-      // Clip path for county polygon
-      defs.append('clipPath')
-        .attr('id', clipId)
-        .append('path')
-        .attr('d', countyD);
+      // Pulse animation style
+      const pulseStyle = defs.append('style');
+      pulseStyle.text(`
+        @keyframes dMapPulse {
+          0% { r: 3.5px; opacity: 0.95; }
+          50% { r: 8.5px; opacity: 0.2; }
+          100% { r: 3.5px; opacity: 0.95; }
+        }
+        .d-pulse-ring {
+          animation: dMapPulse 2.2s ease-in-out infinite;
+          transform-origin: center;
+        }
+      `);
 
-      // Radial gradient for hotspot heatmaps
-      const rg = defs.append('radialGradient').attr('id', `${clipId}-glow`);
-      rg.append('stop').attr('offset', '0%').attr('stop-color', '#E0336A').attr('stop-opacity', 0.85);
-      rg.append('stop').attr('offset', '45%').attr('stop-color', '#FF5D8F').attr('stop-opacity', 0.45);
-      rg.append('stop').attr('offset', '100%').attr('stop-color', '#FF5D8F').attr('stop-opacity', 0);
+      // Gentle Radial Gradient for Hotspot
+      const heatGrad = defs.append('radialGradient')
+        .attr('id', 'd-heat-glow')
+        .attr('cx', '50%')
+        .attr('cy', '50%')
+        .attr('r', '50%');
+      heatGrad.append('stop').attr('offset', '0%').attr('stop-color', '#2584EB').attr('stop-opacity', 0.42);
+      heatGrad.append('stop').attr('offset', '40%').attr('stop-color', '#1E60BF').attr('stop-opacity', 0.22);
+      heatGrad.append('stop').attr('offset', '75%').attr('stop-color', '#123A7D').attr('stop-opacity', 0.08);
+      heatGrad.append('stop').attr('offset', '100%').attr('stop-color', '#07111F').attr('stop-opacity', 0);
 
-      const mainGroup = svg.append('g');
+      const clipPath = defs.append('clipPath').attr('id', 'd-county-clip').append('path');
 
-      // County Background outline
-      mainGroup.append('path')
-        .attr('d', countyD)
-        .attr('fill', 'var(--map-low, #101B45)')
-        .attr('stroke', 'var(--line-strong, rgba(255,255,255,0.2))')
-        .attr('stroke-width', 1.5)
-        .attr('vector-effect', 'non-scaling-stroke');
+      const rootG = svg.append('g').attr('class', 'd-root-group');
+      rootGroupRef.current = rootG;
 
-      // Group for clipped Tracts
-      const tractGroup = mainGroup.append('g').attr('clip-path', `url(#${clipId})`);
-      const heatGroup = mainGroup.append('g').style('pointer-events', 'none');
-      const markerGroup = mainGroup.append('g').style('pointer-events', 'none');
-      const selGroup = mainGroup.append('g').style('pointer-events', 'none');
+      // Group Layers
+      const gCounties = rootG.append('g').attr('class', 'state-counties');
+      const gHeat = rootG.append('g').attr('class', 'heat-layer').style('pointer-events', 'none');
+      const gTracts = rootG.append('g').attr('class', 'tracts-layer').attr('clip-path', 'url(#d-county-clip)');
+      const gSelCounty = rootG.append('g').attr('class', 'sel-county-outline').style('pointer-events', 'none');
+      const gSelTract = rootG.append('g').attr('class', 'sel-tract-outline').style('pointer-events', 'none');
+      const gMarkers = rootG.append('g').attr('class', 'markers-layer').style('pointer-events', 'none');
 
-      // Zoom behavior
+      let currentK = 1;
       const zoom = d3.zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.5, 40])
+        .translateExtent([[-600, -400], [1600, 1100]])
         .on('zoom', (event) => {
-          mainGroup.attr('transform', event.transform);
-          const k = event.transform.k;
-          markerGroup.selectAll('.pulse-m').attr('transform', (d: any) => `translate(${d.x},${d.y}) scale(${1 / k})`);
+          rootG.attr('transform', event.transform);
+          currentK = event.transform.k;
+          gMarkers.selectAll('g.marker-pin').attr('transform', function (this: any) {
+            const cx = d3.select(this).attr('data-cx');
+            const cy = d3.select(this).attr('data-cy');
+            return `translate(${cx}, ${cy}) scale(${1 / Math.sqrt(currentK)}) translate(${-cx}, ${-cy})`;
+          });
         });
 
       if (zoomable) {
-        svg.call(zoom);
+        svg.call(zoom).on('dblclick.zoom', null);
       }
+      zoomBehaviorRef.current = zoom;
 
-      // Automatically frame and center the target county
-      const padding = 0.82;
-      const s = Math.min(30, padding / Math.max(countyWidth / 975, countyHeight / 610));
-      const initialTransform = d3.zoomIdentity
-        .translate(975 / 2, 610 / 2)
-        .scale(s)
-        .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
-
-      svg.call(zoom.transform, initialTransform);
-
-      // Extract metric values to construct quantile scale
-      const activeMetricConfig = METRICS_CONFIG[metric] || METRICS_CONFIG.svi;
-      const metricValues = tracts.map(t => {
-        const val = (t.indicators as any)?.[metric] ?? (t as any)[metric] ?? t.svi;
-        return typeof val === 'number' ? val : 0;
-      });
-
-      // Layer color ramp
-      const activeLayerConfig = MAP_LAYERS.find(l => l.id === layer) || MAP_LAYERS[0];
-      const ramp = activeLayerConfig.ramp;
-      const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), ['#101B45', ...ramp]);
-      const quantileScale = d3.scaleQuantile().domain(metricValues.length ? metricValues : [0, 1]).range(d3.range(7));
-      const flip = activeMetricConfig.bad === 'low';
-
-      const getColor = (val: number) => {
-        const q = quantileScale(val);
-        const t = (q + 0.5) / 7;
-        return interp(flip ? 1 - t : t);
-      };
-
-      // Generate realistic contiguous Voronoi cells within county bounds
-      const tractCount = Math.max(tracts.length, 1);
-      const points: [number, number][] = [];
-      const coreX = x0 + countyWidth * 0.45;
-      const coreY = y0 + countyHeight * 0.45;
-
-      // Seed pseudo-random generator based on county FIPS for deterministic cell shapes
-      let seed = 0;
-      for (let i = 0; i < countyFips.length; i++) seed += countyFips.charCodeAt(i) * (i + 1) * 31;
-      const prng = () => {
-        seed = (seed * 9301 + 49297) % 233280;
-        return seed / 233280;
-      };
-
-      for (let i = 0; i < tractCount; i++) {
-        const r1 = prng();
-        const r2 = prng();
-        // Bias points toward county center
-        const px = x0 + countyWidth * (0.15 + r1 * 0.7);
-        const py = y0 + countyHeight * (0.15 + r2 * 0.7);
-        points.push([px, py]);
-      }
-
-      if (points.length < 3) {
-        points.push([x0 + countyWidth * 0.5, y0 + countyHeight * 0.5], [x0 + 1, y0 + 1], [x1 - 1, y1 - 1]);
-      }
-
-      const delaunay = d3.Delaunay.from(points);
-      const voronoi = delaunay.voronoi([x0 - 5, y0 - 5, x1 + 5, y1 + 5]);
-
-      // Combine MongoDB tracts with generated Voronoi geometry
-      const tractFeatures = tracts.map((tract, idx) => {
-        const cellPath = voronoi.renderCell(idx) || '';
-        const pt = points[idx] || [coreX, coreY];
-        const val = (tract.indicators as any)?.[metric] ?? (tract as any)[metric] ?? tract.svi;
-        return {
-          tract,
-          idx,
-          d: cellPath,
-          cx: pt[0],
-          cy: pt[1],
-          val: typeof val === 'number' ? val : 0,
-          color: getColor(typeof val === 'number' ? val : 0)
+      // Color Scale Builder
+      function getColorScale(mKey: string, lyrId: string) {
+        const lyrConfig = MAP_LAYERS.find(l => l.id === lyrId) || MAP_LAYERS[0];
+        const mConfig = METRICS_CONFIG[mKey] || { bad: 'high' };
+        const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), ['#101B45', ...lyrConfig.ramp]);
+        const vals = repo.counties.map((c: any) => getMetricVal(c, mKey));
+        const qScale = d3.scaleQuantile().domain(vals).range(d3.range(7));
+        const flip = mConfig.bad === 'low';
+        const tOf = (i: number) => {
+          const t = (i + 0.5) / 7;
+          return flip ? 1 - t : t;
         };
-      });
+        return (val: number) => interp(tOf(qScale(val)));
+      }
 
-      // Render Tract Polygons
-      const paths = tractGroup.selectAll('path.tract')
-        .data(tractFeatures, (d: any) => d.tract._id)
-        .enter()
-        .append('path')
-        .attr('class', 'tract')
-        .attr('d', (d) => d.d)
-        .attr('fill', (d) => d.color)
-        .attr('stroke', 'rgba(255, 255, 255, 0.45)')
-        .attr('stroke-width', 0.8)
-        .attr('vector-effect', 'non-scaling-stroke')
-        .attr('cursor', 'pointer')
-        .classed('sel', (d) => d.tract._id === selectedTractId);
+      // Generate Voronoi Tracts for a county
+      function getTracts(cRecord: CountyRecord) {
+        if (tractCache.has(cRecord.id)) {
+          return tractCache.get(cRecord.id)!;
+        }
 
-      // Hover and Click events
-      paths
-        .on('pointerenter', (event, d) => {
-          const rect = container.getBoundingClientRect();
-          const fmtVal = activeMetricConfig.unit === '%' ? `${d.val.toFixed(1)}%` : activeMetricConfig.unit === '/100' ? `${d.val.toFixed(0)}/100` : d.val.toFixed(2);
-          setTooltip({
-            visible: true,
-            x: event.clientX - rect.left + 12,
-            y: event.clientY - rect.top + 12,
-            title: d.tract.name,
-            tier: `${TIER_LABELS[d.tract.tier]} Vulnerability`,
-            tierColor: TIER_COLORS[d.tract.tier],
-            metricLabel: activeMetricConfig.label,
-            metricVal: fmtVal,
-            pop: `${(d.tract.population || 0).toLocaleString()} residents`
-          });
-        })
-        .on('pointermove', (event) => {
-          const rect = container.getBoundingClientRect();
-          setTooltip((prev) => ({
-            ...prev,
-            x: event.clientX - rect.left + 12,
-            y: event.clientY - rect.top + 12
-          }));
-        })
-        .on('pointerleave', () => {
-          setTooltip((prev) => ({ ...prev, visible: false }));
-        })
-        .on('click', (event, d) => {
-          event.stopPropagation();
-          paths.classed('sel', (item: any) => item.tract._id === d.tract._id);
-          // Highlight selected tract boundary with cyan glow
-          selGroup.selectAll('*').remove();
-          selGroup.append('path')
-            .attr('d', d.d)
-            .attr('fill', 'none')
-            .attr('stroke', 'var(--cyan)')
-            .attr('stroke-width', 2.8)
-            .attr('vector-effect', 'non-scaling-stroke')
-            .style('filter', 'drop-shadow(0 0 6px var(--cyan))');
+        const [[bx0, by0], [bx1, by1]] = pathGen.bounds(cRecord.feature);
+        const bw = Math.max(bx1 - bx0, 10);
+        const bh = Math.max(by1 - by0, 10);
+        const count = Math.max(8, Math.min(26, Math.round(cRecord.pop / 4500)));
 
-          if (onSelectTract) {
-            onSelectTract(d.tract);
-          }
+        let seed = 0;
+        for (let i = 0; i < cRecord.id.length; i++) seed += cRecord.id.charCodeAt(i) * (i + 1) * 31;
+        const prng = () => {
+          seed = (seed * 9301 + 49297) % 233280;
+          return seed / 233280;
+        };
+
+        const pts: [number, number][] = [];
+        for (let i = 0; i < count; i++) {
+          const r1 = prng();
+          const r2 = prng();
+          pts.push([bx0 + bw * (0.12 + r1 * 0.76), by0 + bh * (0.12 + r2 * 0.76)]);
+        }
+
+        if (pts.length < 3) {
+          pts.push([bx0 + bw * 0.5, by0 + bh * 0.5], [bx0 + 1, by0 + 1], [bx0 + bw - 1, by0 + bh - 1]);
+        }
+
+        const delaunay = d3.Delaunay.from(pts);
+        const voronoi = delaunay.voronoi([bx0 - 20, by0 - 20, bx0 + bw + 20, by0 + bh + 20]);
+
+        const out = pts.map((pt, i) => {
+          const r1 = prng();
+          const r2 = prng();
+          const svi = Math.max(0.02, Math.min(0.99, cRecord.svi + (r1 - 0.5) * 0.35));
+          const tNum = 101 + i * 2;
+          const tractId = `${cRecord.id}${String(tNum).padStart(4, '0')}00`;
+
+          return {
+            id: tractId,
+            name: `Census Tract ${tNum}`,
+            countyId: cRecord.id,
+            countyName: cRecord.name,
+            stateAbbr: cRecord.stateAbbr,
+            pop: Math.round(Math.max(800, cRecord.pop / count * (0.6 + r2 * 0.8))),
+            svi,
+            tier: Math.min(4, Math.floor(svi * 5)),
+            cx: pt[0],
+            cy: pt[1],
+            d: voronoi.renderCell(i) || '',
+            indicators: {
+              sdoh: Math.round(cRecord.indicators.sdoh * (0.7 + r1 * 0.6)),
+              incidence: Math.round(cRecord.indicators.incidence * (0.75 + r2 * 0.5)),
+              utilization: Math.round(cRecord.indicators.utilization * (0.7 + prng() * 0.6)),
+              poverty: Math.round(cRecord.indicators.poverty * (0.7 + r1 * 0.6) * 10) / 10,
+              uninsured: Math.round(cRecord.indicators.uninsured * (0.75 + r2 * 0.5) * 10) / 10,
+              diabetes: Math.round(cRecord.indicators.diabetes * (0.8 + prng() * 0.4) * 10) / 10,
+              access: Math.round(cRecord.indicators.access * (0.8 + r2 * 0.4)),
+              lifeExp: Math.round((cRecord.indicators.lifeExp - (svi - 0.5) * 6) * 10) / 10
+            }
+          };
         });
 
-      // Highlight selected tract if initially passed
-      if (selectedTractId) {
-        const found = tractFeatures.find(f => f.tract._id === selectedTractId);
-        if (found) {
-          selGroup.selectAll('*').remove();
-          selGroup.append('path')
-            .attr('d', found.d)
-            .attr('fill', 'none')
-            .attr('stroke', 'var(--cyan)')
-            .attr('stroke-width', 2.8)
-            .attr('vector-effect', 'non-scaling-stroke')
-            .style('filter', 'drop-shadow(0 0 6px var(--cyan))');
+        tractCache.set(cRecord.id, out);
+        return out;
+      }
+
+      // Render Surrounding State Counties
+      const countyPaths = gCounties.selectAll<SVGPathElement, CountyRecord>('path.county')
+        .data(stateCounties, (c: any) => c.id)
+        .enter()
+        .append('path')
+        .attr('class', 'county')
+        .attr('data-id', c => c.id)
+        .attr('d', c => pathGen(c.feature) || '')
+        .attr('fill', c => c.id === targetCounty.id ? '#101B45' : '#0B1530')
+        .attr('opacity', c => c.id === targetCounty.id ? 1 : 0.45)
+        .attr('stroke', c => c.id === targetCounty.id ? 'var(--cyan, #37C8CF)' : 'rgba(255, 255, 255, 0.08)')
+        .attr('stroke-width', c => c.id === targetCounty.id ? 2.0 : 0.5)
+        .attr('vector-effect', 'non-scaling-stroke')
+        .attr('cursor', 'pointer');
+
+      // Hover on outside surrounding counties
+      countyPaths
+        .on('pointerenter', function (event, c) {
+          if (c.id !== currentDemonstratedCid) {
+            d3.select(this)
+              .attr('stroke', '#38BDF8')
+              .attr('stroke-width', 1.6)
+              .attr('opacity', 0.85);
+          }
+          const rect = container.getBoundingClientRect();
+          const v = getMetricVal(c, metric);
+          setTooltip({
+            visible: true,
+            x: event.clientX - rect.left + 14,
+            y: event.clientY - rect.top - 14,
+            title: `${c.name} County`,
+            sub: `${c.stateAbbr} • ${Math.round(c.pop / 1000)}k residents`,
+            metricLabel: METRICS_CONFIG[metric]?.short || 'Metric',
+            metricVal: `${v.toFixed(1)}%`
+          });
+        })
+        .on('pointermove', function (event) {
+          const rect = container.getBoundingClientRect();
+          setTooltip(prev => ({
+            ...prev,
+            x: event.clientX - rect.left + 14,
+            y: event.clientY - rect.top - 14
+          }));
+        })
+        .on('pointerleave', function (event, c) {
+          if (c.id !== currentDemonstratedCid) {
+            d3.select(this)
+              .attr('stroke', 'rgba(255, 255, 255, 0.08)')
+              .attr('stroke-width', 0.5)
+              .attr('opacity', 0.45);
+          }
+          setTooltip(prev => ({ ...prev, visible: false }));
+        })
+        .on('click', function (event, c) {
+          event.stopPropagation();
+          // Shift demonstration to clicked outside region
+          demonstrateCounty(c.id, true);
+          if (onSelectCounty) onSelectCounty(c);
+        });
+
+      let currentDemonstratedCid = targetCounty.id;
+      let currentScale = 3.5;
+
+      // Function to focus and demonstrate a county with its tracts
+      function demonstrateCounty(cid: string, animate = true) {
+        currentDemonstratedCid = cid;
+        setActiveCid(cid);
+        const cRec = repo.countyById.get(cid);
+        if (!cRec) return;
+
+        const cD = pathGen(cRec.feature) || '';
+        const [[bx0, by0], [bx1, by1]] = pathGen.bounds(cRec.feature);
+        const bw = Math.max(bx1 - bx0, 10);
+        const bh = Math.max(by1 - by0, 10);
+
+        // Frame camera with generous padding so the county is big and prominently zoomed in
+        const pad = 0.65;
+        const s = Math.min(18, Math.max(2.4, pad / Math.max(bw / 975, bh / 610)));
+        currentScale = s;
+        const targetT = d3.zoomIdentity
+          .translate(975 / 2, 610 / 2)
+          .scale(s)
+          .translate(-(bx0 + bx1) / 2, -(by0 + by1) / 2);
+
+        if (animate) {
+          svg.transition('d-zoom')
+            .duration(800)
+            .ease(d3.easeCubicInOut)
+            .call(zoom.transform, targetT);
+        } else {
+          svg.call(zoom.transform, targetT);
+        }
+
+        // Highlight demonstrated county, dim peers
+        countyPaths
+          .transition('d-dim')
+          .duration(300)
+          .attr('fill', c => c.id === cid ? '#101B45' : '#0B1530')
+          .attr('opacity', c => c.id === cid ? 1 : 0.45)
+          .attr('stroke', c => c.id === cid ? 'var(--cyan, #37C8CF)' : 'rgba(255, 255, 255, 0.08)')
+          .attr('stroke-width', c => c.id === cid ? 2.2 : 0.5);
+
+        clipPath.attr('d', cD);
+
+        gSelCounty.selectAll('*').remove();
+        gSelCounty.append('path')
+          .attr('d', cD)
+          .attr('fill', 'none')
+          .attr('stroke', 'var(--cyan, #37C8CF)')
+          .attr('stroke-width', 2.2)
+          .attr('vector-effect', 'non-scaling-stroke')
+          .style('filter', 'drop-shadow(0 0 8px rgba(55, 200, 207, 0.85))');
+
+        // Draw Voronoi Tracts
+        const tractsList = getTracts(cRec);
+        gTracts.selectAll('*').remove();
+        gSelTract.selectAll('*').remove();
+
+        const colorScale = getColorScale(metric, layer);
+
+        const tractPaths = gTracts.selectAll<SVGPathElement, any>('path.tract')
+          .data(tractsList, (t: any) => t.id)
+          .enter()
+          .append('path')
+          .attr('class', 'tract')
+          .attr('d', (t: any) => t.d)
+          .attr('data-id', (t: any) => t.id)
+          .attr('fill', (t: any) => colorScale(getMetricVal(t, metric)))
+          .attr('stroke', 'rgba(255, 255, 255, 0.45)')
+          .attr('stroke-width', 0.8)
+          .attr('vector-effect', 'non-scaling-stroke')
+          .attr('cursor', 'pointer');
+
+        tractPaths.attr('opacity', 0)
+          .transition('d-tin')
+          .delay((_, i) => 80 + i * 12)
+          .duration(350)
+          .attr('opacity', 1);
+
+        tractPaths
+          .on('pointerenter', function (event, t: any) {
+            d3.select(this)
+              .attr('stroke', '#ffffff')
+              .attr('stroke-width', 2.0)
+              .raise();
+
+            const rect = container.getBoundingClientRect();
+            const v = getMetricVal(t, metric);
+            setTooltip({
+              visible: true,
+              x: event.clientX - rect.left + 14,
+              y: event.clientY - rect.top - 14,
+              title: t.name,
+              sub: `${TIER_LABELS[t.tier]} Vulnerability • ${t.pop.toLocaleString()} residents`,
+              metricLabel: METRICS_CONFIG[metric]?.short || 'Metric',
+              metricVal: `${v.toFixed(1)}%`
+            });
+          })
+          .on('pointermove', function (event) {
+            const rect = container.getBoundingClientRect();
+            setTooltip(prev => ({
+              ...prev,
+              x: event.clientX - rect.left + 14,
+              y: event.clientY - rect.top - 14
+            }));
+          })
+          .on('pointerleave', function () {
+            d3.select(this)
+              .attr('stroke', 'rgba(255, 255, 255, 0.45)')
+              .attr('stroke-width', 0.8);
+            setTooltip(prev => ({ ...prev, visible: false }));
+          })
+          .on('click', function (event, t: any) {
+            event.stopPropagation();
+            highlightTract(t);
+            if (onSelectTract) onSelectTract(t);
+          });
+
+        // Heatmap
+        gHeat.selectAll('*').remove();
+        if (heatmap) {
+          const topTracts = [...tractsList]
+            .sort((a, b) => getMetricVal(b, metric) - getMetricVal(a, metric))
+            .slice(0, Math.max(3, Math.ceil(tractsList.length * 0.35)));
+
+          gHeat.selectAll('circle')
+            .data(topTracts)
+            .join('circle')
+            .attr('cx', (d: any) => d.cx)
+            .attr('cy', (d: any) => d.cy)
+            .attr('r', 0)
+            .attr('fill', 'url(#d-heat-glow)')
+            .attr('opacity', 0.65)
+            .transition()
+            .duration(650)
+            .attr('r', 16);
+        }
+
+        // Pulsing Need Markers
+        gMarkers.selectAll('*').remove();
+        if (markers) {
+          const topPins = [...tractsList]
+            .sort((a, b) => getMetricVal(b, metric) - getMetricVal(a, metric))
+            .slice(0, 3);
+
+          topPins.forEach(pt => {
+            const mG = gMarkers.append('g')
+              .attr('class', 'marker-pin')
+              .attr('data-cx', pt.cx)
+              .attr('data-cy', pt.cy)
+              .attr('transform', `translate(${pt.cx}, ${pt.cy}) scale(${1 / Math.sqrt(currentK)}) translate(${-pt.cx}, ${-pt.cy})`);
+
+            mG.append('circle')
+              .attr('cx', pt.cx)
+              .attr('cy', pt.cy)
+              .attr('class', 'd-pulse-ring')
+              .attr('fill', '#FF5D8F')
+              .attr('opacity', 0.65);
+
+            mG.append('circle')
+              .attr('cx', pt.cx)
+              .attr('cy', pt.cy)
+              .attr('r', 2.8)
+              .attr('fill', '#ffffff')
+              .attr('stroke', '#FF5D8F')
+              .attr('stroke-width', 1.2);
+          });
         }
       }
 
-      // Hotspot Heatmap layer (vivid glowing radial heatmaps on high-need tracts)
-      if (heatmap) {
-        const highNeed = tractFeatures.filter(f => f.tract.tier >= 3 || f.tract.svi >= 0.70);
-        heatGroup.selectAll('circle.heat')
-          .data(highNeed)
-          .enter()
-          .append('circle')
-          .attr('class', 'heat')
-          .attr('cx', d => d.cx)
-          .attr('cy', d => d.cy)
-          .attr('r', countyWidth * 0.22)
-          .attr('fill', `url(#${clipId}-glow)`)
-          .style('mix-blend-mode', 'screen')
-          .attr('opacity', 0.85);
+      function highlightTract(t: any) {
+        setActiveTid(t.id);
+        gSelTract.selectAll('*').remove();
+        gSelTract.append('path')
+          .attr('d', t.d)
+          .attr('fill', 'none')
+          .attr('stroke', 'var(--cyan, #37C8CF)')
+          .attr('stroke-width', 2.8)
+          .attr('vector-effect', 'non-scaling-stroke')
+          .style('filter', 'drop-shadow(0 0 6px var(--cyan, #37C8CF))');
+
+        // Smooth zoom closer into the clicked tract
+        const zoomScale = Math.min(24, Math.max(currentScale * 1.35, 4.5));
+        const tractT = d3.zoomIdentity
+          .translate(975 / 2, 610 / 2)
+          .scale(zoomScale)
+          .translate(-t.cx, -t.cy);
+
+        svg.transition('tract-zoom')
+          .duration(550)
+          .ease(d3.easeCubicInOut)
+          .call(zoom.transform, tractT);
       }
 
-      // Pulsing Need Markers on top 3 tracts
-      if (markers) {
-        const topMarkers = [...tractFeatures]
-          .sort((a, b) => (flip ? a.val - b.val : b.val - a.val))
-          .slice(0, 3);
-
-        const markerG = markerGroup.selectAll('g.pulse-m')
-          .data(topMarkers)
-          .enter()
-          .append('g')
-          .attr('class', 'pulse-m')
-          .attr('transform', d => `translate(${d.cx},${d.cy}) scale(${1 / s})`);
-
-        markerG.append('circle').attr('class', 'ring').attr('r', 10);
-        markerG.append('circle').attr('class', 'ring r2').attr('r', 10);
-        markerG.append('circle').attr('class', 'core').attr('r', 4.5);
-      }
+      // Initial demonstration
+      demonstrateCounty(targetCounty.id, false);
     }
 
     renderMap();
@@ -334,31 +538,79 @@ export function MapViewCanvas({
     return () => {
       isMounted = false;
     };
-  }, [countyFips, tracts, selectedTractId, metric, layer, heatmap, markers, zoomable]);
+  }, [activeCid, metric, layer, heatmap, markers]);
+
+  const handleZoomIn = () => {
+    if (svgRef.current && zoomBehaviorRef.current) {
+      svgRef.current.transition().duration(300).call(zoomBehaviorRef.current.scaleBy, 1.4);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (svgRef.current && zoomBehaviorRef.current) {
+      svgRef.current.transition().duration(300).call(zoomBehaviorRef.current.scaleBy, 1 / 1.4);
+    }
+  };
+
+  const handleResetZoom = () => {
+    if (svgRef.current && zoomBehaviorRef.current && cachedRepoRef.current) {
+      const cRec = cachedRepoRef.current.countyById.get(activeCid);
+      if (cRec) {
+        const pathGen = d3.geoPath();
+        const [[bx0, by0], [bx1, by1]] = pathGen.bounds(cRec.feature);
+        const bw = Math.max(bx1 - bx0, 10);
+        const bh = Math.max(by1 - by0, 10);
+        const pad = 0.65;
+        const s = Math.min(18, Math.max(2.4, pad / Math.max(bw / 975, bh / 610)));
+        const targetT = d3.zoomIdentity
+          .translate(975 / 2, 610 / 2)
+          .scale(s)
+          .translate(-(bx0 + bx1) / 2, -(by0 + by1) / 2);
+        svgRef.current.transition().duration(400).ease(d3.easeCubicInOut).call(zoomBehaviorRef.current.transform, targetT);
+      }
+    }
+  };
 
   return (
-    <div className="relative w-full h-full min-h-[300px] overflow-hidden rounded-xl bg-[var(--surface-solid)] border border-[var(--line)]">
-      <div ref={containerRef} className="w-full h-full min-h-[300px]" />
+    <div className="relative w-full h-full overflow-hidden rounded-xl bg-[#07111F]">
+      <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
-      {/* Floating Hover Tooltip */}
+      {/* Floating Zoom Controls */}
+      <div className="absolute bottom-3 right-3 flex items-center gap-1 p-1 bg-[#0c1427]/90 backdrop-blur-md rounded-xl border border-[rgba(255,255,255,0.15)] shadow-lg z-20">
+        <button
+          onClick={handleZoomIn}
+          title="Zoom In"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-white hover:bg-[var(--surface-2)] transition-colors"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={handleZoomOut}
+          title="Zoom Out"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-white hover:bg-[var(--surface-2)] transition-colors"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={handleResetZoom}
+          title="Reset View"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-white hover:bg-[var(--surface-2)] transition-colors"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Tooltip */}
       {tooltip.visible && (
         <div
-          className="absolute z-50 pointer-events-none px-3 py-2 rounded-xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-xl text-left animate-in fade-in duration-150"
+          className="absolute z-50 pointer-events-none p-3 rounded-xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.18)] shadow-2xl min-w-[160px] text-white text-[12px] animate-in fade-in-50 duration-100"
           style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
         >
-          <div className="text-[12px] font-bold text-[var(--text)] flex items-center gap-1.5">
-            <span
-              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: tooltip.tierColor }}
-            />
-            <span>{tooltip.title}</span>
-          </div>
-          <div className="text-[10.5px] font-semibold text-[var(--muted)] mt-0.5">
-            {tooltip.tier} • {tooltip.pop}
-          </div>
-          <div className="mt-1.5 pt-1.5 border-t border-[var(--line)] flex items-center justify-between gap-3 text-[11px]">
-            <span className="text-[var(--faint)]">{tooltip.metricLabel}:</span>
-            <span className="font-bold text-[var(--cyan)] num">{tooltip.metricVal}</span>
+          <b className="block text-[12.5px] font-bold text-white leading-tight">{tooltip.title}</b>
+          <div className="text-[10.5px] text-[rgba(255,255,255,0.5)] mt-0.5 mb-1.5">{tooltip.sub}</div>
+          <div className="flex justify-between items-center text-[11px] border-t border-[rgba(255,255,255,0.1)] pt-1.5">
+            <span className="text-[rgba(255,255,255,0.6)]">{tooltip.metricLabel}:</span>
+            <b className="num text-[var(--cyan)] font-bold">{tooltip.metricVal}</b>
           </div>
         </div>
       )}

@@ -17,6 +17,26 @@ interface TemporalDiseaseMapProps {
   countyTrends: Map<string, number[]>;
 }
 
+// Official Disease Incidence Layer Ramp matching local prototype (lines 1082 & 1094-1104)
+export const DISEASE_RAMP = ['#BDEFF0', '#37C8CF', '#2A9FD6', '#2565C8', '#173F8A'];
+export const DISEASE_LOW = '#101B45';
+
+export function createDiseaseColorScale(allValues: number[]) {
+  const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
+    d3.interpolateRgb(DISEASE_LOW, DISEASE_RAMP[0])(0.6),
+    ...DISEASE_RAMP
+  ]);
+  const qScale = d3.scaleQuantile().domain(allValues).range(d3.range(7));
+  const getColor = (val: number) => {
+    const bin = qScale(val);
+    const t = (bin + 0.5) / 7;
+    return interp(t);
+  };
+  const bins = d3.range(7).map(i => interp((i + 0.5) / 7));
+  const extent = d3.extent(allValues) as [number, number];
+  return { getColor, bins, extent, qScale };
+}
+
 export function TemporalDiseaseMap({
   scopeSt,
   condition,
@@ -139,20 +159,16 @@ export function TemporalDiseaseMap({
       svg.call(zoom).on('dblclick.zoom', null);
       zoomBehaviorRef.current = zoom;
 
-      // Color scale
+      // Color scale across all 10 years matching prototype fixed domain
       const meta = METRICS_CONFIG[condition] || { label: condition, short: condition, unit: '%' };
-      const currentYearValues = activePool.map(c => {
+      const allDomainValues: number[] = [];
+      activePool.forEach(c => {
         const trend = countyTrends.get(c.id);
-        return trend ? trend[yearIndex] : (c.indicators as any)[condition] ?? 10;
+        if (trend) allDomainValues.push(...trend);
+        else allDomainValues.push((c.indicators as any)[condition] ?? 10);
       });
 
-      const extent = d3.extent(currentYearValues) as [number, number];
-      const minVal = extent[0] ?? 5;
-      const maxVal = extent[1] ?? 25;
-
-      const colorScale = d3.scaleSequential()
-        .domain([minVal, maxVal])
-        .interpolator(d3.interpolateRgbBasis(['#1E293B', '#2584EB', '#8B5CF6', '#F43F5E']));
+      const { getColor } = createDiseaseColorScale(allDomainValues);
 
       // Render Counties
       const paths = gMap.selectAll('path.county')
@@ -165,7 +181,7 @@ export function TemporalDiseaseMap({
         .attr('fill', (c: CountyRecord) => {
           const trend = countyTrends.get(c.id);
           const val = trend ? trend[yearIndex] : (c.indicators as any)[condition] ?? 10;
-          return colorScale(val);
+          return getColor(val);
         })
         .attr('stroke', (c: CountyRecord) =>
           c.id === selectedCountyId ? 'var(--cyan, #37C8CF)' : 'rgba(255,255,255,0.18)'
@@ -227,7 +243,7 @@ export function TemporalDiseaseMap({
           .attr('cx', centroid[0])
           .attr('cy', centroid[1])
           .attr('class', 'pulse-marker pointer-events-none')
-          .attr('fill', '#F43F5E')
+          .attr('fill', 'var(--rose, #FF5D8F)')
           .attr('opacity', 0.65);
 
         // Core dot
@@ -238,7 +254,7 @@ export function TemporalDiseaseMap({
           .attr('cy', centroid[1])
           .attr('r', 2.8)
           .attr('fill', '#ffffff')
-          .attr('stroke', '#F43F5E')
+          .attr('stroke', 'var(--rose, #FF5D8F)')
           .attr('stroke-width', 1.2)
           .attr('class', 'pointer-events-none');
       });
@@ -257,18 +273,14 @@ export function TemporalDiseaseMap({
     const activePool = countiesRef.current;
     if (activePool.length === 0) return;
 
-    const currentYearValues = activePool.map(c => {
+    const allDomainValues: number[] = [];
+    activePool.forEach(c => {
       const trend = countyTrends.get(c.id);
-      return trend ? trend[yearIndex] : (c.indicators as any)[condition] ?? 10;
+      if (trend) allDomainValues.push(...trend);
+      else allDomainValues.push((c.indicators as any)[condition] ?? 10);
     });
 
-    const extent = d3.extent(currentYearValues) as [number, number];
-    const minVal = extent[0] ?? 5;
-    const maxVal = extent[1] ?? 25;
-
-    const colorScale = d3.scaleSequential()
-      .domain([minVal, maxVal])
-      .interpolator(d3.interpolateRgbBasis(['#1E293B', '#2584EB', '#8B5CF6', '#F43F5E']));
+    const { getColor } = createDiseaseColorScale(allDomainValues);
 
     svg.selectAll('path.county')
       .transition()
@@ -278,7 +290,7 @@ export function TemporalDiseaseMap({
         const id = d3.select(this).attr('data-id');
         const trend = countyTrends.get(id);
         const val = trend ? trend[yearIndex] : 10;
-        return colorScale(val);
+        return getColor(val);
       });
   }, [yearIndex, condition, countyTrends]);
 
