@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useSession } from '@/context/SessionContext';
 import { Icon } from '@/components/Icons';
 import { LoginShowcaseMap } from '@/components/LoginShowcaseMap';
 
@@ -22,6 +23,7 @@ const ROLES: RoleOption[] = [
 export default function LoginPage() {
   const router = useRouter();
   const { user, login, loginWithGoogle } = useAuth();
+  const { activeCounty } = useSession();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,8 +34,38 @@ export default function LoginPage() {
   const [passwordError, setPasswordError] = useState('');
   const [generalError, setGeneralError] = useState('');
   const [resetMessage, setResetMessage] = useState('');
+  const [shake, setShake] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+
+  // Animated count-up for census tracts analyzed HUD card
+  const tractCount = 398;
+  const countyLabel = activeCounty?.name
+    ? `${activeCounty.name}, ${activeCounty.stateAbbr}`
+    : 'King County, WA';
+
+  const [displayedCount, setDisplayedCount] = useState(0);
+
+  useEffect(() => {
+    let start = 0;
+    const duration = 1200;
+    const startTime = performance.now();
+    let frameId: number;
+
+    const animate = (time: number) => {
+      const elapsed = time - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // easeOutCubic
+      const ease = 1 - Math.pow(1 - progress, 3);
+      setDisplayedCount(Math.round(tractCount * ease));
+      if (progress < 1) {
+        frameId = requestAnimationFrame(animate);
+      }
+    };
+
+    frameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameId);
+  }, [tractCount]);
 
   // If already logged in, redirect to dashboard
   useEffect(() => {
@@ -44,11 +76,18 @@ export default function LoginPage() {
 
   const handleForgotPassword = () => {
     const trimmed = email.trim();
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      setResetMessage(`In a live deployment, a reset link would be emailed to ${trimmed}. For this demo environment, any valid email and 8+ char password will sign in.`);
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) {
+      setResetMessage(
+        `In a live deployment, a reset link would be emailed to ${trimmed}. This demo does not send email.`
+      );
     } else {
-      setResetMessage('Enter your work email in the field above, then select Forgot password again.');
+      setResetMessage('Enter your work email above, then choose Forgot password again. This demo does not send email.');
     }
+  };
+
+  const triggerShake = () => {
+    setShake(true);
+    setTimeout(() => setShake(false), 450);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -56,36 +95,44 @@ export default function LoginPage() {
     setEmailError('');
     setPasswordError('');
     setGeneralError('');
-    setResetMessage('');
 
     let hasError = false;
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
-      setEmailError('Please enter your work email address');
+      setEmailError('Enter your work email.');
       hasError = true;
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setEmailError('Please enter a valid email address (e.g. name@health.gov)');
+    } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmedEmail)) {
+      setEmailError('Enter a valid email address.');
       hasError = true;
     }
 
     if (!password) {
-      setPasswordError('Please enter your password');
+      setPasswordError('Enter your password.');
       hasError = true;
     } else if (password.length < 8) {
-      setPasswordError('Password must contain at least 8 characters');
+      setPasswordError('Passwords are at least 8 characters.');
       hasError = true;
     }
 
-    if (hasError) return;
+    if (hasError) {
+      triggerShake();
+      return;
+    }
 
     setIsSubmitting(true);
     try {
       const roleObj = ROLES.find((r) => r.id === selectedRole) || ROLES[0];
-      await login(trimmedEmail, password, roleObj.id, rememberMe);
-      router.replace('/');
+      const res = await login(trimmedEmail, password, roleObj.id, rememberMe);
+      if (!res.success) {
+        setGeneralError(res.error || 'Failed to sign in. Please verify your credentials.');
+        triggerShake();
+      } else {
+        router.replace('/');
+      }
     } catch (err: any) {
       setGeneralError(err.message || 'Unable to sign in. Please verify your credentials.');
+      triggerShake();
     } finally {
       setIsSubmitting(false);
     }
@@ -95,8 +142,12 @@ export default function LoginPage() {
     setIsGoogleSubmitting(true);
     try {
       const roleObj = ROLES.find((r) => r.id === selectedRole) || ROLES[0];
-      await loginWithGoogle({ role: roleObj.id }, roleObj.id, rememberMe);
-      router.replace('/');
+      const res = await loginWithGoogle({ role: roleObj.id }, roleObj.id, rememberMe);
+      if (!res.success) {
+        setGeneralError(res.error || 'Single sign-on authentication failed. Please try standard sign in.');
+      } else {
+        router.replace('/');
+      }
     } catch (err: any) {
       setGeneralError('Single sign-on authentication failed. Please try standard sign in.');
     } finally {
@@ -107,7 +158,7 @@ export default function LoginPage() {
   return (
     <div id="login">
       {/* Left Column: Sign-in Card */}
-      <section className="lg-card" style={{ background: '#24354D', color: '#FFFFFF' }}>
+      <section className="lg-card">
         {/* Brand header */}
         <div className="lg-brand">
           <svg viewBox="0 0 40 40" aria-hidden="true">
@@ -144,42 +195,27 @@ export default function LoginPage() {
         </div>
 
         {/* Main form */}
-        <form className="lg-main" id="lg-form" onSubmit={handleSubmit} noValidate>
+        <form className={`lg-main ${shake ? 'lg-shake' : ''}`} id="lg-form" onSubmit={handleSubmit} noValidate>
           <h1>Sign in to MapWell</h1>
           <p>Use your health department account to open your workspace.</p>
 
           {/* Reset / General Message */}
-          {resetMessage && (
-            <div
-              className="lg-note"
-              style={{
-                marginBottom: '14px',
-                marginTop: '0',
-                background: '#EAF4FF',
-                borderColor: '#B9D6F0',
-                color: '#1A55B8'
-              }}
-            >
-              <span>ℹ</span>
-              <span>{resetMessage}</span>
-            </div>
-          )}
-
-          {generalError && (
-            <div
-              className="lg-note"
-              style={{
-                marginBottom: '14px',
-                marginTop: '0',
-                background: '#FDECEE',
-                borderColor: '#F7C6CC',
-                color: '#C72248'
-              }}
-            >
-              <span>⚠</span>
-              <span>{generalError}</span>
-            </div>
-          )}
+          <div id="lg-reset">
+            {resetMessage && <div className="lg-reset">{resetMessage}</div>}
+            {generalError && (
+              <div
+                className="lg-reset"
+                style={{
+                  background: '#FFF1F2',
+                  borderColor: '#FECDD3',
+                  color: '#BE123C',
+                  marginBottom: '14px'
+                }}
+              >
+                {generalError}
+              </div>
+            )}
+          </div>
 
           {/* Email input */}
           <label className="lg-f">
@@ -253,6 +289,7 @@ export default function LoginPage() {
                     className={`lg-role ${isOn ? 'on' : ''}`}
                     role="radio"
                     aria-checked={isOn}
+                    data-r={r.id}
                     onClick={() => setSelectedRole(r.id)}
                   >
                     {r.title}
@@ -278,7 +315,14 @@ export default function LoginPage() {
 
           {/* Submit Button */}
           <button className="lg-btn" id="lg-go" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? <span className="lg-spin" /> : <span>Sign in</span>}
+            {isSubmitting ? (
+              <>
+                <span className="lg-spin" />
+                <span>Signing in</span>
+              </>
+            ) : (
+              <span>Sign in</span>
+            )}
           </button>
 
           {/* Divider */}
@@ -293,7 +337,10 @@ export default function LoginPage() {
             disabled={isGoogleSubmitting}
           >
             {isGoogleSubmitting ? (
-              <span className="lg-spin" style={{ borderColor: 'rgba(0,144,194,0.3)', borderTopColor: 'var(--cyan)' }} />
+              <>
+                <span className="lg-spin" style={{ borderColor: 'rgba(0,144,194,0.3)', borderTopColor: 'var(--cyan)' }} />
+                <span>Connecting SSO...</span>
+              </>
             ) : (
               <>
                 <Icon name="link" />
@@ -318,68 +365,8 @@ export default function LoginPage() {
         </div>
       </section>
 
-      {/* Right Column: Hero Showcase */}
-      <section className="lg-side" aria-hidden="true">
-        <div className="lg-copy">
-          <h2>Census tract insight for every community you serve</h2>
-          <p>
-            Map social determinants, disease incidence and program use, find underserved neighborhoods, and turn findings
-            into assessments.
-          </p>
-        </div>
-
-        <div id="lg-map" style={{ position: 'absolute', inset: '90px 40px 120px' }}>
-          <LoginShowcaseMap />
-        </div>
-
-        <div className="lg-float" style={{ position: 'absolute', right: '40px', top: '150px', width: '210px', zIndex: 5 }}>
-          <span className="m-ico">
-            <Icon name="grid" />
-          </span>
-          <b>King County, WA</b>
-          <span className="note">Census tracts analyzed</span>
-          <div className="v num">398</div>
-        </div>
-
-        <div className="lg-float" style={{ position: 'absolute', left: '40px', bottom: '96px', width: '230px', zIndex: 5 }}>
-          <b>Community vulnerability</b>
-          <div
-            className="legend"
-            style={{ padding: '8px 0 0', minWidth: 0, background: 'none', border: 0, boxShadow: 'none' }}
-          >
-            <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '4px' }}>Vulnerability index</div>
-            <div
-              style={{
-                height: '7px',
-                borderRadius: '4px',
-                background: 'linear-gradient(90deg, #CDE7FB 0%, #8CC6F4 25%, #4C9BEA 50%, #2462C9 75%, #163A7E 100%)'
-              }}
-            />
-            <div
-              className="ends"
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                marginTop: '4px',
-                fontSize: '10px',
-                color: 'var(--faint)'
-              }}
-            >
-              <span>0.01</span>
-              <span>Counties</span>
-              <span>0.99</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="lg-caps">
-          <span>Health map</span>
-          <span>Tract explorer</span>
-          <span>Disparities</span>
-          <span>Needs assessments</span>
-          <span>Reports</span>
-        </div>
-      </section>
+      {/* Right Column: Hero Showcase Map */}
+      <LoginShowcaseMap countyName={countyLabel} tractCount={displayedCount || 398} />
     </div>
   );
 }
