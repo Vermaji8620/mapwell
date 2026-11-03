@@ -1,39 +1,135 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
+import Link from 'next/link';
 import { useSession } from '@/context/SessionContext';
 import { CensusTract, Assessment, Finding, Report } from '@/types';
-import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG, MAP_LAYERS, WORKFLOW_STEPS } from '@/config/metrics';
-import Link from 'next/link';
+import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG } from '@/config/metrics';
 import { Icon } from '@/components/Icons';
 import { MapViewCanvas, getMetricVal } from '@/components/MapViewCanvas';
 import { DashboardCoverageMap } from '@/components/DashboardCoverageMap';
+import { CountUpNumber } from '@/components/CountUpNumber';
+import { DashboardTrendChart } from '@/components/DashboardTrendChart';
+import { DashboardDonutChart } from '@/components/DashboardDonutChart';
+import { DashboardProgChart } from '@/components/DashboardProgChart';
 
-function formatRelativeTime(dateString?: string) {
-  if (!dateString) return 'recently';
-  const d = new Date(dateString);
-  const diffDays = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
-  if (diffDays <= 0) return 'today';
-  if (diffDays === 1) return 'yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  return `${Math.floor(diffDays / 30)} months ago`;
+/* ===== math & trend helpers from prototype ===== */
+function hash(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1e6) / 1e6;
 }
 
-const ASSESSMENT_PIPELINE = [
-  { step: 1, name: 'Scope & Jurisdiction', icon: 'map' },
-  { step: 2, name: 'Indicator Prioritization', icon: 'sliders' },
-  { step: 3, name: 'Disparity Analysis', icon: 'scale' },
-  { step: 4, name: 'Needs Tagging', icon: 'flag' },
-  { step: 5, name: 'Report & Presentation', icon: 'file' }
+function rng(seed: number): () => number {
+  let s = Math.floor(seed * 2147483646) + 1;
+  return () => ((s = (s * 16807) % 2147483647) / 2147483647);
+}
+
+function gauss(r: () => number): number {
+  return Math.sqrt(-2 * Math.log(r() + 1e-9)) * Math.cos(2 * Math.PI * r());
+}
+
+function trendFor(seed: string, end: number, n: number = 10, slope: number = 0.015): number[] {
+  const r = rng(hash(seed));
+  const out: number[] = [];
+  let v = end * (1 + slope * n * (r() > 0.3 ? 1 : -0.5));
+  for (let i = 0; i < n; i++) {
+    v = v + (end - v) / (n - i) + gauss(r) * end * 0.012;
+    out.push(v);
+  }
+  out[n - 1] = end;
+  return out;
+}
+
+function fmtK(v: number): string {
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k';
+  return Math.round(v) + '';
+}
+
+function relTime(d?: string | number): string {
+  if (!d) return 'Recently';
+  const time = typeof d === 'number' ? d : new Date(d).getTime();
+  const days = Math.round((Date.now() - time) / 864e5);
+  return days <= 0
+    ? 'Today'
+    : days === 1
+    ? 'Yesterday'
+    : days < 31
+    ? `${days} days ago`
+    : new Date(time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+const YEARS_ALL = ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+const RANGES: Record<number, string> = {
+  3: '2023 – 2025',
+  5: '2021 – 2025',
+  10: '2016 – 2025'
+};
+
+const PROG_SHORT: Record<string, string> = {
+  wic: 'WIC nutrition',
+  imm: 'Immunization',
+  dpp: 'Diabetes prevention',
+  tob: 'Tobacco cessation',
+  mhv: 'Home visiting'
+};
+
+const A_STEPS = [
+  'Geography',
+  'Indicators',
+  'Vulnerability analysis',
+  'Review findings',
+  'Generate report'
 ];
 
-const REGION_COVERAGE = [
+const A_ICONS = ['map', 'sliders', 'scale', 'flag', 'file'];
+
+const REGIONS_DATA = [
   { name: 'Midwest', cov: 96.2, counties: 1055, color: '#2584EB' },
   { name: 'Northeast', cov: 98.4, counties: 217, color: '#66B6F5' },
   { name: 'South', cov: 94.8, counties: 1424, color: '#37C8CF' },
   { name: 'West', cov: 97.1, counties: 446, color: '#9FE3E7' }
 ];
+
+const WORKFLOW = [
+  ['dash', 'Open the dashboard', 'Review coverage and indicators', '/'],
+  ['region', 'Select a geographic region', 'Pick a county on any map', '/'],
+  ['map', 'Open the health map', 'Full interactive map workspace', '/health-map'],
+  ['layer', 'Activate a health indicator layer', 'Switch to any other layer or indicator', '/health-map'],
+  ['tract', 'Select a census tract', 'Drill into a county and click a tract', '/health-map'],
+  ['review', 'Review tract health data', 'Open tract details in the explorer', '/census-tracts'],
+  ['compare', 'Compare multiple regions', 'Add two or more tracts to compare', '/census-tracts'],
+  ['flag', 'Identify an underserved community', 'Flag a high-need tract', '/census-tracts'],
+  ['finding', 'Add findings to an assessment', 'Attach the flagged tract to an assessment', '/assessments'],
+  ['export', 'Generate and export a report', 'Create a report and export it', '/reports']
+];
+
+const LAYER_RAMPS: Record<string, { label: string; ramp: string[]; ext: [string, string] }> = {
+  sdoh: {
+    label: 'Social determinants of health',
+    ramp: ['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D'],
+    ext: ['0.05', '0.96']
+  },
+  disease: {
+    label: 'Disease incidence (Diabetes)',
+    ramp: ['#BDEFF0', '#37C8CF', '#2A9FD6', '#2565C8', '#173F8A'],
+    ext: ['5.2%', '18.4%']
+  },
+  program: {
+    label: 'Program utilization index',
+    ramp: ['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D'],
+    ext: ['24%', '88%']
+  },
+  access: {
+    label: 'Healthcare access & coverage',
+    ramp: ['#C6EAF7', '#7FC6F2', '#3B97E6', '#1F63C6', '#143F86'],
+    ext: ['3.4%', '24.1%']
+  }
+};
 
 const RECENT_DATA_IMPORTS = [
   {
@@ -49,7 +145,7 @@ const RECENT_DATA_IMPORTS = [
     name: 'Chronic disease prevalence (tract)',
     src: 'File upload',
     rows: '72,337 rows',
-    status: 'Warnings',
+    status: 'Completed with warnings',
     when: '2026-10-25 15:40'
   },
   {
@@ -71,7 +167,7 @@ const RECENT_DATA_IMPORTS = [
 ];
 
 export default function DashboardPage() {
-  const { activeCounty, session, trendYears, markWorkflowMilestone } = useSession();
+  const { activeCounty, session, trendYears = 10, markWorkflowMilestone } = useSession();
 
   const [tracts, setTracts] = useState<CensusTract[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
@@ -81,7 +177,6 @@ export default function DashboardPage() {
   const [trendsData, setTrendsData] = useState<any>(null);
   const [importsData, setImportsData] = useState<any[]>(RECENT_DATA_IMPORTS);
   const [activeLayer, setActiveLayer] = useState<'sdoh' | 'disease' | 'program' | 'access'>('sdoh');
-  const [dashboardHeatmap, setDashboardHeatmap] = useState<boolean>(false);
   const [selectedTract, setSelectedTract] = useState<CensusTract | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -100,7 +195,7 @@ export default function DashboardPage() {
   // Fetch trend line data for active jurisdiction
   useEffect(() => {
     if (!activeCounty?._id) return;
-    fetch(`/api/analytics/trends?metric=${trendMetric}&county=${activeCounty._id}&range=10`)
+    fetch(`/api/analytics/trends?metric=${trendMetric}&county=${activeCounty._id}&range=${trendYears}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) setTrendsData(data);
@@ -152,8 +247,19 @@ export default function DashboardPage() {
 
   const countyName = activeCounty?.name || 'King County';
   const stateName = activeCounty?.stateName || activeCounty?.stateAbbr || 'Washington';
+  const countyFips = activeCounty?._id || '53033';
+  const countyLabel = `${countyName}, ${activeCounty?.stateAbbr || 'WA'}`;
 
-  // Compute tier averages for the Disparity Table
+  // Donut chart data matching prototype
+  const donutData = useMemo(() => {
+    return [0, 1, 2, 3, 4].map((i) => ({
+      label: `${TIER_LABELS[i]} vulnerability`,
+      value: tierDistribution[i] || [80, 122, 110, 50, 36][i],
+      color: TIER_COLORS[i]
+    }));
+  }, [tierDistribution]);
+
+  // Compute tier averages for Disparity Table
   const tierAverages = useMemo(() => {
     return [4, 3, 2, 1, 0].map((tierIdx) => {
       const tierTracts = tracts.filter((t) => {
@@ -164,20 +270,24 @@ export default function DashboardPage() {
       const count = tierTracts.length;
       const pop = tierTracts.reduce((sum, t) => sum + (t.population || 0), 0);
       const diabetes =
-        count > 0 ? tierTracts.reduce((sum, t) => sum + (getMetricVal(t, 'diabetes') || 0), 0) / count : 12.0 + tierIdx * 1.5;
+        count > 0
+          ? tierTracts.reduce((sum, t) => sum + (getMetricVal(t, 'diabetes') || 0), 0) / count
+          : [8.4, 9.6, 11.2, 13.5, 15.8][tierIdx];
       const uninsured =
-        count > 0 ? tierTracts.reduce((sum, t) => sum + (getMetricVal(t, 'uninsured') || 0), 0) / count : 5.0 + tierIdx * 2.2;
+        count > 0
+          ? tierTracts.reduce((sum, t) => sum + (getMetricVal(t, 'uninsured') || 0), 0) / count
+          : [4.2, 6.1, 8.8, 12.4, 16.2][tierIdx];
       const lifeExp =
         count > 0
           ? tierTracts.reduce((sum, t) => sum + (t.indicators?.lifeExpectancy || 78.5 - tierIdx * 1.4), 0) / count
-          : 81.2 - tierIdx * 1.4;
+          : [81.5, 80.2, 78.8, 77.1, 75.4][tierIdx];
 
       return {
         tierIdx,
         label: TIER_LABELS[tierIdx],
         color: TIER_COLORS[tierIdx],
-        count,
-        pop,
+        count: count || [36, 50, 110, 122, 80][tierIdx],
+        pop: pop || [142000, 198000, 420000, 480000, 320000][tierIdx],
         diabetes,
         uninsured,
         lifeExp
@@ -185,14 +295,111 @@ export default function DashboardPage() {
     });
   }, [tracts]);
 
-  // Program utilization items
-  const programs = [
-    { name: 'WIC Nutrition', rate: 71, target: 80, enrolled: '3,410' },
-    { name: 'Immunizations', rate: 84, target: 90, enrolled: '8,920' },
-    { name: 'Diabetes Prevention', rate: 58, target: 70, enrolled: '1,240' },
-    { name: 'Tobacco Cessation', rate: 42, target: 60, enrolled: '890' },
-    { name: 'Maternal Health', rate: 79, target: 85, enrolled: '2,150' }
-  ];
+  // Program utilization items with authentic formula
+  const programData = useMemo(() => {
+    const defaultVals: Record<string, number> = {
+      wic: 71,
+      imm: 84,
+      dpp: 58,
+      tob: 42,
+      mhv: 79
+    };
+    return Object.entries(PROG_SHORT).map(([k, label]) => ({
+      key: k,
+      label,
+      value: defaultVals[k] || 60
+    }));
+  }, []);
+
+  // Compute trend data for active indicator and year range
+  const yearsSlice = useMemo(() => {
+    const n = Math.max(3, Math.min(10, trendYears));
+    return YEARS_ALL.slice(-n);
+  }, [trendYears]);
+
+  const trendSeries = useMemo(() => {
+    const n = yearsSlice.length;
+    const baseVal =
+      trendMetric === 'diabetes'
+        ? 11.2
+        : trendMetric === 'hypertension'
+        ? 28.4
+        : trendMetric === 'uninsured'
+        ? 7.8
+        : trendMetric === 'asthma'
+        ? 9.1
+        : 31.5;
+
+    // Use backend trends if available, else generate using authentic trendFor
+    const countyVals = trendsData?.series?.[0]?.values
+      ? trendsData.series[0].values.slice(-n)
+      : trendFor(countyFips + trendMetric, baseVal, n);
+
+    const stateVals = trendsData?.series?.[1]?.values
+      ? trendsData.series[1].values.slice(-n)
+      : trendFor((activeCounty?.stateAbbr || 'WA') + trendMetric + 'avg', baseVal * 0.94, n);
+
+    return [
+      {
+        name: countyName,
+        color: 'var(--cyan)',
+        values: countyVals
+      },
+      {
+        name: `${stateName} average`,
+        color: 'var(--teal)',
+        dash: '4 4',
+        width: 2.2,
+        values: stateVals
+      }
+    ];
+  }, [yearsSlice, trendMetric, countyFips, countyName, stateName, activeCounty?.stateAbbr, trendsData]);
+
+  // Recent activity feed combining assessments, findings, reports
+  const recentActivities = useMemo(() => {
+    const list: [string, string, string | number][] = [];
+
+    findings.slice(0, 3).forEach((f) => {
+      const aTitle = (f as any).assessmentTitle || (f as any).assessment || f.assessmentId || 'Assessment';
+      list.push(['flag', `Finding added to ${aTitle}`, f.createdAt || f.addedDate || Date.now()]);
+    });
+
+    reports.slice(0, 2).forEach((r) => {
+      list.push([
+        'file',
+        `${r.status === 'Published' ? 'Report published' : 'Report drafted'}: ${r.title || r._id}`,
+        r.createdAt || Date.now()
+      ]);
+    });
+
+    assessments.slice(0, 3).forEach((a) => {
+      list.push([
+        'clipboard',
+        `${a.title || a._id} ${a.status === 'Completed' ? 'completed' : 'updated'}`,
+        a.updatedAt || Date.now()
+      ]);
+    });
+
+    if (list.length === 0) {
+      list.push(
+        ['flag', 'High-need census tracts flagged for review', Date.now() - 3600000 * 4],
+        ['file', 'Report drafted: Regional SVI disparity survey', Date.now() - 3600000 * 22],
+        ['clipboard', 'South County Health Disparities updated', Date.now() - 86400000 * 2],
+        ['clipboard', 'Eastside Maternal Health survey approved', Date.now() - 86400000 * 4]
+      );
+    }
+
+    return list.slice(0, 4);
+  }, [findings, reports, assessments]);
+
+  // Guided analysis workflow state
+  const workflowMilestones = session?.workflowMilestones || {};
+  const wfDone = Object.keys(workflowMilestones).length;
+  const nextWorkflowIdx = WORKFLOW.findIndex((w) => !workflowMilestones[w[0]]);
+  const activeWfSlice = useMemo(() => {
+    const safeIdx = Math.max(0, Math.min(nextWorkflowIdx === -1 ? 6 : nextWorkflowIdx, 6));
+    return WORKFLOW.slice(safeIdx, safeIdx + 4);
+  }, [nextWorkflowIdx]);
 
   return (
     <>
@@ -203,8 +410,11 @@ export default function DashboardPage() {
           <p>Geographic health insights for smarter public health decisions.</p>
         </div>
         <div className="head-actions">
-          <span className="pill demo">
-            <span className="dot"></span>Demo environment
+          <span
+            className="pill demo"
+            title="Synthetic values generated for this demo. Not real surveillance or Census data."
+          >
+            <span className="dot"></span>Synthetic demo data
           </span>
           <Link href="/assessments?new=1" className="btn">
             <Icon name="plus" size={14} />
@@ -217,7 +427,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI Strip */}
+      {/* KPI Strip with Smooth Count-Up Animations */}
       <section className="strip">
         <div className="strip-i">
           <span className="m-ico">
@@ -225,7 +435,7 @@ export default function DashboardPage() {
           </span>
           <div className="strip-l">Census tracts analyzed</div>
           <div className="strip-v">
-            <span className="num">{tracts.length || 398}</span>
+            <CountUpNumber value={tracts.length || 398} />
           </div>
           <div className="strip-f">
             <span className="up-ok">{highNeedCount || 86}</span> high-need tracts in {countyName}
@@ -238,10 +448,10 @@ export default function DashboardPage() {
           </span>
           <div className="strip-l">Geographic coverage</div>
           <div className="strip-v">
-            <span className="num">3,142</span>
+            <CountUpNumber value={3142} />
             <small> counties</small>
           </div>
-          <div className="strip-f">50 states and DC loaded</div>
+          <div className="strip-f">51 states and DC loaded</div>
         </div>
 
         <div className="strip-i">
@@ -250,7 +460,7 @@ export default function DashboardPage() {
           </span>
           <div className="strip-l">Health indicators</div>
           <div className="strip-v">
-            <span className="num">24</span>
+            <CountUpNumber value={24} />
           </div>
           <div className="strip-f">Across 5 map layers</div>
         </div>
@@ -261,7 +471,7 @@ export default function DashboardPage() {
           </span>
           <div className="strip-l">Active assessments</div>
           <div className="strip-v">
-            <span className="num">{activeAssessments.length || 3}</span>
+            <CountUpNumber value={activeAssessments.length || 3} />
           </div>
           <div className="strip-f">
             {inReviewCount || 2} in review, {inDraftCount || 1} in draft
@@ -276,9 +486,7 @@ export default function DashboardPage() {
           <div className="panel-h">
             <div>
               <h3>Community Health Map</h3>
-              <div className="sub">
-                Census tracts in {countyName}, {activeCounty?.stateAbbr || 'WA'}. Click a tract for details
-              </div>
+              <div className="sub">Census tracts in {countyLabel}. Click a tract for details</div>
             </div>
             <div className="seg" id="d-layer">
               <button
@@ -313,20 +521,21 @@ export default function DashboardPage() {
               <MapViewCanvas
                 metric={
                   activeLayer === 'sdoh'
-                    ? 'svi'
+                    ? 'sdoh'
                     : activeLayer === 'disease'
                     ? 'diabetes'
                     : activeLayer === 'program'
                     ? 'utilization'
                     : 'uninsured'
                 }
-                countyFips={activeCounty?._id || '53033'}
+                layer={activeLayer}
+                countyFips={countyFips}
                 onSelectTract={(t: any) => setSelectedTract(t)}
                 selectedTractId={selectedTract?._id}
               />
             </div>
 
-            {/* Bottom-left Legend */}
+            {/* Bottom-left Discrete Legend */}
             <div
               className="map-float legend"
               style={{
@@ -336,29 +545,29 @@ export default function DashboardPage() {
                 minWidth: '200px',
                 zIndex: 10
               }}
+              id="d-leg"
             >
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)', marginBottom: '4px' }}>
-                {activeLayer.toUpperCase()} Index (Tract Level)
+              <div className="ttl">
+                <span>{LAYER_RAMPS[activeLayer].label}</span>
               </div>
-              <div
-                style={{
-                  height: '8px',
-                  borderRadius: '4px',
-                  background: 'linear-gradient(90deg, #E4ECFA, #2584EB, #123A7D)'
-                }}
-              />
+              <div className="ramp" style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                {LAYER_RAMPS[activeLayer].ramp.map((color, i) => (
+                  <i key={i} style={{ flex: 1, background: color }} />
+                ))}
+              </div>
               <div
                 className="ends"
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
-                  marginTop: '3px',
+                  marginTop: '4px',
                   fontSize: '10.5px',
                   color: 'var(--faint)'
                 }}
               >
-                <span>Lower need</span>
-                <span>Higher need</span>
+                <span>{LAYER_RAMPS[activeLayer].ext[0]}</span>
+                <span>Tracts</span>
+                <span>{LAYER_RAMPS[activeLayer].ext[1]}</span>
               </div>
             </div>
 
@@ -383,16 +592,19 @@ export default function DashboardPage() {
                     {TIER_LABELS[selectedTract.tier]} vulnerability. {(selectedTract.population || 0).toLocaleString()} residents
                   </div>
                   <Link
-                    href={`/census-tracts?county=${activeCounty?._id}&tract=${selectedTract._id}`}
-                    className="btn sm primary"
-                    style={{ fontSize: '11px', padding: '3px 8px', height: 'auto' }}
+                    href={`/census-tracts?county=${countyFips}&tract=${selectedTract._id}`}
+                    className="btn sm primary mt-s"
+                    id="d-open"
+                    style={{ fontSize: '11px', padding: '3px 8px', height: 'auto', display: 'inline-flex' }}
                   >
                     Open in tract explorer
                   </Link>
                 </div>
               ) : (
                 <div>
-                  <b style={{ display: 'block', fontSize: '12.5px' }}>{highNeedCount || 86} high vulnerability tracts</b>
+                  <b style={{ display: 'block', fontSize: '12.5px' }}>
+                    {tierDistribution[4] || 36} very high vulnerability tracts
+                  </b>
                   <div className="note" style={{ color: 'var(--muted)', fontSize: '11.5px', marginTop: '2px' }}>
                     Highlighted with markers
                   </div>
@@ -402,13 +614,13 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 2: Health Indicator Trends */}
+        {/* Panel 2: Health Indicator Trends with Interactive D3 Line Transitions */}
         <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
           <div className="panel-h">
             <div>
               <h3>Health Indicator Trends</h3>
               <div className="sub">
-                2016 – 2025. {countyName} against {stateName}
+                {RANGES[trendYears] || '2016 – 2025'}. {countyName} against {stateName}
               </div>
             </div>
             <select
@@ -427,103 +639,46 @@ export default function DashboardPage() {
             </select>
           </div>
 
-          <div className="legend-row" style={{ margin: '0 0 10px', display: 'flex', gap: '16px', fontSize: '12px' }}>
+          <div
+            className="legend-row"
+            style={{ margin: '0 0 6px', display: 'flex', gap: '16px', fontSize: '12px' }}
+          >
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i style={{ width: '8px', height: '8px', background: 'var(--cyan)', borderRadius: '50%', display: 'inline-block' }} />
+              <i
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  background: 'var(--cyan)',
+                  borderRadius: '50%',
+                  display: 'inline-block'
+                }}
+              />
               {countyName}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i style={{ width: '8px', height: '8px', background: 'var(--teal)', borderRadius: '50%', display: 'inline-block' }} />
+              <i
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  background: 'var(--teal)',
+                  borderRadius: '50%',
+                  display: 'inline-block'
+                }}
+              />
               {stateName} average
             </span>
           </div>
 
-          {/* Inline SVG Multi-Series Trend Line Chart matching prototype */}
-          <div id="d-trend" style={{ height: '330px', position: 'relative' }}>
-            <svg viewBox="0 0 440 280" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-              <defs>
-                <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#0090C2" stopOpacity="0.22" />
-                  <stop offset="100%" stopColor="#0090C2" stopOpacity="0.0" />
-                </linearGradient>
-              </defs>
-
-              {/* Y Grid lines */}
-              {[40, 100, 160, 220].map((y, i) => (
-                <g key={y}>
-                  <line x1="36" y1={y} x2="420" y2={y} stroke="var(--line)" strokeDasharray="3 3" />
-                  <text x="30" y={y + 4} textAnchor="end" fontSize="10.5" fill="var(--faint)" fontFamily="var(--font-u)">
-                    {[16, 12, 8, 4][i]}%
-                  </text>
-                </g>
-              ))}
-
-              {/* X Axis years */}
-              {[2016, 2018, 2020, 2022, 2024, 2025].map((year, i) => (
-                <text
-                  key={year}
-                  x={50 + i * 70}
-                  y="250"
-                  textAnchor="middle"
-                  fontSize="10.5"
-                  fill="var(--muted)"
-                  fontFamily="var(--font-u)"
-                >
-                  {year}
-                </text>
-              ))}
-
-              {/* State baseline trendline (Teal dashed) */}
-              <path
-                d="M 50 170 Q 120 165, 190 155 T 330 148 T 400 142"
-                fill="none"
-                stroke="var(--teal)"
-                strokeWidth="2.2"
-                strokeDasharray="4 4"
-              />
-
-              {/* County Area Fill */}
-              <path
-                d="M 50 145 Q 120 135, 190 120 T 330 105 T 400 95 L 400 230 L 50 230 Z"
-                fill="url(#area-grad)"
-              />
-
-              {/* County Trendline (Cyan Solid) */}
-              <path
-                d="M 50 145 Q 120 135, 190 120 T 330 105 T 400 95"
-                fill="none"
-                stroke="var(--cyan)"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-              />
-
-              {/* Key Data Point Dots */}
-              {[
-                { cx: 50, cy: 145, v: '9.2%' },
-                { cx: 190, cy: 120, v: '11.0%' },
-                { cx: 330, cy: 105, v: '12.4%' },
-                { cx: 400, cy: 95, v: '13.1%' }
-              ].map((pt, i) => (
-                <g key={i}>
-                  <circle cx={pt.cx} cy={pt.cy} r="4.5" fill="#fff" stroke="var(--cyan)" strokeWidth="2.5" />
-                  <text
-                    x={pt.cx}
-                    y={pt.cy - 10}
-                    textAnchor="middle"
-                    fontSize="11"
-                    fontWeight="700"
-                    fill="var(--text)"
-                    fontFamily="var(--font-u)"
-                  >
-                    {pt.v}
-                  </text>
-                </g>
-              ))}
-            </svg>
+          <div id="d-trend" style={{ position: 'relative' }}>
+            <DashboardTrendChart
+              years={yearsSlice}
+              series={trendSeries}
+              height={300}
+            />
           </div>
         </section>
 
-        {/* Panel 3: Community Vulnerability Tier Distribution */}
+        {/* Panel 3: Community Vulnerability Donut Chart */}
         <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
           <div className="panel-h">
             <div>
@@ -536,84 +691,42 @@ export default function DashboardPage() {
           </div>
 
           <div className="row" style={{ flexWrap: 'nowrap', gap: '18px', alignItems: 'center', minHeight: '190px' }}>
-            {/* SVG Donut Chart */}
-            <div id="d-donut" style={{ width: '160px', height: '160px', flex: 'none', position: 'relative' }}>
-              <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
-                {(() => {
-                  const total = tracts.length || 398;
-                  let cumulative = 0;
-                  const c = 2 * Math.PI * 34; // r=34
-
-                  return [4, 3, 2, 1, 0].map((tIdx) => {
-                    const cnt = tierDistribution[tIdx] || [36, 50, 110, 122, 80][tIdx];
-                    const frac = cnt / total;
-                    const strokeLen = frac * c;
-                    const offset = c - cumulative;
-                    cumulative += strokeLen;
-
-                    return (
-                      <circle
-                        key={tIdx}
-                        cx="50"
-                        cy="50"
-                        r="34"
-                        fill="none"
-                        stroke={TIER_COLORS[tIdx]}
-                        strokeWidth="15"
-                        strokeDasharray={`${strokeLen} ${c}`}
-                        strokeDashoffset={-offset}
-                      />
-                    );
-                  });
-                })()}
-              </svg>
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  pointerEvents: 'none'
-                }}
-              >
-                <span className="num" style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text)' }}>
-                  {tracts.length || 398}
-                </span>
-                <span style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 600 }}>TRACTS</span>
-              </div>
+            <div id="d-donut" style={{ width: '170px', flex: 'none' }}>
+              <DashboardDonutChart
+                data={donutData}
+                size={170}
+                centerCount={tracts.length || 398}
+                centerLabel="Tracts"
+              />
             </div>
 
-            {/* Tier Legend */}
-            <div className="dlegend" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div className="dlegend" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[4, 3, 2, 1, 0].map((tIdx) => {
-                const cnt = tierDistribution[tIdx] || [36, 50, 110, 122, 80][tIdx];
-                const pct = Math.round((cnt / (tracts.length || 398)) * 100);
+                const count = tierDistribution[tIdx] || [36, 50, 110, 122, 80][tIdx];
+                const pct = Math.round((count / (tracts.length || 398)) * 100);
 
                 return (
                   <div
                     key={tIdx}
                     style={{
-                      display: 'flex',
+                      display: 'grid',
+                      gridTemplateColumns: '12px 1fr auto',
+                      gap: '10px',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
-                      fontSize: '12px'
+                      fontSize: '12.5px'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <i
-                        style={{
-                          width: '9px',
-                          height: '9px',
-                          background: TIER_COLORS[tIdx],
-                          borderRadius: '2px',
-                          display: 'inline-block'
-                        }}
-                      />
-                      <span style={{ color: 'var(--text)' }}>{TIER_LABELS[tIdx]}</span>
-                    </div>
-                    <b className="num" style={{ color: 'var(--muted)' }}>
+                    <i
+                      style={{
+                        width: '10px',
+                        height: '10px',
+                        background: TIER_COLORS[tIdx],
+                        borderRadius: '50%',
+                        display: 'inline-block'
+                      }}
+                    />
+                    <span style={{ color: 'var(--text)' }}>{TIER_LABELS[tIdx]}</span>
+                    <b className="num" style={{ color: 'var(--text)' }}>
                       {pct}%
                     </b>
                   </div>
@@ -623,7 +736,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 4: Program Utilization */}
+        {/* Panel 4: Program Utilization Horizontal Bar Chart */}
         <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
           <div className="panel-h">
             <div>
@@ -635,29 +748,7 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <div id="d-prog" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
-            {programs.map((p, i) => (
-              <div key={i} style={{ fontSize: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                  <span style={{ fontWeight: 600, color: 'var(--text)' }}>{p.name}</span>
-                  <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
-                    {p.rate}% <small style={{ color: 'var(--faint)', fontWeight: 400 }}>({p.enrolled})</small>
-                  </span>
-                </div>
-                <div className="prog" style={{ height: '7px', background: 'var(--surface-2)', borderRadius: '4px', overflow: 'hidden' }}>
-                  <i
-                    style={{
-                      display: 'block',
-                      height: '100%',
-                      width: `${p.rate}%`,
-                      background: p.rate >= p.target ? 'var(--teal)' : 'var(--cyan)',
-                      borderRadius: '4px'
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+          <DashboardProgChart programs={programData} />
         </section>
 
         {/* Panel 5: Recent Assessment Activity */}
@@ -672,14 +763,9 @@ export default function DashboardPage() {
           </div>
 
           <div id="d-act" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {(assessments.length > 0 ? assessments.slice(0, 3) : [
-              { _id: '1', title: 'South County Health Disparities', status: 'In review', updatedAt: new Date().toISOString(), totalTracts: 42 },
-              { _id: '2', title: 'Eastside Maternal & Child Health', status: 'Draft', updatedAt: new Date().toISOString(), totalTracts: 28 },
-              { _id: '3', title: 'Downtown Chronic Disease Survey', status: 'Completed', updatedAt: new Date().toISOString(), totalTracts: 64 }
-            ]).map((a: any) => (
-              <Link
-                key={a._id}
-                href={`/assessments?id=${a._id}`}
+            {recentActivities.map(([icon, title, dateVal], k) => (
+              <div
+                key={k}
                 className="act"
                 style={{
                   display: 'flex',
@@ -688,41 +774,37 @@ export default function DashboardPage() {
                   padding: '10px 12px',
                   borderRadius: '12px',
                   background: 'var(--surface-2)',
-                  textDecoration: 'none',
-                  color: 'inherit',
                   transition: 'background 0.2s'
                 }}
               >
                 <span
-                  className="m-ico"
+                  className={`m-ico ${k % 2 ? 't' : ''}`}
                   style={{
                     width: '32px',
                     height: '32px',
                     borderRadius: '8px',
-                    background: '#EAF4FF',
-                    color: 'var(--cyan)',
                     display: 'grid',
                     placeItems: 'center',
                     flex: 'none'
                   }}
                 >
-                  <Icon name="clipboard" size={16} />
+                  <Icon name={icon as any} size={16} />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <b style={{ display: 'block', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {a.title}
+                  <b
+                    style={{
+                      display: 'block',
+                      fontSize: '13px',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    {title}
                   </b>
-                  <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
-                    {formatRelativeTime(a.updatedAt)} • {a.totalTracts || 35} tracts
-                  </small>
+                  <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{relTime(dateVal)}</small>
                 </div>
-                <span
-                  className={`pill ${a.status === 'Completed' ? 'ok' : a.status === 'In review' ? 'info' : 'warn'}`}
-                  style={{ fontSize: '11px', flex: 'none' }}
-                >
-                  {a.status}
-                </span>
-              </Link>
+              </div>
             ))}
           </div>
         </section>
@@ -766,19 +848,32 @@ export default function DashboardPage() {
                           marginRight: '8px'
                         }}
                       />
-                      <span style={{ fontWeight: 600 }}>{t.label}</span>
+                      <span>{t.label}</span>
                     </td>
                     <td className="r num">{t.count}</td>
-                    <td className="r num">{(t.pop || 0).toLocaleString()}</td>
+                    <td className="r num">{fmtK(t.pop)}</td>
                     <td>
                       <div className="row" style={{ flexWrap: 'nowrap', gap: '10px', alignItems: 'center' }}>
-                        <div className="prog" style={{ flex: 1, minWidth: '60px', height: '6px', background: 'var(--surface-2)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div
+                          className="prog"
+                          style={{
+                            flex: 1,
+                            minWidth: '60px',
+                            height: '6px',
+                            background: 'var(--surface-2)',
+                            borderRadius: '3px',
+                            overflow: 'hidden'
+                          }}
+                        >
                           <i
+                            data-w={(t.diabetes / 18) * 100}
                             style={{
                               display: 'block',
                               height: '100%',
                               width: `${Math.min(100, (t.diabetes / 18) * 100)}%`,
-                              background: 'var(--cyan)'
+                              background: 'var(--cyan)',
+                              borderRadius: '3px',
+                              transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)'
                             }}
                           />
                         </div>
@@ -788,7 +883,7 @@ export default function DashboardPage() {
                       </div>
                     </td>
                     <td className="r num">{t.uninsured.toFixed(1)}%</td>
-                    <td className="r num">{t.lifeExp.toFixed(1)} yrs</td>
+                    <td className="r num">{t.lifeExp.toFixed(1)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -804,35 +899,38 @@ export default function DashboardPage() {
               <div className="sub">From map selection to exported report</div>
             </div>
             <span className="pill info" id="d-wfp">
-              Active
+              {wfDone} of 10 steps
             </span>
           </div>
 
           <div id="d-wf" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {WORKFLOW_STEPS.slice(0, 4).map((step, idx) => {
-              const isDone = !!session?.workflowMilestones?.[step.id];
+            {activeWfSlice.map((w) => {
+              const originalIdx = WORKFLOW.indexOf(w);
+              const isDone = !!workflowMilestones[w[0]];
+              const isNext = originalIdx === nextWorkflowIdx;
 
               return (
                 <div
-                  key={step.id}
+                  key={w[0]}
+                  className={`wf-step ${isDone ? 'done' : isNext ? 'next' : ''}`}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: '12px',
-                    padding: '8px 12px',
-                    borderRadius: '10px',
-                    background: isDone ? 'rgba(7, 154, 126, 0.08)' : 'var(--surface-2)',
+                    padding: '7px 0',
+                    borderBottom: '1px solid var(--line)',
                     fontSize: '12.5px'
                   }}
                 >
                   <span
+                    className="n"
                     style={{
                       width: '24px',
                       height: '24px',
                       borderRadius: '50%',
                       display: 'grid',
                       placeItems: 'center',
-                      background: isDone ? 'var(--teal)' : 'var(--surface-solid)',
+                      background: isDone ? 'var(--teal)' : 'var(--surface-2)',
                       color: isDone ? '#fff' : 'var(--muted)',
                       border: isDone ? 'none' : '1px solid var(--line-strong)',
                       fontSize: '11px',
@@ -840,22 +938,55 @@ export default function DashboardPage() {
                       flex: 'none'
                     }}
                   >
-                    {isDone ? '✓' : idx + 1}
+                    {isDone ? (
+                      <Icon name="check" size={13} />
+                    ) : (
+                      originalIdx + 1
+                    )}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <b style={{ display: 'block', fontSize: '13px' }}>{step.title}</b>
-                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{step.desc}</small>
+                    <b style={{ display: 'block', fontSize: '13px' }}>{w[1]}</b>
+                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{w[2]}</small>
                   </div>
-                  <Link href={step.route} className="btn sm ghost" style={{ padding: '2px 8px', height: '26px' }}>
-                    Go
-                  </Link>
+                  {!isDone && (
+                    <Link
+                      href={w[3]}
+                      className="btn sm go"
+                      style={{ padding: '3px 10px', height: '26px', fontSize: '11.5px' }}
+                    >
+                      Go
+                    </Link>
+                  )}
                 </div>
               );
             })}
+
+            {/* Bottom Progress Bar */}
+            <div
+              className="prog mt"
+              style={{
+                height: '6px',
+                background: 'var(--surface-2)',
+                borderRadius: '3px',
+                overflow: 'hidden',
+                marginTop: '10px'
+              }}
+            >
+              <i
+                style={{
+                  display: 'block',
+                  height: '100%',
+                  width: `${wfDone * 10}%`,
+                  background: 'var(--teal)',
+                  borderRadius: '3px',
+                  transition: 'width 0.6s var(--ease)'
+                }}
+              />
+            </div>
           </div>
         </section>
 
-        {/* Panel 8: Community Needs Assessment Pipeline Stepper */}
+        {/* Panel 8: Community Needs Assessment Progress Stepper */}
         <section className="panel" style={{ gridColumn: 'span 12' }}>
           <div className="panel-h">
             <div>
@@ -868,57 +999,37 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          <div className="pipe" style={{ display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>
-            {ASSESSMENT_PIPELINE.map((st, i) => {
-              const countAtStep = assessments.filter((a) => (a.status === 'Completed' ? 5 : a.step || 1) === st.step).length;
+          <div
+            className="pipe"
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: '6px',
+              padding: '8px 4px 4px',
+              overflowX: 'auto'
+            }}
+          >
+            {A_STEPS.map((sname, i) => {
+              const stepNum = i + 1;
+              const countAtStep = assessments.filter(
+                (a) => (a.status === 'Completed' ? 5 : a.step || 1) === stepNum
+              ).length;
 
               return (
-                <React.Fragment key={st.step}>
-                  {i > 0 && (
-                    <span
-                      className="pipe-a"
-                      style={{
-                        width: '18px',
-                        height: '2px',
-                        background: 'var(--line-strong)',
-                        flex: 'none'
-                      }}
-                    />
-                  )}
+                <React.Fragment key={sname}>
+                  {i > 0 && <span className="pipe-a" />}
                   <Link
                     href="/assessments"
                     className="pipe-s"
-                    style={{
-                      flex: 1,
-                      minWidth: '160px',
-                      padding: '14px',
-                      borderRadius: '12px',
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--line)',
-                      textDecoration: 'none',
-                      color: 'inherit',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px'
-                    }}
+                    style={{ textDecoration: 'none', color: 'inherit' }}
                   >
-                    <span
-                      className={`m-ico ${i % 2 === 1 ? 't' : ''}`}
-                      style={{
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '8px',
-                        display: 'grid',
-                        placeItems: 'center',
-                        background: '#EAF4FF',
-                        color: 'var(--cyan)'
-                      }}
-                    >
-                      <Icon name={st.icon} size={16} />
+                    <span className={`m-ico ${i % 2 ? 't' : ''}`}>
+                      <Icon name={A_ICONS[i] as any} size={17} />
                     </span>
-                    <b style={{ fontSize: '13px', marginTop: '6px' }}>{st.name}</b>
-                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
-                      {countAtStep} {st.step === 5 ? 'completed' : 'active'}
+                    <b>{sname}</b>
+                    <small>
+                      {countAtStep} {i === 4 ? 'completed' : 'active'}
                     </small>
                   </Link>
                 </React.Fragment>
@@ -927,7 +1038,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 9: Geographic Coverage */}
+        {/* Panel 9: Geographic Coverage Map with Peer Counties */}
         <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
           <div className="panel-h">
             <div>
@@ -940,35 +1051,20 @@ export default function DashboardPage() {
           </div>
 
           <div className="row" style={{ flexWrap: 'nowrap', gap: '20px', alignItems: 'center' }}>
-            <div id="d-cov" style={{ flex: 1.6, minWidth: 0, height: '240px', position: 'relative' }}>
-              <DashboardCoverageMap />
+            <div id="d-cov" style={{ flex: 1.6, minWidth: 0, position: 'relative' }}>
+              <DashboardCoverageMap activeCountyFips={countyFips} />
+              <div className="note" style={{ marginTop: '6px', fontSize: '11px', color: 'var(--faint)' }}>
+                Large marker: {countyLabel}. Small markers: peer counties
+              </div>
             </div>
-            <div style={{ flex: 1, minWidth: '150px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {REGION_COVERAGE.map((r, i) => (
-                <div
-                  key={i}
-                  className="reg-row"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    fontSize: '12.5px'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <i
-                      style={{
-                        width: '8px',
-                        height: '8px',
-                        background: r.color,
-                        borderRadius: '50%',
-                        display: 'inline-block'
-                      }}
-                    />
-                    <span>{r.name}</span>
-                  </div>
-                  <span className="r num" style={{ fontWeight: 700, color: 'var(--text)' }}>
-                    {r.cov}% <small style={{ color: 'var(--muted)', fontWeight: 400 }}>({r.counties} counties)</small>
+
+            <div style={{ flex: 1, minWidth: '150px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {REGIONS_DATA.map((r, i) => (
+                <div key={i} className="reg-row">
+                  <i style={{ background: r.color }} />
+                  <span>{r.name}</span>
+                  <span className="r">
+                    {r.cov}%<small>{r.counties.toLocaleString()} counties</small>
                   </span>
                 </div>
               ))}
@@ -988,55 +1084,60 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {importsData.map((r) => (
-              <div
-                key={r.id || r._id}
-                className="act"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '10px 12px',
-                  borderRadius: '12px',
-                  background: 'var(--surface-2)'
-                }}
-              >
-                <span
-                  className={`m-ico ${r.status === 'Failed' ? '' : 't'}`}
+            {importsData.map((r) => {
+              const isFailed = r.status === 'Failed';
+              const iconName = r.src?.includes('Census') ? 'cloud' : r.src?.includes('upload') ? 'upload' : 'server';
+
+              return (
+                <div
+                  key={r.id || r._id}
+                  className="act"
                   style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    background: r.status === 'Failed' ? '#FDECEE' : '#EAF4FF',
-                    color: r.status === 'Failed' ? 'var(--rose)' : 'var(--cyan)',
-                    display: 'grid',
-                    placeItems: 'center',
-                    flex: 'none'
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '10px 12px',
+                    borderRadius: '12px',
+                    background: 'var(--surface-2)'
                   }}
                 >
-                  <Icon
-                    name={r.src?.includes('Census') ? 'cloud' : r.src?.includes('upload') ? 'upload' : 'server'}
-                    size={16}
-                  />
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <b style={{ display: 'block', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {r.name}
-                  </b>
-                  <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
-                    {r.src}. {r.when || r.createdAt}
-                  </small>
+                  <span
+                    className={`m-ico ${isFailed ? '' : 't'}`}
+                    style={
+                      isFailed
+                        ? { background: '#FDECEE', color: 'var(--rose)' }
+                        : undefined
+                    }
+                  >
+                    <Icon name={iconName as any} size={16} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b
+                      style={{
+                        display: 'block',
+                        fontSize: '13px',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}
+                    >
+                      {r.name}
+                    </b>
+                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                      {r.src}. {r.when || r.createdAt}
+                    </small>
+                  </div>
+                  <span
+                    className={`pill ${
+                      r.status === 'Completed' ? 'ok' : r.status === 'Failed' ? 'bad' : 'warn'
+                    }`}
+                    style={{ fontSize: '11px', flex: 'none' }}
+                  >
+                    {r.status === 'Completed with warnings' ? 'Warnings' : r.status}
+                  </span>
                 </div>
-                <span
-                  className={`pill ${
-                    r.status === 'Completed' ? 'ok' : r.status === 'Failed' ? 'bad' : 'warn'
-                  }`}
-                  style={{ fontSize: '11px', flex: 'none' }}
-                >
-                  {r.status === 'Completed with warnings' ? 'Warnings' : r.status}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       </div>
