@@ -107,7 +107,7 @@ export default function LoginPage() {
   return (
     <div id="login">
       {/* Left Column: Sign-in Card */}
-      <section className="lg-card">
+      <section className="lg-card" style={{ background: '#24354D', color: '#FFFFFF' }}>
         {/* Brand header */}
         <div className="lg-brand">
           <svg viewBox="0 0 40 40" aria-hidden="true">
@@ -328,7 +328,7 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <div id="lg-map" style={{ position: 'absolute', inset: 0 }}>
+        <div id="lg-map" style={{ position: 'absolute', inset: '90px 40px 120px' }}>
           <LoginShowcaseMap />
         </div>
 
@@ -347,11 +347,12 @@ export default function LoginPage() {
             className="legend"
             style={{ padding: '8px 0 0', minWidth: 0, background: 'none', border: 0, boxShadow: 'none' }}
           >
+            <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '4px' }}>Vulnerability index</div>
             <div
               style={{
-                height: '6px',
-                borderRadius: '3px',
-                background: 'linear-gradient(90deg, #E4ECFA, #2584EB, #123A7D)'
+                height: '7px',
+                borderRadius: '4px',
+                background: 'linear-gradient(90deg, #CDE7FB 0%, #8CC6F4 25%, #4C9BEA 50%, #2462C9 75%, #163A7E 100%)'
               }}
             />
             <div
@@ -359,13 +360,14 @@ export default function LoginPage() {
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
-                marginTop: '3px',
+                marginTop: '4px',
                 fontSize: '10px',
                 color: 'var(--faint)'
               }}
             >
-              <span>Lower need</span>
-              <span>Higher need</span>
+              <span>0.01</span>
+              <span>Counties</span>
+              <span>0.99</span>
             </div>
           </div>
         </div>
