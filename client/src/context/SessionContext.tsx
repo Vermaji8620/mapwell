@@ -84,6 +84,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setActiveJurisdiction = async (fips: CountyFips) => {
+    // Optimistic update so UI and page reload transition trigger instantaneously
+    setSession(prev => prev ? { ...prev, activeJurisdiction: fips } : null);
     try {
       const res = await fetch('/api/session', {
         method: 'PATCH',

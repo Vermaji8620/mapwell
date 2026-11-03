@@ -6,7 +6,8 @@ import { useSession } from '@/context/SessionContext';
 import { CensusTract, Assessment, Finding, Report } from '@/types';
 import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG } from '@/config/metrics';
 import { Icon } from '@/components/Icons';
-import { MapViewCanvas, getMetricVal } from '@/components/MapViewCanvas';
+import { OverviewCommunityMap } from '@/components/OverviewCommunityMap';
+import { getMetricVal } from '@/components/MapViewCanvas';
 import { DashboardCoverageMap } from '@/components/DashboardCoverageMap';
 import { CountUpNumber } from '@/components/CountUpNumber';
 import { DashboardTrendChart } from '@/components/DashboardTrendChart';
@@ -167,7 +168,17 @@ const RECENT_DATA_IMPORTS = [
 ];
 
 export default function DashboardPage() {
-  const { activeCounty, session, trendYears = 10, markWorkflowMilestone } = useSession();
+  const { activeCounty, setActiveJurisdiction, session, trendYears = 10, markWorkflowMilestone } = useSession();
+
+  // Trigger scanline sweep animation on jurisdiction or trend range changes
+  useEffect(() => {
+    const scanline = document.getElementById('scanline');
+    if (scanline) {
+      scanline.classList.remove('sweeping');
+      void scanline.offsetWidth;
+      scanline.classList.add('sweeping');
+    }
+  }, [activeCounty?._id, trendYears]);
 
   const [tracts, setTracts] = useState<CensusTract[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
@@ -402,7 +413,7 @@ export default function DashboardPage() {
   }, [nextWorkflowIdx]);
 
   return (
-    <>
+    <div key={`${activeCounty?._id || 'default'}-${trendYears}`} className="page-stagger-enter">
       {/* Page Header */}
       <div className="page-head">
         <div>
@@ -517,100 +528,13 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ position: 'relative', height: '400px', borderRadius: '14px', overflow: 'hidden' }}>
-            <div id="d-map" style={{ position: 'absolute', inset: 0 }}>
-              <MapViewCanvas
-                metric={
-                  activeLayer === 'sdoh'
-                    ? 'sdoh'
-                    : activeLayer === 'disease'
-                    ? 'diabetes'
-                    : activeLayer === 'program'
-                    ? 'utilization'
-                    : 'uninsured'
-                }
-                layer={activeLayer}
-                countyFips={countyFips}
-                onSelectTract={(t: any) => setSelectedTract(t)}
-                selectedTractId={selectedTract?._id}
-              />
-            </div>
-
-            {/* Bottom-left Discrete Legend */}
-            <div
-              className="map-float legend"
-              style={{
-                position: 'absolute',
-                left: '12px',
-                bottom: '12px',
-                minWidth: '200px',
-                zIndex: 10
-              }}
-              id="d-leg"
-            >
-              <div className="ttl">
-                <span>{LAYER_RAMPS[activeLayer].label}</span>
-              </div>
-              <div className="ramp" style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                {LAYER_RAMPS[activeLayer].ramp.map((color, i) => (
-                  <i key={i} style={{ flex: 1, background: color }} />
-                ))}
-              </div>
-              <div
-                className="ends"
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  marginTop: '4px',
-                  fontSize: '10.5px',
-                  color: 'var(--faint)'
-                }}
-              >
-                <span>{LAYER_RAMPS[activeLayer].ext[0]}</span>
-                <span>Tracts</span>
-                <span>{LAYER_RAMPS[activeLayer].ext[1]}</span>
-              </div>
-            </div>
-
-            {/* Top-right Callout */}
-            <div
-              className="map-float"
-              style={{
-                position: 'absolute',
-                right: '12px',
-                top: '12px',
-                padding: '10px 12px',
-                fontSize: '12px',
-                maxWidth: '220px',
-                zIndex: 10
-              }}
-              id="d-sel"
-            >
-              {selectedTract ? (
-                <div>
-                  <b style={{ display: 'block', fontSize: '13px' }}>{selectedTract.name}</b>
-                  <div className="note" style={{ color: 'var(--muted)', fontSize: '11.5px', margin: '3px 0 6px' }}>
-                    {TIER_LABELS[selectedTract.tier]} vulnerability. {(selectedTract.population || 0).toLocaleString()} residents
-                  </div>
-                  <Link
-                    href={`/census-tracts?county=${countyFips}&tract=${selectedTract._id}`}
-                    className="btn sm primary mt-s"
-                    id="d-open"
-                    style={{ fontSize: '11px', padding: '3px 8px', height: 'auto', display: 'inline-flex' }}
-                  >
-                    Open in tract explorer
-                  </Link>
-                </div>
-              ) : (
-                <div>
-                  <b style={{ display: 'block', fontSize: '12.5px' }}>
-                    {tierDistribution[4] || 36} very high vulnerability tracts
-                  </b>
-                  <div className="note" style={{ color: 'var(--muted)', fontSize: '11.5px', marginTop: '2px' }}>
-                    Highlighted with markers
-                  </div>
-                </div>
-              )}
-            </div>
+            <OverviewCommunityMap
+              countyFips={countyFips}
+              activeLayer={activeLayer}
+              onSelectTract={(t: any) => setSelectedTract(t)}
+              selectedTractId={selectedTract?._id}
+              onSelectCounty={(c: any) => setActiveJurisdiction(c.id)}
+            />
           </div>
         </section>
 
@@ -1141,6 +1065,6 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
-    </>
+    </div>
   );
 }

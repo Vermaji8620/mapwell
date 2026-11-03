@@ -659,7 +659,74 @@ body{font-size:13.5px;letter-spacing:-.006em;background:var(--bg)}
 h1,h2,h3,h4{font-family:var(--font-u);letter-spacing:-.02em}
 #backdrop{background:radial-gradient(1200px 700px at 85% -10%,#FFFFFF 0%,transparent 60%),radial-gradient(900px 600px at 0% 100%,#DDEFFF 0%,transparent 60%),linear-gradient(180deg,#EDF7FF,#E6F3FF)}
 :root[data-theme="dark"] #backdrop{background:var(--bg)}
-#backdrop svg,#backdrop .orb,#scanline{display:none}
+#backdrop svg,#backdrop .orb{display:none}
+
+/* Scanline laser sweep & staggered page entrance */
+@keyframes scanlineSweep {
+  0% {
+    top: 0%;
+    opacity: 0.95;
+  }
+  75% {
+    opacity: 0.95;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+#scanline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), var(--violet), transparent);
+  opacity: 0;
+  z-index: 15;
+  pointer-events: none;
+  box-shadow: 0 0 18px var(--cyan);
+}
+
+#scanline.sweeping {
+  display: block !important;
+  animation: scanlineSweep 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes pageStaggerIn {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-stagger-enter > .page-head,
+.page-stagger-enter > .strip > .strip-i,
+.page-stagger-enter > .dgrid > .panel {
+  animation: pageStaggerIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.page-stagger-enter > .page-head { animation-delay: 0.04s; }
+.page-stagger-enter > .strip > .strip-i:nth-child(1) { animation-delay: 0.06s; }
+.page-stagger-enter > .strip > .strip-i:nth-child(2) { animation-delay: 0.09s; }
+.page-stagger-enter > .strip > .strip-i:nth-child(3) { animation-delay: 0.12s; }
+.page-stagger-enter > .strip > .strip-i:nth-child(4) { animation-delay: 0.15s; }
+
+.page-stagger-enter > .dgrid > .panel:nth-child(1) { animation-delay: 0.16s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(2) { animation-delay: 0.20s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(3) { animation-delay: 0.24s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(4) { animation-delay: 0.28s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(5) { animation-delay: 0.32s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(6) { animation-delay: 0.36s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(7) { animation-delay: 0.40s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(8) { animation-delay: 0.44s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(9) { animation-delay: 0.48s; }
+.page-stagger-enter > .dgrid > .panel:nth-child(10) { animation-delay: 0.52s; }
 
 /* floating rounded sidebar */
 #app{padding:16px 0 16px 16px;gap:0}
