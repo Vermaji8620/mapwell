@@ -17,67 +17,114 @@ function InnerShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
 
   const isLoginPage = pathname === '/login';
+  const isFlush = pathname === '/health-map';
 
   // Close mobile drawer on route change
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [pathname]);
 
+  // Auth redirect
   useEffect(() => {
     if (!loading && !user && !isLoginPage) {
       router.replace('/login');
     }
   }, [loading, user, isLoginPage, router]);
 
-  // If on login page, render clean page without dashboard shell
+  // If on login page, render clean login view
   if (isLoginPage) {
-    return <main className="min-h-screen w-full bg-[var(--bg,#0a1324)] overflow-x-hidden">{children}</main>;
+    return <main style={{ minHeight: '100vh', width: '100%' }}>{children}</main>;
   }
 
   // Show loading indicator while session state is being verified
   if (loading) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg,#0a1324)] text-white">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-9 h-9 rounded-full border-2 border-cyan-500/30 border-t-cyan-400 animate-spin" />
-          <div className="text-[13px] font-semibold text-[var(--muted,#94a3b8)]">
-            Authenticating MapWell session...
+      <div
+        style={{
+          display: 'flex',
+          height: '100vh',
+          width: '100vw',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg)',
+          color: 'var(--text)'
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '50%',
+              border: '3px solid rgba(0, 144, 194, 0.2)',
+              borderTopColor: 'var(--cyan)',
+              animation: 'lgspin 0.8s linear infinite'
+            }}
+          />
+          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--muted)' }}>
+            Loading MapWell workspace...
           </div>
         </div>
       </div>
     );
   }
 
-  // If not authenticated and not on login page, show transition screen while redirecting
+  // If not authenticated and redirecting
   if (!user) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg,#0a1324)] text-white">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-full border-2 border-cyan-500/30 border-t-cyan-400 animate-spin" />
-          <div className="text-[13px] text-[var(--muted,#94a3b8)]">Redirecting to sign in...</div>
+      <div
+        style={{
+          display: 'flex',
+          height: '100vh',
+          width: '100vw',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg)',
+          color: 'var(--text)'
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '50%',
+              border: '3px solid rgba(0, 144, 194, 0.2)',
+              borderTopColor: 'var(--cyan)',
+              animation: 'lgspin 0.8s linear infinite'
+            }}
+          />
+          <div style={{ fontSize: '12.5px', color: 'var(--muted)' }}>Redirecting to sign in...</div>
         </div>
       </div>
     );
   }
 
-  // User is authenticated: render complete MapWell analytics shell
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[var(--bg)]">
+    <div
+      id="app"
+      className={`${collapsed ? 'collapsed' : ''} ${mobileMenuOpen ? 'mobile-open' : ''}`}
+    >
       <Backdrop />
       <Sidebar
         collapsed={collapsed}
         setCollapsed={setCollapsed}
-        mobileMenuOpen={mobileMenuOpen}
-        setMobileMenuOpen={setMobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
       />
-      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
+      <div id="scrim-side" onClick={() => setMobileMenuOpen(false)} />
+      <div id="main">
         <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-3 sm:p-5 md:p-6 relative z-0 focus:outline-none min-w-0">
-          {children}
-        </main>
+        <div id="view-wrap">
+          <div id="scanline" />
+          <main id="view" className={isFlush ? 'flush' : ''} tabIndex={-1}>
+            {children}
+          </main>
+        </div>
       </div>
-      {/* Full-viewport Workflow Drawer mounted at root level, free from header container traps */}
       <WorkflowDrawer />
+      <div id="modal-root" />
+      <div id="toasts" aria-live="polite" />
+      <div id="tooltip" role="tooltip" />
     </div>
   );
 }

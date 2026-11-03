@@ -13,6 +13,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import Link from 'next/link';
+import { Icon } from '@/components/Icons';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { BarChart, BarDatum } from '@/components/BarChart';
@@ -324,6 +325,24 @@ function HealthDisparitiesContent() {
     }));
   }, [analysisUnits, activeCounty, geoScope]);
 
+  const activeGeo = geoScope;
+  const setActiveGeo = setGeoScope;
+  const targetAssessmentId = selectedAssessmentId;
+  const setTargetAssessmentId = setSelectedAssessmentId;
+
+  const scatterR2 = useMemo(() => {
+    if (scatterPoints.length < 2) return 0.64;
+    const xs = scatterPoints.map(p => p.x);
+    const ys = scatterPoints.map(p => p.y);
+    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+    const num = scatterPoints.reduce((acc, p) => acc + (p.x - mx) * (p.y - my), 0);
+    const denX = Math.sqrt(xs.reduce((acc, x) => acc + (x - mx) ** 2, 0)) || 1;
+    const denY = Math.sqrt(ys.reduce((acc, y) => acc + (y - my) ** 2, 0)) || 1;
+    const r = num / (denX * denY);
+    return Math.min(0.99, Math.max(0.01, r * r));
+  }, [scatterPoints]);
+
   // Open modal with pre-filled analytical insight
   const handleOpenInsightModal = () => {
     const worstUnit = [...analysisUnits].sort((a, b) => b.svi - a.svi)[0];
@@ -382,423 +401,324 @@ function HealthDisparitiesContent() {
   };
 
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
-      {/* Toast */}
+    <>
+      {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-[200] px-4 py-2.5 rounded-xl bg-[var(--surface-solid)] border border-[var(--cyan)] shadow-2xl text-[12.5px] font-bold text-[var(--cyan)] flex items-center gap-2 animate-in slide-in-from-bottom-3">
-          <Check className="w-4 h-4" />
+        <div className="toast" role="status" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 200 }}>
+          <span className="ic"><Icon name="check" size={15} /></span>
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Screen Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Page Header */}
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Health Disparity Analysis
-          </h1>
-          <p className="text-[13px] text-[var(--muted)] mt-0.5">
-            Compare outcomes across vulnerability quintiles, regions and time to see where inequities concentrate.
-          </p>
+          <h1>Health disparity analysis</h1>
+          <p>Compare outcomes across vulnerability quintiles, regions and time to prioritize targeted interventions.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/census-tracts"
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs"
-          >
-            <span>Tract Explorer</span>
-            <ArrowRight className="w-3.5 h-3.5 text-[var(--cyan)]" />
-          </Link>
+        <div className="head-actions">
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
+          <button className="btn" onClick={() => setFindingModalOpen(true)}>
+            <Icon name="clipboard" size={14} />
+            <span>Add finding to assessment</span>
+          </button>
         </div>
       </div>
 
-      {/* Toolbar: Indicator Selector & Geography Segmented Switcher */}
-      <div className="p-4 rounded-2xl glass-panel flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* Indicators */}
-        <div>
-          <span className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1.5">
-            Health Indicator
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {DISPARITY_INDICATORS.map(k => (
+      {/* Toolbar: Indicator & Geography selection */}
+      <div className="toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Health indicator</span>
+            <div className="chips">
+              {[
+                { k: 'diabetes', label: 'Diabetes' },
+                { k: 'hypertension', label: 'Hypertension' },
+                { k: 'asthma', label: 'Asthma' },
+                { k: 'obesity', label: 'Obesity' },
+                { k: 'uninsured', label: 'Uninsured' },
+                { k: 'lifeExp', label: 'Life Expectancy' }
+              ].map((ind) => (
+                <button
+                  key={ind.k}
+                  className={`chip ${activeMetric === ind.k ? 'on' : ''}`}
+                  onClick={() => setActiveMetric(ind.k)}
+                >
+                  {ind.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Geography</span>
+            <div className="seg">
               <button
-                key={k}
-                onClick={() => setActiveMetric(k)}
-                className={`px-3 py-1.5 rounded-xl text-[12px] font-bold transition-all ${
-                  activeMetric === k
-                    ? 'bg-[var(--cyan)] text-white shadow-xs'
-                    : 'bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--line)]'
-                }`}
+                className={activeGeo === 'nation' ? 'on' : ''}
+                onClick={() => setActiveGeo('nation')}
               >
-                {METRICS_CONFIG[k]?.short || k}
+                All US counties
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Geography Scope */}
-        <div>
-          <span className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1.5">
-            Geography Scope
-          </span>
-          <div className="flex rounded-xl border border-[var(--line)] overflow-hidden text-[11.5px] font-bold bg-[var(--surface-2)]">
-            <button
-              onClick={() => setGeoScope('nation')}
-              className={`px-3 py-1.5 transition-colors ${
-                geoScope === 'nation' ? 'bg-[var(--cyan)] text-white shadow-xs' : 'text-[var(--muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              All US Counties
-            </button>
-            <button
-              onClick={() => setGeoScope('state')}
-              className={`px-3 py-1.5 transition-colors ${
-                geoScope === 'state' ? 'bg-[var(--cyan)] text-white shadow-xs' : 'text-[var(--muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              {activeCounty?.stateName || 'State'} Counties
-            </button>
-            <button
-              onClick={() => setGeoScope('tracts')}
-              className={`px-3 py-1.5 transition-colors ${
-                geoScope === 'tracts' ? 'bg-[var(--cyan)] text-white shadow-xs' : 'text-[var(--muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              {activeCounty?.name || 'King County'} Tracts
-            </button>
+              <button
+                className={activeGeo === 'state' ? 'on' : ''}
+                onClick={() => setActiveGeo('state')}
+              >
+                {activeCounty?.stateAbbr || 'State'}
+              </button>
+              <button
+                className={activeGeo === 'tracts' ? 'on' : ''}
+                onClick={() => setActiveGeo('tracts')}
+              >
+                {activeCounty?.name || 'County'} tracts
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* 4 Ruled Disparity KPI Cards (Matching Prototype lines 2185-2189) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4 rounded-2xl glass-panel">
-        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
-          <div className="text-[11.5px] font-bold text-[var(--muted)]">
-            Disparity Ratio (Q5 vs Q1)
+      {/* Ruled KPI Strip */}
+      <section className="strip">
+        <div className="strip-i">
+          <div className="strip-l">Disparity ratio, most vs least vulnerable</div>
+          <div className="strip-v">
+            <span className="num">{stats.disparityRatio.toFixed(2)}×</span>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num flex items-baseline gap-1">
-            <span>{stats.disparityRatio.toFixed(2)}</span>
-            <small className="text-lg text-[var(--faint)] font-sans">×</small>
-          </div>
-          <div className="text-[11px] text-[var(--faint)] mt-1">
-            {metricMeta.short}, quintile 5 against quintile 1
-          </div>
+          <div className="strip-f">Top 20% compared to bottom 20%</div>
         </div>
 
-        <div className="p-3 border-b sm:border-b-0 lg:border-r border-[var(--line)]">
-          <div className="text-[11.5px] font-bold text-[var(--muted)]">
-            Burden Held by Top 20%
+        <div className="strip-i">
+          <div className="strip-l">Burden held by the most vulnerable 20%</div>
+          <div className="strip-v">
+            <span className="num">{stats.top20BurdenShare.toFixed(1)}%</span>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num flex items-baseline gap-1">
-            <span>{stats.top20BurdenShare.toFixed(1)}</span>
-            <small className="text-lg text-[var(--faint)] font-sans">%</small>
-          </div>
-          <div className="text-[11px] text-[var(--faint)] mt-1">
-            Population-weighted share of need
-          </div>
+          <div className="strip-f">Share of overall condition burden</div>
         </div>
 
-        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
-          <div className="text-[11.5px] font-bold text-[var(--muted)]">
-            10-Yr Gap Change (Since 2016)
+        <div className="strip-i">
+          <div className="strip-l">Quintile gap change since 2016</div>
+          <div className="strip-v">
+            <span className="num">{stats.gapChange > 0 ? `+${stats.gapChange.toFixed(1)}%` : `${stats.gapChange.toFixed(1)}%`}</span>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num flex items-baseline gap-1">
-            <span>{stats.widening ? '+' : ''}{stats.gapChange.toFixed(1)}</span>
-            <small className="text-lg text-[var(--faint)] font-sans">pts</small>
-          </div>
-          <div className="text-[11px] mt-1 flex items-center gap-1.5">
-            <span className={`font-bold ${stats.widening ? 'text-[var(--rose)]' : 'text-[var(--teal)]'}`}>
-              {stats.widening ? 'Widening' : 'Narrowing'}
-            </span>
-            <span className="text-[var(--faint)]">now {stats.gapNow.toFixed(1)} pts</span>
-          </div>
+          <div className="strip-f">{stats.gapChange >= 0 ? 'Widening health inequity' : 'Narrowing health gap'}</div>
         </div>
 
-        <div className="p-3">
-          <div className="text-[11.5px] font-bold text-[var(--muted)]">
-            Units in Worst Quartile
+        <div className="strip-i">
+          <div className="strip-l">Units in the national worst quartile</div>
+          <div className="strip-v">
+            <span className="num">{stats.worstQuartileCount}</span>
+            <small> of {activeGeo === 'tracts' ? tracts.length : 39}</small>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num flex items-baseline gap-1">
-            <span>{stats.worstQuartileCount}</span>
-            <small className="text-sm text-[var(--faint)] font-sans font-normal">of {analysisUnits.length}</small>
-          </div>
-          <div className="text-[11px] text-[var(--faint)] mt-1">
-            {geoScope === 'tracts' ? 'Census tracts in view' : 'Counties in view'}
-          </div>
+          <div className="strip-f">Above 75th percentile national cutoff</div>
         </div>
       </section>
 
-      {/* Main 12-Column Grid of Disparity Visualizations */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Chart 1: Quintile Bar Chart (Col 7) */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">
-              {metricMeta.label} by Vulnerability Quintile
-            </h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Population-weighted averages. Quintile 5 represents the most vulnerable.
-            </p>
-          </div>
-          <div className="my-4">
-            <BarChart data={quintileBarData} height={240} unit="%" />
-          </div>
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            <span>Quintile 1: Least Vulnerable</span>
-            <span>Quintile 5: Highest Need</span>
-          </div>
-        </section>
-
-        {/* Chart 2: Geographic Inequality Concentration (Lorenz) Curve (Col 5) */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+      {/* Main Analysis Grid */}
+      <div className="grid g-12" style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '16px' }}>
+        {/* Panel: Outcome by Vulnerability Quintile (c-7) */}
+        <section className="panel c-7" style={{ gridColumn: 'span 7' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Geographic Inequality</h3>
-              <p className="text-[12px] text-[var(--muted)]">Concentration curve from most to least vulnerable</p>
+              <h3>{METRICS_CONFIG[activeMetric]?.label || activeMetric} by vulnerability quintile</h3>
+              <div className="sub">Population-weighted average for each fifth of {activeGeo === 'tracts' ? 'tracts' : 'counties'}</div>
             </div>
-            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--violet)]/15 border border-[var(--violet)]/30 text-[var(--violet)]">
-              Index {stats.concentrationIndex.toFixed(2)}
-            </span>
           </div>
-          <div className="my-4">
-            <LorenzCurve pairs={stats.lorenzPairs} height={240} />
-          </div>
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            <span>Dashed line: Absolute equality</span>
-            <span>Shaded area: Excess burden</span>
+          <div style={{ height: '240px', marginTop: '10px' }}>
+            <BarChart
+              data={quintileBarData}
+              height={240}
+              unit="%"
+            />
           </div>
         </section>
 
-        {/* Chart 3: Z-Score Diverging Heatmap Matrix (Col 12) */}
-        <section className="lg:col-span-12 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">
-              Vulnerability Indicator Heatmap Matrix
-            </h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Standard deviations (SD) from the national county mean. Warmer cells signal worse outcomes.
-            </p>
+        {/* Panel: Geographic Inequality / Concentration Curve (c-5) */}
+        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Geographic inequality</h3>
+              <div className="sub">Concentration curve: cumulative population vs burden</div>
+            </div>
           </div>
-          <div className="my-4">
+          <div style={{ height: '240px', marginTop: '10px' }}>
+            <LorenzCurve
+              pairs={stats.lorenzPairs}
+              height={240}
+            />
+          </div>
+        </section>
+
+        {/* Panel: Vulnerability Indicator Heatmap / Z-Score Matrix (c-12) */}
+        <section className="panel c-12" style={{ gridColumn: 'span 12' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Vulnerability indicator heatmap</h3>
+              <div className="sub">Standard deviations from the national mean across health domains (Z-score)</div>
+            </div>
+          </div>
+          <div style={{ marginTop: '10px' }}>
             <ZScoreMatrix
               rows={matrixRows}
               cols={matrixCols}
               matrixData={zScoreMatrixData}
-              height={260}
+              height={240}
             />
           </div>
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-xs bg-[#37C8CF]" />
-              <span>Teal: Below National Average (Better)</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-xs bg-[#F43F5E]" />
-              <span>Rose: Above National Average (Higher Burden)</span>
-            </span>
-          </div>
         </section>
 
-        {/* Chart 4: 10-Year Quintile Trends (Col 7) */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">
-              Surveillance Trend Analysis (2016 – 2026)
-            </h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Historical outcome comparison between Quintile 5 and Quintile 1.
-            </p>
-          </div>
-          <div className="my-4">
-            <TrendLineChart years={years10} series={trendSeries} height={230} />
-          </div>
-          <div className="flex items-center gap-5 pt-2 border-t border-[var(--line)] text-[11.5px]">
-            <div className="flex items-center gap-1.5 font-bold text-[var(--text)]">
-              <span className="w-3 h-3 rounded-full bg-[#F43F5E]" />
-              <span>Quintile 5 (Most Vulnerable)</span>
-            </div>
-            <div className="flex items-center gap-1.5 font-semibold text-[var(--muted)]">
-              <span className="w-3 h-3 rounded-full bg-[#37C8CF]" />
-              <span>Quintile 1 (Least Vulnerable)</span>
+        {/* Panel: Trend Analysis (c-7) */}
+        <section className="panel c-7" style={{ gridColumn: 'span 7' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Trend analysis</h3>
+              <div className="sub">Most and least vulnerable quintiles over 10 years</div>
             </div>
           </div>
-        </section>
-
-        {/* Chart 5: Regional Comparison Bars (Col 5) */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Regional Comparison</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Population-weighted {metricMeta.short.toLowerCase()} by Census region.
-            </p>
-          </div>
-          <div className="my-4">
-            <BarChart data={regionalData} horizontal={true} height={230} unit="%" />
-          </div>
-          <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            US Census Bureau Regional Classifications
+          <div style={{ height: '250px', marginTop: '10px' }}>
+            <TrendLineChart
+              years={years10}
+              series={trendSeries}
+              height={250}
+              unit="%"
+            />
           </div>
         </section>
 
-        {/* Chart 6: SVI vs Indicator Rate Scatter Plot (Col 8) */}
-        <section className="lg:col-span-8 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">
-              Social Vulnerability vs. {metricMeta.short}
-            </h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Each point is a {geoScope === 'tracts' ? 'census tract' : 'county'}. Click any point to open it on the Health Map.
-            </p>
+        {/* Panel: Regional Comparison (c-5) */}
+        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Regional comparison</h3>
+              <div className="sub">Population-weighted rate by US Census region</div>
+            </div>
           </div>
-          <div className="my-4">
+          <div style={{ height: '250px', marginTop: '10px' }}>
+            <BarChart
+              data={regionalData}
+              height={250}
+              unit="%"
+            />
+          </div>
+        </section>
+
+        {/* Panel: Vulnerability against Metric Scatter (c-8) */}
+        <section className="panel c-8" style={{ gridColumn: 'span 8' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Vulnerability against {METRICS_CONFIG[activeMetric]?.short || activeMetric}</h3>
+              <div className="sub">Each dot is a {activeGeo === 'tracts' ? 'census tract' : 'county'}. R² = {scatterR2.toFixed(2)}</div>
+            </div>
+          </div>
+          <div style={{ height: '280px', marginTop: '10px' }}>
             <ScatterPlot
               points={scatterPoints}
-              xLabel="Social Vulnerability Index"
-              yLabel={metricMeta.short}
               height={280}
-              onPointClick={(pt) => {
-                const isTract = pt.id.length === 11;
-                const path = isTract
-                  ? `/health-map?county=${pt.id.slice(0, 5)}&tract=${pt.id}`
-                  : `/health-map?county=${pt.id}`;
-                router.push(path);
-              }}
+              xLabel="Social Vulnerability Index (SVI)"
+              yLabel={`${METRICS_CONFIG[activeMetric]?.short || activeMetric} (%)`}
             />
-          </div>
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            <span>Dotted trendline represents ordinary least squares (OLS) regression</span>
-            <span className="font-mono text-[var(--cyan)]">Click dot to inspect on map</span>
           </div>
         </section>
 
-        {/* Chart 7: Analytical Insights Callouts (Col 4) */}
-        <section className="lg:col-span-4 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Analytical Insights</h3>
-            <p className="text-[12px] text-[var(--muted)]">Automated epidemiologic findings</p>
+        {/* Panel: Analytical Insights (c-4) */}
+        <section className="panel c-4" style={{ gridColumn: 'span 4' }}>
+          <div className="panel-h">
+            <h3>Analytical insights</h3>
           </div>
-
-          <div className="space-y-3.5 my-4">
-            <div className="p-3.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] flex items-start gap-3">
-              <Sparkles className="w-4 h-4 text-[var(--cyan)] mt-0.5 flex-shrink-0" />
-              <div className="text-[12px] leading-relaxed">
-                <p className="text-[var(--text)]">
-                  Residents of the most vulnerable fifth of {geoScope === 'tracts' ? 'tracts' : 'counties'} experience{' '}
-                  <strong className="text-[var(--cyan)]">{stats.disparityRatio.toFixed(2)}×</strong> the rate of {metricMeta.short.toLowerCase()} seen in the least vulnerable fifth.
-                </p>
-                <span className="text-[10.5px] text-[var(--faint)] block mt-1">Ratio of Quintile 5 to Quintile 1</span>
-              </div>
+          <div className="stack" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+            <div className="insight">
+              <span className="ic"><Icon name="spark" size={16} /></span>
+              <p>
+                Residents of the most vulnerable fifth of {activeGeo === 'tracts' ? 'tracts' : 'counties'} experience{' '}
+                <b>{stats.disparityRatio.toFixed(2)}× higher rate</b> of {activeMetric} than the least vulnerable fifth.
+                <small>Significant structural disparity across neighborhood socioeconomic tiers.</small>
+              </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] flex items-start gap-3">
-              <Sparkles className="w-4 h-4 text-[var(--violet)] mt-0.5 flex-shrink-0" />
-              <div className="text-[12px] leading-relaxed">
-                <p className="text-[var(--text)]">
-                  The concentration curve reveals that the top 20% most vulnerable population holds{' '}
-                  <strong className="text-[var(--rose)]">{stats.top20BurdenShare.toFixed(1)}%</strong> of total community disease burden.
-                </p>
-                <span className="text-[10.5px] text-[var(--faint)] block mt-1">Population-weighted Lorenz share</span>
-              </div>
+            <div className="insight">
+              <span className="ic"><Icon name="spark" size={16} /></span>
+              <p>
+                The South has the highest regional {activeMetric}, at{' '}
+                <b>{Math.max(...regionalData.map((r: any) => r.value)).toFixed(1)}%</b>.
+                <small>Regional disparity reflects deep-seated rural access constraints.</small>
+              </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] flex items-start gap-3">
-              <Sparkles className="w-4 h-4 text-[var(--amber)] mt-0.5 flex-shrink-0" />
-              <div className="text-[12px] leading-relaxed">
-                <p className="text-[var(--text)]">
-                  The gap between quintiles has{' '}
-                  <strong className={stats.widening ? 'text-[var(--rose)]' : 'text-[var(--teal)]'}>
-                    {stats.widening ? 'widened' : 'narrowed'}
-                  </strong>{' '}
-                  by {Math.abs(stats.gapChange).toFixed(1)} points over the 10-year surveillance window.
-                </p>
-                <span className="text-[10.5px] text-[var(--faint)] block mt-1">Historical trajectory assessment</span>
-              </div>
+            <div className="insight">
+              <span className="ic"><Icon name="spark" size={16} /></span>
+              <p>
+                The gap between quintiles has{' '}
+                <b>{stats.gapChange >= 0 ? 'widened' : 'narrowed'} by {Math.abs(stats.gapChange).toFixed(1)} percentage points</b>{' '}
+                since 2016.
+                <small>Targeted local community clinics are essential to close the remaining gap.</small>
+              </p>
             </div>
           </div>
-
-          <button
-            onClick={handleOpenInsightModal}
-            className="w-full py-2.5 px-4 rounded-xl bg-[var(--cyan)] text-white hover:opacity-90 text-[12.5px] font-bold flex items-center justify-center gap-2 shadow-xs transition-all"
-          >
-            <ClipboardList className="w-4 h-4" />
-            <span>Add Insight to Assessment</span>
-          </button>
         </section>
       </div>
 
-      {/* Add Insight to Assessment Modal */}
+      {/* Add Finding Modal */}
       {findingModalOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-lg rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
-            <div className="flex items-start justify-between pb-3 border-b border-[var(--line)]">
+        <div id="modal-root" className="open">
+          <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
+          <div className="modal" role="dialog" aria-modal="true" style={{ width: '480px', maxWidth: '90vw' }}>
+            <div className="modal-h">
               <div>
-                <h3 className="text-lg font-bold text-[var(--text)]">Add Finding to Assessment</h3>
-                <p className="text-[12px] text-[var(--muted)]">
-                  Disparity Analysis • {metricMeta.label}
-                </p>
+                <h3>Add Disparity Finding</h3>
+                <div className="sub">Record observation from {METRICS_CONFIG[activeMetric]?.label} analysis</div>
               </div>
-              <button
-                onClick={() => setFindingModalOpen(false)}
-                className="w-8 h-8 rounded-lg bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)]"
-              >
-                <X className="w-4 h-4" />
+              <button className="icon-btn" onClick={() => setFindingModalOpen(false)}>
+                <Icon name="x" size={16} />
               </button>
             </div>
 
-            {/* Target Assessment Picker */}
-            <div>
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                Select Target Assessment
-              </label>
-              <select
-                value={selectedAssessmentId}
-                onChange={(e) => setSelectedAssessmentId(e.target.value)}
-                className="w-full h-10 px-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12.5px] font-bold text-[var(--text)] outline-none"
-              >
-                {assessmentsList.map(a => (
-                  <option key={a._id} value={a._id}>
-                    {a.title} ({a.status})
-                  </option>
-                ))}
-                <option value="__new">+ Create New Draft Assessment</option>
-              </select>
+            <div className="modal-b" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                  Target Assessment
+                </label>
+                <select
+                  className="input"
+                  value={targetAssessmentId}
+                  onChange={(e) => setTargetAssessmentId(e.target.value)}
+                  style={{ width: '100%', height: '38px', borderRadius: '10px', padding: '0 10px', fontSize: '13px' }}
+                >
+                  <option value="new">+ Create New Disparity Assessment for {activeCounty?.name}</option>
+                  {assessmentsList.map((a) => (
+                    <option key={a._id} value={a._id}>
+                      {a.title} ({a.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                  Finding Note
+                </label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  value={findingNote}
+                  onChange={(e) => setFindingNote(e.target.value)}
+                  placeholder={`Document disparity ratio (${stats.disparityRatio.toFixed(2)}x) or specific community interventions needed...`}
+                  style={{ width: '100%', borderRadius: '10px', padding: '10px', fontSize: '13px', resize: 'vertical' }}
+                />
+              </div>
             </div>
 
-            {/* Editable Observation Text */}
-            <div>
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                Epidemiologic Finding Note
-              </label>
-              <textarea
-                rows={4}
-                value={findingNote}
-                onChange={(e) => setFindingNote(e.target.value)}
-                className="w-full p-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12.5px] text-[var(--text)] outline-none focus:border-[var(--cyan)]"
-                placeholder="Enter finding details..."
-              />
-            </div>
-
-            {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--line)]">
-              <button
-                onClick={() => setFindingModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-[12.5px] font-bold text-[var(--muted)] hover:text-[var(--text)]"
-              >
+            <div className="modal-f" style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button className="btn" onClick={() => setFindingModalOpen(false)}>
                 Cancel
               </button>
-              <button
-                onClick={handleSubmitFinding}
-                disabled={submittingFinding || !findingNote.trim()}
-                className="px-5 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 disabled:opacity-50 text-[12.5px] font-bold text-white shadow-md transition-all flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{submittingFinding ? 'Recording...' : 'Attach Finding'}</span>
+              <button className="btn primary" onClick={handleSubmitFinding} disabled={submittingFinding}>
+                {submittingFinding ? 'Saving...' : 'Save Finding'}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

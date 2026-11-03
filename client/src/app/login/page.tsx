@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { Mail, Lock, Eye, EyeOff, AlertCircle, Info, Grid, Link as LinkIcon } from 'lucide-react';
+import { Icon } from '@/components/Icons';
 import { LoginShowcaseMap } from '@/components/LoginShowcaseMap';
 
 interface RoleOption {
@@ -16,7 +16,7 @@ interface RoleOption {
 const ROLES: RoleOption[] = [
   { id: 'analyst', title: 'Public Health Analyst', org: 'County Health Department', avatar: 'PA' },
   { id: 'manager', title: 'Program Manager', org: 'City Health Department', avatar: 'PM' },
-  { id: 'admin', title: 'Data Administrator', org: 'Health Data Team', avatar: 'DA' },
+  { id: 'admin', title: 'Data Administrator', org: 'Health Data Team', avatar: 'DA' }
 ];
 
 export default function LoginPage() {
@@ -45,7 +45,7 @@ export default function LoginPage() {
   const handleForgotPassword = () => {
     const trimmed = email.trim();
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      setResetMessage(`In a live deployment, a reset link would be emailed to ${trimmed}. For this demo environment, please sign in with your provisioned credentials.`);
+      setResetMessage(`In a live deployment, a reset link would be emailed to ${trimmed}. For this demo environment, any valid email and 8+ char password will sign in.`);
     } else {
       setResetMessage('Enter your work email in the field above, then select Forgot password again.');
     }
@@ -58,22 +58,22 @@ export default function LoginPage() {
     setGeneralError('');
     setResetMessage('');
 
-    const trimmedEmail = email.trim();
     let hasError = false;
+    const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
-      setEmailError('Enter your work email address.');
+      setEmailError('Please enter your work email address');
       hasError = true;
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setEmailError('Please enter a valid work email.');
+      setEmailError('Please enter a valid email address (e.g. name@health.gov)');
       hasError = true;
     }
 
     if (!password) {
-      setPasswordError('Enter your password.');
+      setPasswordError('Please enter your password');
       hasError = true;
     } else if (password.length < 8) {
-      setPasswordError('Passwords must be at least 8 characters.');
+      setPasswordError('Password must contain at least 8 characters');
       hasError = true;
     }
 
@@ -81,344 +81,303 @@ export default function LoginPage() {
 
     setIsSubmitting(true);
     try {
-      const res = await login(trimmedEmail, password, selectedRole, rememberMe);
-      if (res.success) {
-        router.replace('/');
-      } else {
-        setGeneralError(res.error || 'Invalid credentials. Please verify your email and password.');
-      }
+      const roleObj = ROLES.find((r) => r.id === selectedRole) || ROLES[0];
+      await login(trimmedEmail, password, roleObj.id, rememberMe);
+      router.replace('/');
     } catch (err: any) {
-      setGeneralError(err.message || 'An unexpected error occurred during sign-in.');
+      setGeneralError(err.message || 'Unable to sign in. Please verify your credentials.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleGoogleSignIn = async () => {
-    setGeneralError('');
     setIsGoogleSubmitting(true);
     try {
-      const res = await loginWithGoogle(
-        {
-          email: email.trim() || undefined,
-          role: selectedRole
-        },
-        selectedRole,
-        rememberMe
-      );
-
-      if (res.success) {
-        router.replace('/');
-      } else {
-        setGeneralError(res.error || 'Google authentication failed.');
-      }
+      const roleObj = ROLES.find((r) => r.id === selectedRole) || ROLES[0];
+      await loginWithGoogle({ role: roleObj.id }, roleObj.id, rememberMe);
+      router.replace('/');
     } catch (err: any) {
-      setGeneralError(err.message || 'Single sign-on failed.');
+      setGeneralError('Single sign-on authentication failed. Please try standard sign in.');
     } finally {
       setIsGoogleSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-auto p-4 sm:p-5 flex items-center justify-center bg-[radial-gradient(1000px_600px_at_90%_0%,#ffffff,transparent_60%),linear-gradient(180deg,#EDF7FF_0%,#E3F2FF_100%)]">
-      <div className="w-full max-w-[1260px] min-h-[620px] grid grid-cols-1 lg:grid-cols-[minmax(420px,490px)_1fr] gap-4 my-auto">
-        
-        {/* ================= Left Column: Sign-in Card ================= */}
-        <section className="bg-[#15273C] border border-[#233954] rounded-[24px] shadow-[0_10px_30px_rgba(10,25,45,0.15)] p-6 sm:p-8 md:p-9 flex flex-col justify-between">
-          
-          {/* Brand Header */}
-          <div className="flex items-center gap-2.5">
-            <svg viewBox="0 0 40 40" className="w-9 h-9 flex-shrink-0" aria-hidden="true">
-              <path
-                d="M20 3c-8 0-14 6-14 13.6C6 26 20 37 20 37s14-11 14-20.4C34 9 28 3 20 3z"
-                fill="#E3F2FF"
-                stroke="#2584EB"
-                strokeWidth="2.4"
-              />
-              <path
-                d="M12.5 17.5c2-4.5 5-6 7.5-6s5.6 1.6 7.5 6"
-                fill="none"
-                stroke="#2584EB"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                opacity=".75"
-              />
-              <path
-                d="M15.5 20.5c1.3-2.6 2.8-3.4 4.5-3.4s3.2.8 4.5 3.4"
-                fill="none"
-                stroke="#2584EB"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                opacity=".55"
-              />
-              <circle cx="20" cy="23.5" r="2.2" fill="#2584EB" />
-            </svg>
-            <div>
-              <div className="text-[19px] font-bold tracking-tight text-white leading-tight">
-                Map<span className="text-[#00C2E8]">Well</span>
-              </div>
-              <div className="text-[9.5px] font-bold tracking-wider text-[#8EA9C7] uppercase">
-                COMMUNITY HEALTH MAPPING
-              </div>
-            </div>
-          </div>
+    <div id="login">
+      {/* Left Column: Sign-in Card */}
+      <section className="lg-card">
+        {/* Brand header */}
+        <div className="lg-brand">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <path
+              d="M20 3c-8 0-14 6-14 13.6C6 26 20 37 20 37s14-11 14-20.4C34 9 28 3 20 3z"
+              fill="#E3F2FF"
+              stroke="#2584EB"
+              strokeWidth="2.4"
+            />
+            <path
+              d="M12.5 17.5c2-4.5 5-6 7.5-6s5.6 1.6 7.5 6"
+              fill="none"
+              stroke="#2584EB"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              opacity=".75"
+            />
+            <path
+              d="M15.5 20.5c1.3-2.6 2.8-3.4 4.5-3.4s3.2.8 4.5 3.4"
+              fill="none"
+              stroke="#2584EB"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              opacity=".55"
+            />
+            <circle cx="20" cy="23.5" r="2.2" fill="#2584EB" />
+          </svg>
+          <span>
+            <b>
+              Map<span>Well</span>
+            </b>
+            <small>COMMUNITY HEALTH MAPPING</small>
+          </span>
+        </div>
 
-          {/* Form Main Area */}
-          <form onSubmit={handleSubmit} className="my-5 space-y-3.5">
-            <div>
-              <h1 className="text-2xl sm:text-[27px] font-bold tracking-tight text-white leading-tight">
-                Sign in to MapWell
-              </h1>
-              <p className="text-[13px] text-[#8EA9C7] mt-1">
-                Use your health department account to open your workspace.
-              </p>
-            </div>
+        {/* Main form */}
+        <form className="lg-main" id="lg-form" onSubmit={handleSubmit} noValidate>
+          <h1>Sign in to MapWell</h1>
+          <p>Use your health department account to open your workspace.</p>
 
-            {generalError && (
-              <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[12px] flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
-                <span>{generalError}</span>
-              </div>
-            )}
-
-            {resetMessage && (
-              <div className="p-2.5 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-200 text-[12px] flex items-start gap-2">
-                <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
-                <span>{resetMessage}</span>
-              </div>
-            )}
-
-            {/* Work Email */}
-            <div>
-              <label className="block text-[12px] font-semibold text-[#CBD5E1] mb-1">
-                Work email
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-[#64748B] absolute left-3.5 top-3 pointer-events-none" />
-                <input
-                  type="email"
-                  id="login-email"
-                  placeholder="you@health.gov"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (emailError) setEmailError('');
-                  }}
-                  className={`w-full h-[44px] pl-10 pr-4 rounded-xl border bg-white text-[13.5px] font-medium text-[#0F172A] placeholder-[#94A3B8] outline-none transition-all ${
-                    emailError
-                      ? 'border-rose-500 ring-2 ring-rose-500/20'
-                      : 'border-[#CBD5E1] focus:border-[#00C2E8] focus:ring-2 focus:ring-[#00C2E8]/20'
-                  }`}
-                />
-              </div>
-              {emailError && (
-                <p className="text-[11px] text-rose-400 mt-1 font-medium">{emailError}</p>
-              )}
-            </div>
-
-            {/* Password */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-[12px] font-semibold text-[#CBD5E1]">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={handleForgotPassword}
-                  className="text-[12px] font-semibold text-[#00C2E8] hover:underline"
-                >
-                  Forgot password?
-                </button>
-              </div>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-[#64748B] absolute left-3.5 top-3 pointer-events-none" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  id="login-password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (passwordError) setPasswordError('');
-                  }}
-                  className={`w-full h-[44px] pl-10 pr-10 rounded-xl border bg-white text-[13.5px] font-medium text-[#0F172A] placeholder-[#94A3B8] outline-none transition-all ${
-                    passwordError
-                      ? 'border-rose-500 ring-2 ring-rose-500/20'
-                      : 'border-[#CBD5E1] focus:border-[#00C2E8] focus:ring-2 focus:ring-[#00C2E8]/20'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-2.5 top-2.5 w-7 h-7 rounded-lg text-[#64748B] hover:text-[#0F172A] flex items-center justify-center transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              {passwordError && (
-                <p className="text-[11px] text-rose-400 mt-1 font-medium">{passwordError}</p>
-              )}
-            </div>
-
-            {/* Sign in as (Roles) */}
-            <div>
-              <label className="block text-[12px] font-semibold text-[#CBD5E1] mb-1.5">
-                Sign in as
-              </label>
-              <div className="flex flex-col sm:grid sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Sign in role">
-                {ROLES.map((r) => {
-                  const isSelected = selectedRole === r.id;
-                  return (
-                    <button
-                      key={r.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={isSelected}
-                      onClick={() => setSelectedRole(r.id)}
-                      className={`p-2.5 rounded-xl border text-left transition-all ${
-                        isSelected
-                          ? 'border-2 border-[#00C2E8] bg-[#F0F9FF] shadow-sm'
-                          : 'border border-[#CBD5E1] bg-white hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className={`text-[12px] font-bold leading-tight ${isSelected ? 'text-[#0284C7]' : 'text-[#0F172A]'}`}>
-                        {r.title}
-                      </div>
-                      <div className="text-[10px] text-[#64748B] mt-0.5 leading-tight">
-                        {r.org}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Keep me signed in */}
-            <div className="flex items-center pt-0.5">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-400 text-[#00C2E8] accent-[#00C2E8] cursor-pointer"
-                />
-                <span className="text-[12.5px] text-[#CBD5E1]">
-                  Keep me signed in
-                </span>
-              </label>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={isSubmitting || isGoogleSubmitting}
-              className="w-full h-[46px] rounded-xl bg-gradient-to-r from-[#00C2E8] to-[#0284C7] hover:brightness-105 text-white font-bold text-[14px] flex items-center justify-center gap-2 shadow-[0_8px_20px_-6px_rgba(0,194,232,0.6)] transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+          {/* Reset / General Message */}
+          {resetMessage && (
+            <div
+              className="lg-note"
+              style={{
+                marginBottom: '14px',
+                marginTop: '0',
+                background: '#EAF4FF',
+                borderColor: '#B9D6F0',
+                color: '#1A55B8'
+              }}
             >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                  <span>Signing in...</span>
-                </>
-              ) : (
-                <span>Sign in</span>
-              )}
-            </button>
-
-            {/* Divider */}
-            <div className="relative flex items-center justify-center my-2">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-[#233954]" />
-              </div>
-              <span className="relative bg-[#15273C] px-3 text-[11.5px] text-[#8EA9C7]">
-                or
-              </span>
+              <span>ℹ</span>
+              <span>{resetMessage}</span>
             </div>
+          )}
 
-            {/* SSO / Google button */}
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={isSubmitting || isGoogleSubmitting}
-              className="w-full h-[44px] rounded-xl border border-[#CBD5E1] bg-white hover:bg-slate-50 text-[#0F172A] font-semibold text-[13px] flex items-center justify-center gap-2.5 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer shadow-xs"
+          {generalError && (
+            <div
+              className="lg-note"
+              style={{
+                marginBottom: '14px',
+                marginTop: '0',
+                background: '#FDECEE',
+                borderColor: '#F7C6CC',
+                color: '#C72248'
+              }}
             >
-              {isGoogleSubmitting ? (
-                <div className="w-4 h-4 rounded-full border-2 border-slate-400 border-t-[#00C2E8] animate-spin" />
-              ) : (
-                <LinkIcon className="w-4 h-4 text-[#00C2E8]" />
-              )}
-              <span>Continue with single sign-on</span>
-            </button>
-            
-          </form>
-
-          {/* Card Footer */}
-          <div className="pt-3 border-t border-[#233954] flex items-center justify-between text-[11.5px] text-[#64748B]">
-            <span>Synthetic demo environment</span>
-            <span>Need access? Contact your data administrator</span>
-          </div>
-        </section>
-
-        {/* ================= Right Column: Showcase Map ================= */}
-        <section className="hidden lg:flex flex-col justify-between relative rounded-[24px] overflow-hidden border border-[#D6E9F8] bg-gradient-to-br from-[#E7F3FF] via-[#E2F0FE] to-[#D7EBFC] p-8 shadow-sm min-h-[580px]">
-          
-          {/* Header Copy */}
-          <div className="relative z-10 max-w-xl">
-            <h2 className="text-2xl xl:text-[26px] font-bold tracking-tight text-[#102A45] leading-snug">
-              Census tract insight for every community you serve
-            </h2>
-            <p className="text-[13px] text-[#486581] mt-2 max-w-lg leading-relaxed">
-              Map social determinants, disease incidence and program use, find underserved neighborhoods, and turn findings into assessments.
-            </p>
-          </div>
-
-          {/* Real US County Choropleth Map View */}
-          <div className="absolute inset-0 pt-16 pb-12 px-6 flex items-center justify-center">
-            <LoginShowcaseMap />
-          </div>
-
-          {/* Floating County Card (Top Right matching screenshot) */}
-          <div className="absolute right-8 top-28 z-20 bg-white/95 rounded-2xl p-4 shadow-[0_12px_28px_-6px_rgba(16,42,69,0.14)] border border-[#E2E8F0] w-[190px] backdrop-blur-sm">
-            <div className="w-8 h-8 rounded-xl bg-[#E0F2FE] text-[#0284C7] flex items-center justify-center mb-2 shadow-xs">
-              <Grid className="w-4 h-4" />
+              <span>⚠</span>
+              <span>{generalError}</span>
             </div>
-            <div className="text-[13px] font-bold text-[#0F172A] leading-tight">
-              Warren County, IL
-            </div>
-            <div className="text-[10.5px] text-[#64748B] mt-0.5">
-              Census tracts analyzed
-            </div>
-            <div className="text-[22px] font-black text-[#0F172A] tracking-tight mt-1 num">
-              17
-            </div>
-          </div>
+          )}
 
-          {/* Floating Vulnerability Scale (Bottom Left matching screenshot) */}
-          <div className="absolute left-8 bottom-20 z-20 bg-white/95 rounded-2xl p-3.5 shadow-[0_12px_28px_-6px_rgba(16,42,69,0.14)] border border-[#E2E8F0] w-[210px] backdrop-blur-sm">
-            <div className="text-[12px] font-bold text-[#0F172A]">Community vulnerability</div>
-            <div className="text-[10px] text-[#64748B] mb-2">Vulnerability index</div>
-            <div className="h-2 w-full rounded-full bg-gradient-to-r from-[#CBE5FE] via-[#3B82F6] to-[#172554]" />
-            <div className="flex justify-between text-[9.5px] text-[#64748B] mt-1 font-semibold">
-              <span>0.01</span>
-              <span>Counties</span>
-              <span>0.99</span>
-            </div>
-          </div>
+          {/* Email input */}
+          <label className="lg-f">
+            <span className="lbl">Work email</span>
+            <span className={`lg-in ${emailError ? 'bad' : ''}`} id="lg-e-wrap">
+              <Icon name="mail" />
+              <input
+                id="lg-email"
+                type="email"
+                autoComplete="username"
+                placeholder="you@health.gov"
+                inputMode="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (emailError) setEmailError('');
+                }}
+              />
+            </span>
+            <span className="lg-err" id="lg-e-err">
+              {emailError}
+            </span>
+          </label>
 
-          {/* Capability Pills (Bottom row matching screenshot) */}
-          <div className="relative z-10 flex flex-wrap gap-2 pt-4">
-            {['Health map', 'Tract explorer', 'Disparities', 'Needs assessments', 'Reports'].map((pill) => (
-              <span
-                key={pill}
-                className="px-3.5 py-1.5 rounded-full text-[11.5px] font-semibold bg-white/90 border border-[#D6E9F8] text-[#2A4365] shadow-xs backdrop-blur-sm"
+          {/* Password input */}
+          <label className="lg-f">
+            <span className="lbl">
+              Password
+              <button type="button" className="lg-link" id="lg-forgot" onClick={handleForgotPassword}>
+                Forgot password?
+              </button>
+            </span>
+            <span className={`lg-in ${passwordError ? 'bad' : ''}`} id="lg-p-wrap">
+              <Icon name="lock" />
+              <input
+                id="lg-pass"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (passwordError) setPasswordError('');
+                }}
+              />
+              <button
+                type="button"
+                className="lg-eye"
+                id="lg-eye"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPassword(!showPassword)}
               >
-                {pill}
-              </span>
-            ))}
-          </div>
-        </section>
+                <Icon name="eye" />
+              </button>
+            </span>
+            <span className="lg-err" id="lg-p-err">
+              {passwordError}
+            </span>
+          </label>
 
-      </div>
+          {/* Role Radiogroup */}
+          <div className="lg-f" role="radiogroup" aria-label="Sign in as">
+            <span className="lbl">Sign in as</span>
+            <div className="lg-roles">
+              {ROLES.map((r) => {
+                const isOn = selectedRole === r.id;
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className={`lg-role ${isOn ? 'on' : ''}`}
+                    role="radio"
+                    aria-checked={isOn}
+                    onClick={() => setSelectedRole(r.id)}
+                  >
+                    {r.title}
+                    <small>{r.org}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Keep me signed in */}
+          <div className="lg-row">
+            <label>
+              <input
+                type="checkbox"
+                id="lg-rem"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+              />
+              Keep me signed in
+            </label>
+          </div>
+
+          {/* Submit Button */}
+          <button className="lg-btn" id="lg-go" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? <span className="lg-spin" /> : <span>Sign in</span>}
+          </button>
+
+          {/* Divider */}
+          <div className="lg-or">or</div>
+
+          {/* SSO Button */}
+          <button
+            type="button"
+            className="lg-sso"
+            id="lg-sso"
+            onClick={handleGoogleSignIn}
+            disabled={isGoogleSubmitting}
+          >
+            {isGoogleSubmitting ? (
+              <span className="lg-spin" style={{ borderColor: 'rgba(0,144,194,0.3)', borderTopColor: 'var(--cyan)' }} />
+            ) : (
+              <>
+                <Icon name="link" />
+                <span>Continue with single sign-on</span>
+              </>
+            )}
+          </button>
+
+          {/* Demo Note */}
+          <div className="lg-note">
+            <span>●</span>
+            <span>
+              Demo sign-in. Any valid email and a password of 8 or more characters will work. Nothing is sent anywhere.
+            </span>
+          </div>
+        </form>
+
+        {/* Footer */}
+        <div className="lg-foot">
+          <span>Synthetic demo environment</span>
+          <span>Need access? Contact your data administrator</span>
+        </div>
+      </section>
+
+      {/* Right Column: Hero Showcase */}
+      <section className="lg-side" aria-hidden="true">
+        <div className="lg-copy">
+          <h2>Census tract insight for every community you serve</h2>
+          <p>
+            Map social determinants, disease incidence and program use, find underserved neighborhoods, and turn findings
+            into assessments.
+          </p>
+        </div>
+
+        <div id="lg-map" style={{ position: 'absolute', inset: 0 }}>
+          <LoginShowcaseMap />
+        </div>
+
+        <div className="lg-float" style={{ position: 'absolute', right: '40px', top: '150px', width: '210px', zIndex: 5 }}>
+          <span className="m-ico">
+            <Icon name="grid" />
+          </span>
+          <b>King County, WA</b>
+          <span className="note">Census tracts analyzed</span>
+          <div className="v num">398</div>
+        </div>
+
+        <div className="lg-float" style={{ position: 'absolute', left: '40px', bottom: '96px', width: '230px', zIndex: 5 }}>
+          <b>Community vulnerability</b>
+          <div
+            className="legend"
+            style={{ padding: '8px 0 0', minWidth: 0, background: 'none', border: 0, boxShadow: 'none' }}
+          >
+            <div
+              style={{
+                height: '6px',
+                borderRadius: '3px',
+                background: 'linear-gradient(90deg, #E4ECFA, #2584EB, #123A7D)'
+              }}
+            />
+            <div
+              className="ends"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginTop: '3px',
+                fontSize: '10px',
+                color: 'var(--faint)'
+              }}
+            >
+              <span>Lower need</span>
+              <span>Higher need</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="lg-caps">
+          <span>Health map</span>
+          <span>Tract explorer</span>
+          <span>Disparities</span>
+          <span>Needs assessments</span>
+          <span>Reports</span>
+        </div>
+      </section>
     </div>
   );
 }

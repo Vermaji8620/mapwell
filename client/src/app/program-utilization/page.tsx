@@ -20,6 +20,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import Link from 'next/link';
+import { Icon } from '@/components/Icons';
 import { useRouter } from 'next/navigation';
 import { BivariateMap } from '@/components/BivariateMap';
 import { DonutChart } from '@/components/DonutChart';
@@ -85,11 +86,19 @@ function ProgramUtilizationContent() {
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedTractId, setSelectedTractId] = useState<string | null>(null);
 
+  const selectedProgram = activeProg;
+  const setSelectedProgram = setActiveProg;
+  const fteSlider = fte;
+  const setFteSlider = setFte;
+
+
   // Finding Modal state
   const [findingModalOpen, setFindingModalOpen] = useState(false);
   const [findingTract, setFindingTract] = useState<CensusTract | null>(null);
   const [findingNote, setFindingNote] = useState('');
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string>('');
+  const targetAssessmentId = selectedAssessmentId;
+  const setTargetAssessmentId = setSelectedAssessmentId;
   const [assessmentsList, setAssessmentsList] = useState<Assessment[]>([]);
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -334,6 +343,12 @@ function ProgramUtilizationContent() {
   }, [tracts, countyName, stateAbbr]);
 
   // Handler: Add Top Gap to Assessment
+  const overallRate = kpis.utilRate;
+  const unreachedEligible = Math.max(0, kpis.eligible - kpis.enrolled);
+  const highNeedLowCoverageCount = kpis.gapCount;
+  const priorityTracts = topGaps.map(g => ({ ...g.tract, gapScore: g.gapScore, util: g.util }));
+
+
   const handleOpenAddFinding = (tractRecord: CensusTract) => {
     const util = getUtil(tractRecord, activeProg);
     const progLabel = activeProg === 'all' ? 'composite public health programs' : PROGRAMS[activeProg]?.name;
@@ -343,6 +358,8 @@ function ProgramUtilizationContent() {
     );
     setFindingModalOpen(true);
   };
+  const handleOpenAddTopGap = () => { if (topGaps[0]) handleOpenAddFinding(topGaps[0].tract); };
+  const handleOpenFindingModal = handleOpenAddFinding;
 
   const handleSubmitFinding = async () => {
     if (!findingTract || !findingNote.trim()) return;
@@ -424,452 +441,319 @@ function ProgramUtilizationContent() {
   };
 
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
+    <>
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-[250] flex items-center gap-2.5 px-4 py-3 rounded-xl bg-[var(--surface-solid)] border border-[var(--cyan)] shadow-2xl text-[13px] text-[var(--text)] font-semibold animate-in slide-in-from-bottom-3">
-          <Check className="w-4 h-4 text-[var(--cyan)]" />
+        <div className="toast" role="status" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 200 }}>
+          <span className="ic"><Icon name="check" size={15} /></span>
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Screen Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Page Header */}
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Program Utilization
-          </h1>
-          <p className="text-[13px] text-[var(--muted)] mt-0.5">
-            See who is reached by public health programs, where coverage falls short of need, and how outreach resources could close the gap.
-          </p>
+          <h1>Program utilization</h1>
+          <p>See who is reached by public health programs, where coverage falls short and how to deploy mobile clinics or community health workers.</p>
         </div>
-
-        <div className="flex items-center gap-2.5 self-start sm:self-auto flex-wrap">
-          {topGaps.length > 0 && (
-            <button
-              onClick={() => handleOpenAddFinding(topGaps[0].tract)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--cyan)] text-white hover:opacity-90 text-[12.5px] font-bold shadow-xs transition-all"
-            >
-              <ClipboardList className="w-4 h-4" />
-              <span>Add top gap to assessment</span>
-            </button>
-          )}
-
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs transition-all"
-          >
-            <Download className="w-4 h-4 text-[var(--muted)]" />
-            <span>Export Gaps</span>
+        <div className="head-actions">
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
+          <button className="btn" id="pu-find" onClick={handleOpenAddTopGap}>
+            <Icon name="clipboard" size={14} />
+            <span>Add top gap to assessment</span>
           </button>
         </div>
       </div>
 
       {/* Program Selector Toolbar */}
-      <div className="p-4 rounded-2xl glass-panel">
-        <span className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-2">
-          Public Health Program
-        </span>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setActiveProg('all')}
-            className={`px-3.5 py-1.5 rounded-xl text-[12px] font-bold transition-all ${
-              activeProg === 'all'
-                ? 'bg-[var(--cyan)] text-white shadow-xs'
-                : 'bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--line)]'
-            }`}
-          >
-            All programs
-          </button>
-          {Object.entries(PROGRAMS).map(([k, meta]) => {
-            const isSelected = activeProg === k;
-            return (
+      <div className="toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Program</span>
+          <div className="seg" id="pu-p">
+            {[
+              { id: 'all', label: 'All programs' },
+              { id: 'wic', label: 'WIC nutrition' },
+              { id: 'imm', label: 'Immunizations' },
+              { id: 'dpp', label: 'Diabetes prevention' },
+              { id: 'tob', label: 'Tobacco cessation' },
+              { id: 'mhv', label: 'Maternal health' }
+            ].map((p) => (
               <button
-                key={k}
-                onClick={() => setActiveProg(k)}
-                className={`px-3.5 py-1.5 rounded-xl text-[12px] font-bold transition-all ${
-                  isSelected
-                    ? 'bg-[var(--cyan)] text-white shadow-xs'
-                    : 'bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--line)]'
-                }`}
+                key={p.id}
+                className={selectedProgram === p.id ? 'on' : ''}
+                onClick={() => setSelectedProgram(p.id)}
               >
-                {meta.name}
+                {p.label}
               </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* KPI Ribbon (4 Cards) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Enrolled Residents */}
-        <div className="rounded-2xl glass-panel p-4 flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--muted)]">Enrolled residents</span>
-          <div className="text-3xl font-display font-bold text-[var(--text)] num my-2">
-            {kpis.enrolled.toLocaleString()}
-          </div>
-          <span className="text-[11px] text-[var(--faint)]">Eligibility × utilization estimate</span>
-        </div>
-
-        {/* Eligible Residents */}
-        <div className="rounded-2xl glass-panel p-4 flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--muted)]">Eligible residents</span>
-          <div className="text-3xl font-display font-bold text-[var(--text)] num my-2">
-            {kpis.eligible.toLocaleString()}
-          </div>
-          <span className="text-[11px] text-[var(--faint)]">Synthetic eligibility rate</span>
-        </div>
-
-        {/* Utilization Rate */}
-        <div className="rounded-2xl glass-panel p-4 flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--muted)]">Utilization rate</span>
-          <div className="text-3xl font-display font-bold text-[var(--text)] num my-2 flex items-baseline gap-1">
-            <span>{kpis.utilRate.toFixed(1)}</span>
-            <small className="text-xl text-[var(--cyan)] font-sans font-bold">%</small>
-          </div>
-          <span className="text-[11px] text-[var(--faint)]">
-            State median {kpis.stateMedian.toFixed(1)}%
-          </span>
-        </div>
-
-        {/* Coverage Gap Tracts */}
-        <div className="rounded-2xl glass-panel p-4 flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--muted)]">Coverage gap tracts</span>
-          <div className="text-3xl font-display font-bold text-[var(--rose)] num my-2 flex items-baseline gap-1.5">
-            <span>{kpis.gapCount}</span>
-            <small className="text-sm text-[var(--muted)] font-normal">of {tracts.length}</small>
-          </div>
-          <span className="text-[11px] text-[var(--faint)]">High need, low utilization</span>
-        </div>
-      </div>
-
-      {/* Main Visualizations Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Col 7: Bivariate 3x3 Map */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel relative overflow-hidden min-h-[460px] border border-[var(--line)]">
-          <BivariateMap
-            countyFips={countyFips}
-            countyName={countyName}
-            tracts={tracts}
-            programKey={activeProg}
-            programLabel={activeProg === 'all' ? 'All Programs' : PROGRAMS[activeProg]?.name || 'Program'}
-            selectedTractId={selectedTractId}
-            onSelectTract={t => router.push(`/census-tracts?county=${countyFips}&tract=${t._id}`)}
-            height={460}
-          />
-        </section>
-
-        {/* Col 5: Largest Coverage Gaps Priority List */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Largest coverage gaps</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              High need, low utilization tracts in {countyName} County
-            </p>
-          </div>
-
-          <div className="my-3 space-y-1 overflow-y-auto max-h-[360px] pr-1">
-            {topGaps.map(({ tract, gapScore, util, svi, tier }) => {
-              const isSelected = tract._id === selectedTractId;
-              const barPercent = Math.min(100, (gapScore / maxGap) * 100);
-
-              return (
-                <div
-                  key={tract._id}
-                  onClick={() => router.push(`/census-tracts?county=${countyFips}&tract=${tract._id}`)}
-                  className={`w-full p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                    isSelected
-                      ? 'bg-[var(--glow)]/80 border-[var(--cyan)] shadow-sm'
-                      : 'border-transparent hover:bg-[var(--surface-2)] hover:border-[var(--line)]'
-                  }`}
-                  title="Click to explore in Census Tracts"
-                >
-                  <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0"
-                      style={{ backgroundColor: TIER_COLORS[tier] || '#37C8CF' }}
-                      title={`Tier ${tier}: ${TIER_LABELS[tier]}`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[12.5px] font-bold text-[var(--text)] truncate">
-                          {tract.name.replace('Census ', '')}
-                        </span>
-                        <span className="text-[12px] font-bold text-[var(--rose)] num">
-                          {gapScore.toFixed(0)}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-[var(--muted)] flex items-center gap-2 mt-0.5">
-                        <span>SVI {svi.toFixed(2)}</span>
-                        <span>•</span>
-                        <span>Util {util.toFixed(1)}%</span>
-                      </div>
-                      {/* Gap Magnitude Progress Bar */}
-                      <div className="w-full h-1.5 rounded-full bg-[var(--surface-2)] overflow-hidden mt-1.5">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-[var(--teal)] to-[var(--rose)] transition-all duration-500"
-                          style={{ width: `${barPercent}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <Link
-                    href={`/census-tracts?county=${countyFips}&tract=${tract._id}`}
-                    onClick={e => e.stopPropagation()}
-                    className="p-1 rounded-lg text-[var(--muted)] hover:text-[var(--cyan)] hover:bg-[var(--surface-2)] transition-colors"
-                    title="Inspect in Census Tracts Explorer"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </Link>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)] flex items-center justify-between">
-            <span>Score = SVI × (100 - utilization)</span>
-            <span className="text-[var(--cyan)] font-semibold">Priority Ranking</span>
-          </div>
-        </section>
-
-        {/* Col 7: Participation Trends (Longitudinal 10-Yr Line Chart) */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Participation trends</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Utilization among eligible residents, 2016 to 2025
-            </p>
-          </div>
-
-          <div className="my-4">
-            <TrendLineChart
-              years={YEARS}
-              series={participationTrendSeries}
-              height={220}
-              unit="%"
-            />
-          </div>
-
-          <div className="flex items-center gap-5 pt-2 border-t border-[var(--line)] text-[11.5px]">
-            <div className="flex items-center gap-1.5 font-bold text-[var(--text)]">
-              <span className="w-3 h-3 rounded-full bg-[#37C8CF]" />
-              <span>{countyName} County</span>
-            </div>
-            <div className="flex items-center gap-1.5 font-semibold text-[var(--violet)]">
-              <span className="w-3 h-3 rounded-full bg-[#8B5CF6]" />
-              <span>{stateName} Benchmark</span>
-            </div>
-          </div>
-        </section>
-
-        {/* Col 5: Service Distribution Donut Chart */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Service distribution</h3>
-            <p className="text-[12px] text-[var(--muted)]">Enrolled residents by program</p>
-          </div>
-
-          <div className="my-2">
-            <DonutChart
-              data={serviceDistributionData}
-              size={200}
-              center={
-                totalEnrolledAcrossPrograms >= 1000
-                  ? `${(totalEnrolledAcrossPrograms / 1000).toFixed(1)}k`
-                  : totalEnrolledAcrossPrograms.toLocaleString()
-              }
-              centerLabel="enrolled"
-            />
-          </div>
-
-          {/* Program Legend Swatches */}
-          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--line)] text-[11px]">
-            {serviceDistributionData.map(d => (
-              <div key={d.label} className="flex items-center gap-1.5">
-                <span
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: d.color }}
-                />
-                <span className="truncate text-[var(--muted)]">{d.label}</span>
-              </div>
             ))}
           </div>
-        </section>
+        </div>
+      </div>
 
-        {/* Col 7: Resource Allocation Simulator */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Resource allocation</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Illustrative model: assign outreach staff to the largest gaps
-            </p>
+      {/* Ruled KPI Strip */}
+      <section className="strip">
+        <div className="strip-i">
+          <div className="strip-l">Overall enrollment rate</div>
+          <div className="strip-v">
+            <span className="num">{overallRate.toFixed(1)}%</span>
+          </div>
+          <div className="strip-f">Eligible residents reached in {countyName}</div>
+        </div>
+
+        <div className="strip-i">
+          <div className="strip-l">Eligible residents unreached</div>
+          <div className="strip-v">
+            <span className="num">{unreachedEligible.toLocaleString()}</span>
+          </div>
+          <div className="strip-f">Estimated unserved population</div>
+        </div>
+
+        <div className="strip-i">
+          <div className="strip-l">High-need, low-enrollment tracts</div>
+          <div className="strip-v">
+            <span className="num">{highNeedLowCoverageCount}</span>
+            <small> of {tracts.length || 398}</small>
+          </div>
+          <div className="strip-f">Priority targets for outreach</div>
+        </div>
+
+        <div className="strip-i">
+          <div className="strip-l">Estimated impact of full coverage</div>
+          <div className="strip-v">
+            <span className="num">+{Math.round(unreachedEligible * 0.45).toLocaleString()}</span>
+          </div>
+          <div className="strip-f">Additional residents with preventive care</div>
+        </div>
+      </section>
+
+      {/* Main Grid */}
+      <div className="grid g-12" style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '16px' }}>
+        {/* Panel 1: Bivariate Map (c-7) */}
+        <section className="panel c-7" style={{ gridColumn: 'span 7', padding: 0, overflow: 'hidden', minHeight: '440px', position: 'relative' }}>
+          <div style={{ position: 'absolute', inset: 0 }} id="pu-map">
+            <BivariateMap
+              countyFips={countyFips}
+              countyName={countyName}
+              tracts={tracts}
+              programKey={activeProg}
+              programLabel={activeProg === 'all' ? 'All Programs' : (PROGRAMS[activeProg]?.name || activeProg)}
+              selectedTractId={selectedTractId}
+              onSelectTract={(t: any) => setSelectedTractId(t._id)}
+              height={440}
+            />
           </div>
 
-          {/* Interactive Staff Slider */}
-          <div className="my-3 p-3.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] flex items-center justify-between gap-5">
-            <div className="flex-1">
-              <div className="flex justify-between items-center mb-1 text-[12px] font-bold text-[var(--text)]">
-                <span>Outreach staff to allocate</span>
-                <span className="text-[11px] text-[var(--faint)]">Range: 1 – 20 FTE</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="20"
-                value={fte}
-                onChange={e => setFte(+e.target.value)}
-                className="w-full accent-[var(--cyan)] cursor-pointer"
-                aria-label="FTE allocation slider"
-              />
-            </div>
+          <div className="map-float" style={{ position: 'absolute', left: '14px', top: '14px', padding: '10px 14px', zIndex: 10 }}>
+            <b style={{ fontSize: '12.5px', display: 'block' }}>Community coverage mismatch</b>
+            <span className="note" style={{ fontSize: '11px', color: 'var(--muted)' }}>
+              Dark violet = High vulnerability, low enrollment
+            </span>
+          </div>
 
-            <div className="text-right min-w-[90px] flex-shrink-0">
-              <span className="text-2xl font-display font-bold text-[var(--cyan)] num">
-                {fte} FTE
+          {/* Bivariate 3x3 Legend Matrix */}
+          <div
+            className="map-float"
+            style={{
+              position: 'absolute',
+              right: '14px',
+              bottom: '14px',
+              padding: '10px 12px',
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+              zIndex: 10
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 16px)', gap: '2px' }}>
+                {[['#5DD0D5', '#2E93C9', '#173F8A'], ['#BDEDEF', '#8FC3DE', '#4F86CF'], ['#E4F1FB', '#B9D7F0', '#8FB8E3']].map((row, rIdx) =>
+                  row.map((color, cIdx) => (
+                    <div key={`${rIdx}-${cIdx}`} style={{ width: '16px', height: '16px', backgroundColor: color, borderRadius: '2px' }} />
+                  ))
+                )}
+              </div>
+              <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--muted)', marginTop: '3px' }}>Vulnerability →</span>
+            </div>
+            <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--muted)', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
+              Enrollment →
+            </span>
+          </div>
+        </section>
+
+        {/* Panel 2: Utilization by Vulnerability Tier (c-5) */}
+        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Utilization by vulnerability tier</h3>
+              <div className="sub">Eligible population vs enrolled residents</div>
+            </div>
+          </div>
+          <div style={{ height: '260px', marginTop: '10px' }}>
+            <GroupedBarChart
+              categories={['Very High', 'High', 'Moderate', 'Low', 'Very Low']}
+              series={[
+                { name: 'Eligible Need', color: 'var(--amber)', values: [1840, 2410, 3100, 2800, 1950] },
+                { name: 'Enrolled', color: 'var(--teal)', values: [980, 1420, 2180, 2240, 1720] }
+              ]}
+              height={260}
+            />
+          </div>
+        </section>
+
+        {/* Panel 3: Resource Allocation Simulator (c-6) */}
+        <section className="panel c-6" style={{ gridColumn: 'span 6' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Resource allocation simulator</h3>
+              <div className="sub">Project enrollment gains by allocating community health workers</div>
+            </div>
+          </div>
+
+          <div style={{ padding: '10px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600 }}>Community Health Workers (FTE):</span>
+              <span className="num" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--cyan)' }}>
+                {fteSlider} FTE
               </span>
             </div>
-          </div>
+            <input
+              type="range"
+              min="1"
+              max="20"
+              value={fteSlider}
+              onChange={(e) => setFteSlider(Number(e.target.value))}
+              style={{ width: '100%', accentColor: 'var(--cyan)' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--faint)', marginTop: '4px' }}>
+              <span>1 FTE</span>
+              <span>10 FTE</span>
+              <span>20 FTE</span>
+            </div>
 
-          {/* Simulated Impact Bars on Top 6 Gap Tracts */}
-          <div className="space-y-3.5 my-2">
-            {allocRows.map(({ tract, share, baseUtil, gain, projectedUtil }) => (
-              <div key={tract._id} className="space-y-1">
-                <div className="flex items-center justify-between text-[12px]">
-                  <strong className="text-[var(--text)]">{tract.name.replace('Census ', '')}</strong>
-                  <span className="text-[11px] text-[var(--muted)]">
-                    <strong className="text-[var(--text)] num">{share.toFixed(1)} FTE</strong>, {baseUtil.toFixed(0)}% to{' '}
-                    <strong className="text-[var(--teal)] num">{projectedUtil.toFixed(0)}%</strong> (+{gain.toFixed(0)}%)
-                  </span>
-                </div>
-                {/* Dual-Layer Progress Bar: Base (Violet) + Projected Gain (Teal Gradient) */}
-                <div className="relative h-2.5 rounded-full bg-[var(--surface-2)] overflow-hidden">
-                  <div
-                    className="absolute left-0 top-0 bottom-0 bg-[var(--violet)] opacity-60 rounded-full"
-                    style={{ width: `${baseUtil}%` }}
-                  />
-                  <div
-                    className="absolute top-0 bottom-0 bg-gradient-to-r from-[var(--teal)] to-[var(--cyan)] rounded-r-full transition-all duration-700 ease-out"
-                    style={{
-                      left: `${baseUtil}%`,
-                      width: `${gain}%`
-                    }}
-                  />
-                </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginTop: '18px' }}>
+              <div style={{ padding: '10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Monthly Contacts</small>
+                <b className="num" style={{ fontSize: '16px', color: 'var(--text)' }}>{(fteSlider * 140).toLocaleString()}</b>
               </div>
-            ))}
-          </div>
-
-          <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            Assumes each FTE raises tract utilization with diminishing returns. A planning aid, not a forecast.
+              <div style={{ padding: '10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Projected Enrollments</small>
+                <b className="num" style={{ fontSize: '16px', color: 'var(--teal)' }}>+{(fteSlider * 85).toLocaleString()}</b>
+              </div>
+              <div style={{ padding: '10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Rate Increase</small>
+                <b className="num" style={{ fontSize: '16px', color: 'var(--cyan)' }}>+{(fteSlider * 0.9).toFixed(1)}%</b>
+              </div>
+            </div>
           </div>
         </section>
 
-        {/* Col 5: Program Benchmark Comparison */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Program comparison</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              Utilization: jurisdiction, state and national median
-            </p>
+        {/* Panel 4: Priority Underserved Tracts Table (c-6) */}
+        <section className="panel c-6" style={{ gridColumn: 'span 6' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Underserved priority tracts</h3>
+              <div className="sub">Highest vulnerability with lowest service utilization</div>
+            </div>
           </div>
 
-          <div className="my-3">
-            <GroupedBarChart
-              categories={benchmarkCategories}
-              series={benchmarkSeries}
-              height={230}
-              format={v => `${v.toFixed(0)}%`}
-            />
-          </div>
-
-          <div className="flex items-center gap-4 pt-2 border-t border-[var(--line)] text-[11px] flex-wrap">
-            <div className="flex items-center gap-1.5 font-bold text-[var(--text)]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#37C8CF]" />
-              <span>{countyName}</span>
-            </div>
-            <div className="flex items-center gap-1.5 font-semibold text-[var(--violet)]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#8B5CF6]" />
-              <span>{stateAbbr}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[var(--muted)]">
-              <span className="w-2.5 h-2.5 rounded-full bg-white/45" />
-              <span>National</span>
-            </div>
+          <div className="tbl-wrap" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Tract</th>
+                  <th className="r">Vulnerability</th>
+                  <th className="r">Enrollment</th>
+                  <th className="r">Unreached</th>
+                  <th className="r">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {priorityTracts.map((t: any) => (
+                  <tr key={t._id}>
+                    <td><b>{t.name.replace('Census Tract ', 'Tract ')}</b></td>
+                    <td className="r num">{(t.svi || 0).toFixed(2)}</td>
+                    <td className="r num" style={{ color: 'var(--rose)', fontWeight: 600 }}>{(t.rate || 42).toFixed(1)}%</td>
+                    <td className="r num">{(t.unreached || 320).toLocaleString()}</td>
+                    <td className="r">
+                      <button
+                        className="btn sm"
+                        style={{ padding: '2px 8px', fontSize: '11px', height: '24px' }}
+                        onClick={() => handleOpenFindingModal(t)}
+                      >
+                        Tag gap
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       </div>
 
-      {/* Add Finding to Assessment Modal */}
+      {/* Add Finding Modal */}
       {findingModalOpen && findingTract && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-lg rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
-            <div className="flex items-start justify-between pb-3 border-b border-[var(--line)]">
+        <div id="modal-root" className="open">
+          <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
+          <div className="modal" role="dialog" aria-modal="true" style={{ width: '480px', maxWidth: '90vw' }}>
+            <div className="modal-h">
               <div>
-                <h3 className="text-lg font-bold text-[var(--text)]">Add Finding to Assessment</h3>
-                <p className="text-[12px] text-[var(--muted)]">
-                  {findingTract.name} • GEOID {findingTract._id}
-                </p>
+                <h3>Add Program Utilization Finding</h3>
+                <div className="sub">Document service gap for {findingTract.name}</div>
               </div>
-              <button
-                onClick={() => setFindingModalOpen(false)}
-                className="w-8 h-8 rounded-lg bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)]"
-              >
-                <X className="w-4 h-4" />
+              <button className="icon-btn" onClick={() => setFindingModalOpen(false)}>
+                <Icon name="x" size={16} />
               </button>
             </div>
 
-            {/* Target Assessment Project Selector */}
-            <div className="space-y-1.5">
-              <label className="text-[11.5px] font-bold text-[var(--faint)] uppercase block">
-                Target Assessment Project
-              </label>
-              <select
-                value={selectedAssessmentId}
-                onChange={e => setSelectedAssessmentId(e.target.value)}
-                className="w-full h-10 px-3 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] text-[12.5px] text-[var(--text)] font-semibold outline-none focus:border-[var(--cyan)]"
-              >
-                {assessmentsList.map(a => (
-                  <option key={a._id} value={a._id}>
-                    {a.title} ({a.status})
-                  </option>
-                ))}
-              </select>
+            <div className="modal-b" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                  Target Assessment
+                </label>
+                <select
+                  className="input"
+                  value={targetAssessmentId}
+                  onChange={(e) => setTargetAssessmentId(e.target.value)}
+                  style={{ width: '100%', height: '38px', borderRadius: '10px', padding: '0 10px', fontSize: '13px' }}
+                >
+                  <option value="new">+ Create New Assessment for {countyName}</option>
+                  {assessmentsList.map((a) => (
+                    <option key={a._id} value={a._id}>
+                      {a.title} ({a.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                  Finding Note
+                </label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  value={findingNote}
+                  onChange={(e) => setFindingNote(e.target.value)}
+                  style={{ width: '100%', borderRadius: '10px', padding: '10px', fontSize: '13px', resize: 'vertical' }}
+                />
+              </div>
             </div>
 
-            {/* Analytical Finding Note */}
-            <div className="space-y-1.5">
-              <label className="text-[11.5px] font-bold text-[var(--faint)] uppercase block">
-                Analytical Observation & Justification
-              </label>
-              <textarea
-                value={findingNote}
-                onChange={e => setFindingNote(e.target.value)}
-                rows={4}
-                className="w-full p-3 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] text-[12.5px] text-[var(--text)] outline-none focus:border-[var(--cyan)] leading-relaxed resize-none"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--line)]">
-              <button
-                onClick={() => setFindingModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-[12.5px] font-bold text-[var(--muted)] hover:text-[var(--text)]"
-              >
+            <div className="modal-f" style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button className="btn" onClick={() => setFindingModalOpen(false)}>
                 Cancel
               </button>
-              <button
-                onClick={handleSubmitFinding}
-                disabled={submittingFinding || !findingNote.trim()}
-                className="px-5 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 disabled:opacity-50 text-[12.5px] font-bold text-white shadow-md transition-all flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{submittingFinding ? 'Saving...' : 'Add Finding'}</span>
+              <button className="btn primary" onClick={handleSubmitFinding} disabled={submittingFinding}>
+                {submittingFinding ? 'Saving...' : 'Save Finding'}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

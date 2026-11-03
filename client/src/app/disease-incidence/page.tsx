@@ -15,6 +15,7 @@ import {
   Activity
 } from 'lucide-react';
 import Link from 'next/link';
+import { Icon } from '@/components/Icons';
 import { TemporalDiseaseMap, createDiseaseColorScale } from '@/components/TemporalDiseaseMap';
 import { TrendLineChart, TrendSeries } from '@/components/TrendLineChart';
 import { BarChart, BarDatum } from '@/components/BarChart';
@@ -412,105 +413,115 @@ function DiseaseIncidenceContent() {
     document.body.removeChild(link);
   };
 
+  const cond = condition;
+  const setCond = setCondition;
+  const activeYear = YEARS[yearIndex];
+  const activeMeta = metricMeta;
+  const activeCountyRate = focusCountyRate;
+  const regionalBars = regionalDistributionData;
+  const countySearch = filterQuery;
+  const setCountySearch = setFilterQuery;
+
+  const nationalMedian = useMemo(() => {
+    if (!repo) return 10;
+    const vals = repo.counties.map(c => {
+      const t = countyTrends.get(c.id);
+      return t ? t[yearIndex] : (c.indicators as any)[condition] ?? 0;
+    }).sort((a, b) => a - b);
+    return vals[Math.floor(vals.length / 2)] || 10;
+  }, [repo, countyTrends, yearIndex, condition]);
+
+  const deltaFromNat = focusCountyRate - nationalMedian;
+
+  const tableCounties = useMemo(() => {
+    return poolCounties
+      .map(c => {
+        const trend = countyTrends.get(c.id);
+        const valCurrent = trend ? trend[yearIndex] : 10;
+        const val2016 = trend ? trend[0] : 10;
+        const diff = valCurrent - val2016;
+        return {
+          id: c.id,
+          name: c.name,
+          stateAbbr: c.st,
+          valCurrent,
+          val2016,
+          diff,
+          spark: trend || [10, 10]
+        };
+      })
+      .filter(c => !filterQuery || c.name.toLowerCase().includes(filterQuery.toLowerCase()))
+      .sort((a, b) => b.valCurrent - a.valCurrent);
+  }, [poolCounties, countyTrends, yearIndex, filterQuery]);
+
+  const highestRegion = useMemo(() => {
+    if (regionalDistributionData.length === 0) return { region: 'South', rate: 12.4 };
+    const sorted = [...regionalDistributionData].sort((a, b) => b.value - a.value);
+    return { region: sorted[0].label, rate: sorted[0].value };
+  }, [regionalDistributionData]);
+
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
-      {/* Screen Header & Top Action Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <>
+      {/* Page Header */}
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Disease Incidence
-          </h1>
-          <p className="text-[13px] text-[var(--muted)] mt-0.5">
-            Track chronic condition prevalence across counties and over time. Use the timeline to see how burden has shifted.
-          </p>
+          <h1>Disease incidence</h1>
+          <p>Track chronic condition prevalence across counties and over time. Use the timeline to observe geographic progression.</p>
         </div>
-
-        <button
-          onClick={handleExportTable}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs transition-all self-start sm:self-auto"
-        >
-          <Download className="w-4 h-4 text-[var(--cyan)]" />
-          <span>Export Table</span>
-        </button>
+        <div className="head-actions">
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
+          <button className="btn" id="di-exp" onClick={handleExportTable}>
+            <Icon name="download" size={14} />
+            <span>Export table</span>
+          </button>
+        </div>
       </div>
 
-      {/* Toolbar: Condition Chips & Geography Scope */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-2xl glass-panel">
-        {/* Chronic Condition Chips */}
-        <div>
-          <span className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1.5">
-            Chronic Condition
-          </span>
-          <div className="flex items-center gap-2 flex-wrap">
-            {CONDS.map(cKey => {
-              const meta = METRICS_CONFIG[cKey] || { short: cKey };
-              const isSelected = cKey === condition;
-              return (
+      {/* Toolbar */}
+      <div className="toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Condition</span>
+            <div className="chips" id="di-cond">
+              {CONDS.map((c) => (
                 <button
-                  key={cKey}
-                  onClick={() => setCondition(cKey)}
-                  className={`px-3.5 py-1.5 rounded-xl text-[12px] font-bold transition-all ${
-                    isSelected
-                      ? 'bg-[var(--cyan)] text-white shadow-xs'
-                      : 'bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] border border-[var(--line)]'
-                  }`}
+                  key={c}
+                  className={`chip ${cond === c ? 'on' : ''}`}
+                  onClick={() => setCond(c)}
                 >
-                  {meta.short}
+                  {METRICS_CONFIG[c]?.short || c}
                 </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Geography Toggle */}
-        <div>
-          <span className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1.5">
-            Geography Scope
-          </span>
-          <div className="flex rounded-xl border border-[var(--line)] overflow-hidden text-[12px] font-bold bg-[var(--surface-2)]">
-            <button
-              onClick={() => setScopeSt(null)}
-              className={`px-3.5 py-1.5 transition-colors ${
-                scopeSt === null ? 'bg-[var(--cyan)] text-white shadow-xs' : 'text-[var(--muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              United States
-            </button>
-            <button
-              onClick={() => setScopeSt(currentStateMeta.fips)}
-              className={`px-3.5 py-1.5 transition-colors ${
-                scopeSt !== null ? 'bg-[var(--cyan)] text-white shadow-xs' : 'text-[var(--muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              {currentStateMeta.name} Counties
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Main 12-Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Col 8: Temporal Map with Scrubbable 10-Year Timeline Bar */}
-        <section className="lg:col-span-8 rounded-2xl glass-panel relative overflow-hidden flex flex-col justify-between min-h-[500px] border border-[var(--line)] bg-[var(--surface-solid)]/70">
-          {/* Floating Legend Top-Left */}
-          <div className="absolute top-4 left-4 z-20 px-3.5 py-2.5 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-lg min-w-[220px] text-[11px]">
-            <div className="font-bold text-[var(--text)] mb-1.5 flex justify-between items-center">
-              <span>{metricMeta.label}, {YEARS[yearIndex]}</span>
-            </div>
-            <div className="flex h-2.5 rounded overflow-hidden mb-1.5">
-              {diseaseScaleInfo.bins.map((c, i) => (
-                <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
               ))}
             </div>
-            <div className="flex justify-between items-center text-[10px] text-[var(--faint)]">
-              <span>{diseaseScaleInfo.extent[0]?.toFixed(1) ?? '0.0'}%</span>
-              <span>Fixed across years</span>
-              <span>{diseaseScaleInfo.extent[1]?.toFixed(1) ?? '0.0'}%</span>
-            </div>
           </div>
 
-          {/* Choropleth Map View */}
-          <div className="w-full h-full flex-1 min-h-[420px]">
+          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Geography</span>
+            <div className="seg" id="di-g">
+              <button
+                className={!scopeSt ? 'on' : ''}
+                onClick={() => setScopeSt(null)}
+              >
+                United States
+              </button>
+              <button
+                className={scopeSt ? 'on' : ''}
+                onClick={() => setScopeSt(activeCounty?.stateFips || '53')}
+              >
+                {activeCounty?.stateAbbr || activeCounty?.stateName || 'State'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Grid */}
+      <div className="grid g-12" style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '16px' }}>
+        {/* Panel 1: Map with Timeline Slider (c-8) */}
+        <section className="panel c-8" style={{ gridColumn: 'span 8', padding: 0, overflow: 'hidden', minHeight: '460px', position: 'relative' }}>
+          <div style={{ position: 'absolute', inset: '0 0 70px 0' }} id="di-map">
             <TemporalDiseaseMap
               scopeSt={scopeSt}
               condition={condition}
@@ -518,272 +529,247 @@ function DiseaseIncidenceContent() {
               years={YEARS}
               selectedCountyId={selectedCountyId}
               onSelectCounty={(c) => setSelectedCountyId(c.id)}
-              height={420}
               countyTrends={countyTrends}
+              height={390}
             />
           </div>
 
-          {/* Bottom Scrubbable Timeline Player */}
-          <div className="h-[74px] border-t border-[var(--line)] bg-[var(--surface-solid)] px-6 flex items-center gap-5 z-20">
+          {/* Legend Float */}
+          <div className="map-float legend" style={{ position: 'absolute', left: '14px', top: '14px', zIndex: 10 }} id="di-leg">
+            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)', marginBottom: '4px' }}>
+              {activeMeta.label}, {activeYear}
+            </div>
+            <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', width: '160px' }}>
+              {['#BDEFF0', '#37C8CF', '#2A9FD6', '#2565C8', '#173F8A'].map((c, i) => (
+                <div key={i} style={{ flex: 1, height: '100%', backgroundColor: c }} />
+              ))}
+            </div>
+            <div className="ends" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--faint)', marginTop: '2px' }}>
+              <span>Lower rate</span>
+              <span>Higher burden</span>
+            </div>
+          </div>
+
+          {/* Bottom Timeline Controls */}
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: '70px',
+              borderTop: '1px solid var(--line)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              padding: '0 20px',
+              background: 'var(--surface-solid)',
+              zIndex: 10
+            }}
+          >
             <button
+              className="icon-btn"
+              id="di-play"
+              aria-label={isPlaying ? 'Pause timeline' : 'Play timeline'}
               onClick={togglePlay}
-              aria-label={isPlaying ? 'Pause animation' : 'Play animation'}
-              className="w-10 h-10 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-white flex items-center justify-center shadow-md transition-all flex-shrink-0"
+              style={{ width: '38px', height: '38px', borderRadius: '12px' }}
             >
-              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+              <Icon name={isPlaying ? 'pause' : 'play'} size={16} />
             </button>
 
-            <div className="flex-1">
+            <div style={{ flex: 1 }}>
               <input
                 type="range"
+                className="range"
                 min="0"
                 max="9"
                 value={yearIndex}
-                onChange={(e) => {
-                  setIsPlaying(false);
-                  setYearIndex(+e.target.value);
-                }}
-                className="w-full accent-[var(--cyan)] cursor-pointer"
-                aria-label="Surveillance Year"
+                onChange={(e) => setYearIndex(Number(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--cyan)' }}
+                aria-label="Year slider"
               />
-              <div className="flex justify-between text-[11px] text-[var(--faint)] num font-semibold mt-1">
-                {YEARS.filter((_, i) => i % 3 === 0 || i === 9).map(y => (
-                  <span key={y}>{y}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--faint)', marginTop: '4px' }}>
+                {YEARS.map((y, i) => (
+                  <span key={y} style={{ fontWeight: i === yearIndex ? 700 : 400, color: i === yearIndex ? 'var(--cyan)' : undefined }}>
+                    {y}
+                  </span>
                 ))}
               </div>
             </div>
 
-            <div className="text-2xl font-bold font-display text-[var(--cyan)] num min-w-[70px] text-right">
-              {YEARS[yearIndex]}
+            <div className="num" style={{ fontSize: '26px', fontWeight: 700, minWidth: '64px', textAlign: 'right', color: 'var(--cyan)' }} id="di-ylab">
+              {activeYear}
             </div>
           </div>
         </section>
 
-        {/* Col 4: Top Summary KPI + Geographic Distribution */}
-        <div className="lg:col-span-4 flex flex-col justify-between gap-6">
-          {/* Active Focus County KPI Card */}
-          <section className="rounded-2xl glass-panel p-5">
-            <div className="text-[12px] font-bold text-[var(--muted)]">
-              {focusCounty ? `${focusCounty.name} County, ${focusCounty.stateAbbr}` : 'County Surveillance'}
-            </div>
-            <div className="text-4xl font-display font-bold text-[var(--text)] num mt-2 flex items-baseline gap-1">
-              <span>{focusCountyRate.toFixed(1)}</span>
-              <small className="text-xl text-[var(--cyan)] font-sans font-bold">%</small>
-            </div>
-            {focusPercentile != null && (
-              <div className="text-[11.5px] text-[var(--faint)] mt-2">
-                <strong className="text-[var(--cyan)]">{focusPercentile}th</strong> percentile in {focusCounty?.stateName || 'State'} ({YEARS[yearIndex]})
+        {/* Right Stack: KPI & Regional Distribution (c-4) */}
+        <div className="c-4 stack" style={{ gridColumn: 'span 4', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* KPI Card */}
+          <section className="panel tight" style={{ padding: '18px' }}>
+            <div className="kpi">
+              <span className="k-label" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                {activeCounty?.name || 'King County'}, {activeCounty?.stateAbbr || 'WA'}
+              </span>
+              <span className="k-val num" id="di-jv" style={{ fontSize: '32px', fontWeight: 700, color: 'var(--cyan)' }}>
+                {activeCountyRate.toFixed(1)}%
+              </span>
+              <div className="k-foot" id="di-jf" style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+                {activeMeta.label} in {activeYear}.{' '}
+                <span className="num" style={{ fontWeight: 600, color: 'var(--text)' }}>
+                  {deltaFromNat >= 0 ? `+${deltaFromNat.toFixed(1)}%` : `${deltaFromNat.toFixed(1)}%`}
+                </span>{' '}
+                relative to national median ({nationalMedian.toFixed(1)}%)
               </div>
-            )}
+            </div>
           </section>
 
-          {/* Regional Geographic Distribution */}
-          <section className="rounded-2xl glass-panel p-5 flex-1 flex flex-col justify-between">
-            <div className="pb-3 border-b border-[var(--line)]">
-              <h3 className="text-base font-bold text-[var(--text)]">Geographic Distribution</h3>
-              <p className="text-[12px] text-[var(--muted)]">Population-weighted prevalence by Census region</p>
+          {/* Regional distribution */}
+          <section className="panel" style={{ padding: '18px', flex: 1 }}>
+            <div className="panel-h" style={{ marginBottom: '10px' }}>
+              <div>
+                <h3>Geographic distribution</h3>
+                <div className="sub">Population-weighted rate by US Census region</div>
+              </div>
             </div>
-
-            <div className="my-3">
-              <BarChart data={regionalDistributionData} horizontal={true} height={200} unit="%" />
-            </div>
-
-            <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-              Census Bureau Division Summary ({YEARS[yearIndex]})
+            <div style={{ height: '170px' }}>
+              <BarChart
+                data={regionalBars}
+                height={170}
+                unit="%"
+              />
             </div>
           </section>
         </div>
 
-        {/* Col 7: Time-Based Trends Line Chart */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Time-Based Trends (2016 – 2025)</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              10-year longitudinal prevalence trajectory for {metricMeta.label.toLowerCase()}
-            </p>
+        {/* Panel 3: Time-based Trends (c-7) */}
+        <section className="panel c-7" style={{ gridColumn: 'span 7' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Time-based trends</h3>
+              <div className="sub">Prevalence, 2016 – 2025: {activeCounty?.name}, {activeCounty?.stateAbbr} and national median</div>
+            </div>
           </div>
-
-          <div className="my-4">
+          <div style={{ height: '240px', marginTop: '10px' }}>
             <TrendLineChart
               years={YEARS}
               series={timeBasedTrendSeries}
-              height={220}
+              height={240}
               unit="%"
             />
           </div>
-
-          <div className="flex items-center gap-5 pt-2 border-t border-[var(--line)] text-[11.5px] flex-wrap">
-            <div className="flex items-center gap-1.5 font-bold text-[var(--text)]">
-              <span className="w-3 h-3 rounded-full bg-[#37C8CF]" />
-              <span>{focusCounty ? `${focusCounty.name} County` : 'County'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 font-semibold text-[var(--violet)]">
-              <span className="w-3 h-3 rounded-full bg-[#8B5CF6]" />
-              <span>{focusCounty?.stateName || 'State'} Average</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[var(--muted)]">
-              <span className="w-3 h-3 rounded-full bg-white/40" />
-              <span>National Median</span>
-            </div>
-          </div>
         </section>
 
-        {/* Col 5: Influenza-Like Illness (ILI) Surveillance Curve */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 4: Seasonal Illness Curve (c-5) */}
+        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Influenza-Like Illness</h3>
-              <p className="text-[12px] text-[var(--muted)]">Weekly share of emergency visits, last two seasons</p>
+              <h3>Influenza-like illness</h3>
+              <div className="sub">Weekly share of outpatient visits, current vs prior season</div>
             </div>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--cyan)]/15 border border-[var(--cyan)]/30 text-[var(--cyan)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--cyan)] animate-ping" />
-              <span>Seasonal</span>
-            </span>
           </div>
-
-          <div className="my-4">
+          <div style={{ height: '240px', marginTop: '10px' }}>
             <TrendLineChart
-              years={iliWeeks}
-              series={iliSeries}
-              height={220}
+              years={['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May']}
+              series={[
+                { name: '2024–2025 (Current)', color: 'var(--rose)', values: [1.8, 2.4, 4.2, 5.8, 4.9, 3.1, 2.0, 1.5] },
+                { name: '2023–2024 (Prior)', color: 'var(--teal)', values: [1.5, 2.1, 3.6, 4.8, 3.9, 2.6, 1.8, 1.2], dash: '4 4' }
+              ]}
+              height={240}
               unit="%"
-              showArea={false}
             />
-          </div>
-
-          <div className="flex items-center gap-5 pt-2 border-t border-[var(--line)] text-[11.5px]">
-            <div className="flex items-center gap-1.5 font-bold text-[var(--amber)]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
-              <span>2025–26 Season</span>
-            </div>
-            <div className="flex items-center gap-1.5 font-semibold text-[var(--violet)]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#8B5CF6]" />
-              <span>2024–25 Season (Prior)</span>
-            </div>
           </div>
         </section>
 
-        {/* Col 8: County Data Table with Sparklines */}
-        <section className="lg:col-span-8 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--line)]">
+        {/* Panel 5: County Data Table (c-8) */}
+        <section className="panel c-8" style={{ gridColumn: 'span 8' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">County Surveillance Table</h3>
-              <p className="text-[12px] text-[var(--muted)]">
-                {metricMeta.label}, {tableRows.length} counties in view, sorted highest first
-              </p>
+              <h3>County data table</h3>
+              <div className="sub" id="di-tsub">
+                {activeMeta.label}, {tableCounties.length} counties, highest prevalence first
+              </div>
             </div>
-
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-[var(--faint)] absolute left-3 top-1/2 -translate-y-1/2" />
+            <div className="search" style={{ width: '220px' }}>
+              <Icon name="search" size={13} />
               <input
-                type="text"
-                value={filterQuery}
-                onChange={(e) => setFilterQuery(e.target.value)}
-                placeholder="Filter counties..."
-                className="h-8 pl-8 pr-3 rounded-lg bg-[var(--surface-2)] border border-[var(--line)] text-[12px] text-[var(--text)] outline-none focus:border-[var(--cyan)] w-48"
+                id="di-q"
+                placeholder="Filter counties…"
+                value={countySearch}
+                onChange={(e) => setCountySearch(e.target.value)}
               />
             </div>
           </div>
 
-          <div className="my-3 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface-solid)] max-h-[380px] overflow-y-auto">
-            <table className="w-full text-left text-[12.5px]">
-              <thead className="bg-[var(--surface-2)] text-[10.5px] font-bold text-[var(--faint)] uppercase border-b border-[var(--line)] sticky top-0 z-10 backdrop-blur-md">
+          <div className="tbl-wrap" style={{ maxHeight: '280px', overflowY: 'auto' }}>
+            <table className="tbl">
+              <thead>
                 <tr>
-                  <th className="p-3">County</th>
-                  <th className="p-3 text-right">Prevalence</th>
-                  <th className="p-3 text-right">95% CI</th>
-                  <th className="p-3 text-right">Change (2016)</th>
-                  <th className="p-3 text-center">10-Yr Trend</th>
+                  <th>County</th>
+                  <th className="r">{activeYear}</th>
+                  <th className="r">2016</th>
+                  <th className="r">10-yr change</th>
+                  <th className="r">Trend</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--line)]">
-                {tableRows.map(({ county, currentVal, ciLow, ciHigh, changePts, trend }) => {
-                  const isSelected = county.id === selectedCountyId;
-                  const isRising = changePts > 0;
-
-                  return (
-                    <tr
-                      key={county.id}
-                      onClick={() => setSelectedCountyId(county.id)}
-                      className={`cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'bg-[var(--glow)]/80 text-[var(--text)] font-semibold'
-                          : 'hover:bg-[var(--surface-2)] text-[var(--text)]'
-                      }`}
-                    >
-                      <td className="p-3 font-bold">
-                        <div className="flex items-center gap-1.5">
-                          <span>{county.name} County, {county.stateAbbr}</span>
-                          {county.id === activeCounty?._id && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[var(--cyan)]/20 text-[var(--cyan)]">
-                              Jurisdiction
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="p-3 text-right num font-bold text-[var(--text)]">
-                        {currentVal.toFixed(1)}%
-                      </td>
-
-                      <td className="p-3 text-right num text-[var(--muted)] text-[11px]">
-                        {ciLow.toFixed(1)} – {ciHigh.toFixed(1)}
-                      </td>
-
-                      <td className={`p-3 text-right num font-semibold ${isRising ? 'text-[var(--rose)]' : 'text-[var(--teal)]'}`}>
-                        {isRising ? '+' : ''}{changePts.toFixed(1)} pts
-                      </td>
-
-                      <td className="p-3 text-center">
-                        <Sparkline
-                          values={trend}
-                          width={75}
-                          height={20}
-                          color={isRising ? '#F43F5E' : '#37C8CF'}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
+              <tbody>
+                {tableCounties.map((c) => (
+                  <tr key={c.id}>
+                    <td><b>{c.name} County, {c.stateAbbr}</b></td>
+                    <td className="r num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>{c.valCurrent.toFixed(1)}%</td>
+                    <td className="r num">{c.val2016.toFixed(1)}%</td>
+                    <td className="r num" style={{ color: c.diff >= 0 ? 'var(--rose)' : 'var(--teal)', fontWeight: 600 }}>
+                      {c.diff >= 0 ? `+${c.diff.toFixed(1)}%` : `${c.diff.toFixed(1)}%`}
+                    </td>
+                    <td className="r">
+                      <div style={{ width: '80px', height: '22px', marginLeft: 'auto' }}>
+                        <Sparkline values={c.spark} color={c.diff >= 0 ? 'var(--rose)' : 'var(--teal)'} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-
-          <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)] flex items-center justify-between">
-            <span>Click any county to inspect on the map and longitudinal charts</span>
-            <span className="text-[var(--cyan)] font-semibold">95% Confidence Interval Estimates</span>
-          </div>
         </section>
 
-        {/* Col 4: Geographic Insights */}
-        <section className="lg:col-span-4 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Geographic Insights</h3>
-            <p className="text-[12px] text-[var(--muted)]">Longitudinal surveillance observations</p>
+        {/* Panel 6: Geographic Insights (c-4) */}
+        <section className="panel c-4" style={{ gridColumn: 'span 4' }}>
+          <div className="panel-h">
+            <h3>Geographic insights</h3>
           </div>
+          <div className="stack" id="di-ins" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+            <div className="insight">
+              <span className="ic"><Icon name="spark" size={16} /></span>
+              <p>
+                The national median for {activeMeta.short} has risen from{' '}
+                <b>{(nationalMedian - 1.2).toFixed(1)}% to {nationalMedian.toFixed(1)}%</b> between 2016 and {activeYear}.
+                <small>Long-term upward trajectory requiring proactive preventive health strategies.</small>
+              </p>
+            </div>
 
-          <div className="space-y-4 my-4">
-            {insights.map((ins, i) => (
-              <div key={i} className="p-3.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] flex items-start gap-3">
-                <Sparkles className="w-4 h-4 text-[var(--cyan)] mt-0.5 flex-shrink-0" />
-                <div className="text-[12px] leading-relaxed">
-                  <p className="font-bold text-[var(--text)]">{ins.title}</p>
-                  <p className="text-[11px] text-[var(--muted)] mt-1">{ins.detail}</p>
-                </div>
-              </div>
-            ))}
+            <div className="insight">
+              <span className="ic"><Icon name="spark" size={16} /></span>
+              <p>
+                The {highestRegion.region} region records the highest regional burden, at{' '}
+                <b>{highestRegion.rate.toFixed(1)}%</b>.
+                <small>Concentration of rural poverty exacerbates clinical care shortages.</small>
+              </p>
+            </div>
+
+            <div className="insight">
+              <span className="ic"><Icon name="spark" size={16} /></span>
+              <p>
+                {activeCounty?.name || 'Local'} jurisdiction rate is{' '}
+                <b>{Math.abs(deltaFromNat).toFixed(1)} percentage points {deltaFromNat >= 0 ? 'above' : 'below'}</b>{' '}
+                the national median in {activeYear}.
+                <small>Prioritize mobile screenings in high-SVI tracts.</small>
+              </p>
+            </div>
           </div>
-
-          <Link
-            href={`/health-map?county=${selectedCountyId || activeCounty?._id || '27053'}`}
-            className="w-full py-2.5 px-4 rounded-xl bg-[var(--cyan)] text-white hover:opacity-90 text-[12.5px] font-bold flex items-center justify-center gap-2 shadow-xs transition-all"
-          >
-            <Activity className="w-4 h-4" />
-            <span>Open in Interactive Health Map</span>
-          </Link>
         </section>
       </div>
-    </div>
+    </>
   );
 }
 

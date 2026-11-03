@@ -3,7 +3,7 @@
 import React, { useEffect } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { WORKFLOW_STEPS } from '@/config/metrics';
-import { Check, X, RotateCcw, ArrowRight } from 'lucide-react';
+import { Icon } from './Icons';
 import Link from 'next/link';
 
 export function WorkflowDrawer() {
@@ -20,137 +20,114 @@ export function WorkflowDrawer() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [workflowDrawerOpen, setWorkflowDrawerOpen]);
 
-  if (!workflowDrawerOpen) return null;
-
   const milestones = session?.workflowMilestones || {};
-  const completedCount = Object.keys(milestones).filter(k => milestones[k]).length;
-  const nextPendingIdx = WORKFLOW_STEPS.findIndex(step => !milestones[step.id]);
+  const completedCount = Object.keys(milestones).filter((k) => milestones[k]).length;
+  const nextPendingIdx = WORKFLOW_STEPS.findIndex((step) => !milestones[step.id]);
 
   return (
-    <div className="fixed inset-0 z-[150] flex justify-end">
-      {/* Dimmed backdrop scrim */}
+    <>
+      {workflowDrawerOpen && (
+        <div
+          onClick={() => setWorkflowDrawerOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 139,
+            background: 'rgba(11,20,56,0.35)',
+            backdropFilter: 'blur(3px)'
+          }}
+          aria-hidden="true"
+        />
+      )}
       <div
-        onClick={() => setWorkflowDrawerOpen(false)}
-        className="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
-        aria-hidden="true"
-      />
-
-      {/* Drawer Container (100% viewport height, fixed at right, cannot be cut off) */}
-      <div
+        id="drawer"
+        className={workflowDrawerOpen ? 'open' : ''}
         role="dialog"
         aria-label="Guided workflow"
-        className="relative w-full max-w-[420px] h-screen max-h-screen bg-[var(--surface-solid)] border-l border-[var(--line-strong)] shadow-2xl flex flex-col z-[151] animate-in slide-in-from-right duration-300"
       >
-        {/* Drawer Header (Fixed at top) */}
-        <div className="p-4 sm:p-6 border-b border-[var(--line)] flex items-start justify-between gap-3 flex-shrink-0 bg-[var(--surface-solid)]">
+        <div className="dh">
           <div>
-            <h3 className="text-lg font-bold text-[var(--text)] tracking-tight">
-              Guided Analysis Workflow
-            </h3>
-            <p className="text-[12px] text-[var(--muted)] mt-1">
-              From a region on the map to an exported report. Steps complete as you work.
-            </p>
-            <div className="mt-3 flex items-center gap-2">
-              <div className="flex-1 h-2 bg-[var(--surface-2)] rounded-full overflow-hidden">
+            <h3>Guided Analysis Workflow</h3>
+            <p>From a region on the map to an exported report. Steps complete as you work.</p>
+            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div
+                style={{
+                  flex: 1,
+                  height: '6px',
+                  background: 'var(--surface-2)',
+                  borderRadius: '3px',
+                  overflow: 'hidden'
+                }}
+              >
                 <div
-                  className="h-full bg-gradient-to-r from-[var(--teal)] to-[var(--cyan)] transition-all duration-500 rounded-full"
-                  style={{ width: `${(completedCount / WORKFLOW_STEPS.length) * 100}%` }}
+                  style={{
+                    height: '100%',
+                    background: 'var(--teal)',
+                    width: `${(completedCount / WORKFLOW_STEPS.length) * 100}%`,
+                    transition: 'width 0.4s ease'
+                  }}
                 />
               </div>
-              <span className="text-[11px] font-bold text-[var(--cyan)] num">
+              <span className="num" style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--cyan)' }}>
                 {completedCount} / {WORKFLOW_STEPS.length}
               </span>
             </div>
           </div>
           <button
+            className="icon-btn"
+            aria-label="Close drawer"
             onClick={() => setWorkflowDrawerOpen(false)}
-            aria-label="Close workflow drawer"
-            className="w-8 h-8 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--line-strong)] transition-colors flex-shrink-0"
           >
-            <X className="w-4 h-4" />
+            <Icon name="x" size={16} />
           </button>
         </div>
 
-        {/* Scrollable Workflow Steps */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-3.5">
+        <div className="db">
           {WORKFLOW_STEPS.map((step, idx) => {
             const isDone = !!milestones[step.id];
-            const isNext = idx === nextPendingIdx;
+            const isCur = idx === nextPendingIdx;
 
             return (
               <div
                 key={step.id}
-                className={`p-3.5 rounded-xl border transition-all ${
-                  isDone
-                    ? 'border-[var(--teal)]/40 bg-[var(--teal)]/5'
-                    : isNext
-                    ? 'border-[var(--cyan)] bg-[var(--cyan)]/5 shadow-sm ring-1 ring-[var(--cyan)]/20'
-                    : 'border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--line-strong)]'
-                }`}
+                className={`wf-step ${isDone ? 'done' : isCur ? 'cur' : ''}`}
               >
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex-shrink-0">
-                    {isDone ? (
-                      <div className="w-5 h-5 rounded-full bg-[var(--teal)] text-white flex items-center justify-center shadow-xs">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </div>
-                    ) : (
-                      <div
-                        className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold ${
-                          isNext
-                            ? 'border-[var(--cyan)] bg-[var(--cyan)] text-white'
-                            : 'border-[var(--faint)] text-[var(--muted)]'
-                        }`}
+                <span className="n">{isDone ? <Icon name="check" size={14} /> : idx + 1}</span>
+                <div className="t">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <b>{step.title}</b>
+                    {!isDone && (
+                      <Link
+                        href={step.route}
+                        onClick={() => {
+                          markWorkflowMilestone(step.id);
+                          setWorkflowDrawerOpen(false);
+                        }}
+                        className="btn sm"
+                        style={{ padding: '2px 8px', fontSize: '11px', height: '24px' }}
                       >
-                        {idx + 1}
-                      </div>
+                        <span>Go</span>
+                      </Link>
                     )}
                   </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-[13px] font-bold truncate ${isDone ? 'text-[var(--text)]' : 'text-[var(--text)]'}`}>
-                        {step.title}
-                      </span>
-                      {!isDone && (
-                        <Link
-                          href={step.route}
-                          onClick={() => {
-                            markWorkflowMilestone(step.id);
-                            setWorkflowDrawerOpen(false);
-                          }}
-                          className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md flex items-center gap-1 transition-all ${
-                            isNext
-                              ? 'bg-[var(--cyan)] text-white hover:opacity-90 shadow-xs'
-                              : 'bg-[var(--surface-solid)] border border-[var(--line)] text-[var(--text)] hover:bg-[var(--surface)]'
-                          }`}
-                        >
-                          <span>Go</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </Link>
-                      )}
-                    </div>
-                    <p className="text-[11.5px] text-[var(--muted)] mt-1 leading-snug">
-                      {step.desc}
-                    </p>
-                  </div>
+                  <small>{step.desc}</small>
                 </div>
               </div>
             );
           })}
 
-          {/* Reset Workflow button */}
-          <div className="pt-4 border-t border-[var(--line)]">
+          <div style={{ paddingTop: '16px', marginTop: '16px', borderTop: '1px solid var(--line)' }}>
             <button
               onClick={resetWorkflow}
-              className="w-full py-2.5 px-4 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] hover:bg-[var(--surface-solid)] text-[12px] font-bold text-[var(--muted)] hover:text-[var(--text)] flex items-center justify-center gap-2 transition-all"
+              className="btn sm"
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <Icon name="refresh" size={14} />
               <span>Reset workflow and demo data</span>
             </button>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

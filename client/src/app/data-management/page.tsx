@@ -2,24 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSession } from '@/context/SessionContext';
-import {
-  Database,
-  Cloud,
-  Server,
-  Activity,
-  Users,
-  RefreshCw,
-  Upload,
-  FileText,
-  AlertCircle,
-  AlertTriangle,
-  Check,
-  CheckCircle2,
-  ExternalLink,
-  Link as LinkIcon,
-  Search,
-  Sparkles
-} from 'lucide-react';
+import { Icon } from '@/components/Icons';
 import { StateCoverageMap } from '@/components/StateCoverageMap';
 
 interface DataSourceItem {
@@ -597,129 +580,85 @@ function DataManagementContent() {
     runValidation('sample_county_food_insecurity.csv', sampleRows);
   };
 
-  const getSourceIcon = (iconName: string) => {
-    switch (iconName) {
-      case 'cloud':
-        return <Cloud className="w-5 h-5 text-[var(--cyan)]" />;
-      case 'server':
-        return <Server className="w-5 h-5 text-[var(--cyan)]" />;
-      case 'activity':
-        return <Activity className="w-5 h-5 text-[var(--cyan)]" />;
-      case 'users':
-        return <Users className="w-5 h-5 text-[var(--cyan)]" />;
-      default:
-        return <Database className="w-5 h-5 text-[var(--cyan)]" />;
-    }
-  };
-
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
+    <>
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-[250] flex items-center gap-2.5 px-4 py-3 rounded-xl bg-[var(--surface-solid)] border border-[var(--cyan)] shadow-2xl text-[13px] text-[var(--text)] font-semibold animate-in slide-in-from-bottom-3">
-          <Check className="w-4 h-4 text-[var(--cyan)]" />
-          <span>{toastMessage}</span>
+        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 300 }}>
+          <div className="toast">
+            <span className="dot live" />
+            <span>{toastMessage}</span>
+          </div>
         </div>
       )}
 
       {/* Screen Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Data management
-          </h1>
-          <p className="text-[13px] text-[var(--muted)] mt-0.5">
-            Monitor data sources, upload datasets, validate imports and track data quality across geographies.
-          </p>
+          <h2>Data management</h2>
+          <p>Monitor data sources, upload datasets, validate imports and track data quality across geographies.</p>
         </div>
-
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold bg-[var(--surface-2)] border border-[var(--line)] text-[var(--muted)]">
-            <span className="w-2 h-2 rounded-full bg-[var(--cyan)] animate-pulse" />
-            <span>Active connections</span>
-          </span>
-
+        <div className="row">
+          <span className="pill demo"><span className="dot" />Demo connections. No live requests are made</span>
           <button
+            className="btn primary"
+            id="dm-sync-all"
             onClick={handleSyncAll}
             disabled={syncingAll}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--cyan)] text-white hover:opacity-90 disabled:opacity-60 text-[12.5px] font-bold shadow-xs transition-all"
           >
-            <RefreshCw className={`w-4 h-4 ${syncingAll ? 'animate-spin' : ''}`} />
-            <span>{syncingAll ? 'Syncing...' : 'Sync all sources'}</span>
+            <Icon name="refresh" />{syncingAll ? 'Syncing...' : 'Sync all sources'}
           </button>
         </div>
       </div>
 
-      {/* 4 Metric KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="p-4 rounded-2xl glass-panel flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider">
-            Connected sources
-          </span>
-          <div className="mt-2 flex items-baseline gap-1.5">
-            <strong className="text-2xl sm:text-3xl font-bold font-display text-[var(--text)] num">
-              {connectedCount}
-            </strong>
-            <span className="text-[13px] text-[var(--muted)] font-semibold">of {sources.length}</span>
+      {/* 4 Metric Ruled KPI Strip */}
+      <div className="strip">
+        <div className="cell">
+          <div className="lbl">Connected sources</div>
+          <div className="val">
+            <span className="num">{connectedCount}</span>
+            <small>of {sources.length}</small>
           </div>
-          <span className="text-[11px] text-[var(--amber)] mt-1 font-semibold flex items-center gap-1">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>One source needs attention</span>
-          </span>
+          <div className="foot">One source needs attention</div>
         </div>
-
-        <div className="p-4 rounded-2xl glass-panel flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider">
-            Last synchronization
-          </span>
-          <div className="mt-2 flex items-baseline gap-1.5">
-            <strong className="text-2xl sm:text-3xl font-bold font-display text-[var(--text)] num">
-              {lastSyncTime}
-            </strong>
+        <div className="cell">
+          <div className="lbl">Last synchronization</div>
+          <div className="val">
+            <span className="num" id="dm-last">{lastSyncTime}</span>
           </div>
-          <span className="text-[11px] text-[var(--muted)] mt-1">Today, vector tile service</span>
+          <div className="foot">Today, vector tile service</div>
         </div>
-
-        <div className="p-4 rounded-2xl glass-panel flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider">
-            Rows ingested this month
-          </span>
-          <div className="mt-2 flex items-baseline gap-1.5">
-            <strong className="text-2xl sm:text-3xl font-bold font-display text-[var(--text)] num">
-              {totalRowsIngested.toLocaleString()}
-            </strong>
+        <div className="cell">
+          <div className="lbl">Rows ingested this month</div>
+          <div className="val">
+            <span className="num">{totalRowsIngested.toLocaleString()}</span>
           </div>
-          <span className="text-[11px] text-[var(--muted)] mt-1">{imports.length} imports logged</span>
+          <div className="foot">{imports.length} imports</div>
         </div>
-
-        <div className="p-4 rounded-2xl glass-panel flex flex-col justify-between">
-          <span className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider">
-            Data quality score
-          </span>
-          <div className="mt-2 flex items-baseline gap-1.5">
-            <strong className="text-2xl sm:text-3xl font-bold font-display text-[var(--teal)] num">
-              {compositeScore.toFixed(1)}
-            </strong>
-            <span className="text-[13px] text-[var(--muted)] font-semibold">/ 100</span>
+        <div className="cell">
+          <div className="lbl">Data quality score</div>
+          <div className="val">
+            <span className="num">{compositeScore.toFixed(1)}</span>
+            <small>/100</small>
           </div>
-          <span className="text-[11px] text-[var(--muted)] mt-1">
-            {openErrorsCount} open processing {openErrorsCount === 1 ? 'issue' : 'issues'}
-          </span>
+          <div className="foot">
+            <span id="dm-errn">{openErrorsCount} open {openErrorsCount === 1 ? 'issue' : 'issues'}</span>
+          </div>
         </div>
       </div>
 
-      {/* Main Grid: Data Source Connections (Col 8) & Dataset Upload (Col 4) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Main Grid: Data Source Connections (c-8) & Dataset Upload (c-4) */}
+      <div className="grid g-12">
         {/* Left: Data Source Connections */}
-        <section className="lg:col-span-8 rounded-2xl glass-panel p-5 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        <section className="panel c-8">
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Data source connections</h3>
-              <p className="text-[12px] text-[var(--muted)]">Status of upstream sources and processing services</p>
+              <h3>Data source connections</h3>
+              <div className="sub">Status of upstream sources and processing services</div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }} id="dm-src">
             {sources.map(src => {
               const isBad = src.status === 'bad';
               const isWarn = src.status === 'warn';
@@ -728,89 +667,57 @@ function DataManagementContent() {
               return (
                 <div
                   key={src._id}
-                  className="p-4 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/70 hover:border-[var(--line-strong)] transition-all flex flex-col justify-between gap-3"
+                  className="tool-tile conn"
+                  style={{ cursor: 'default', transform: 'none' }}
+                  data-s={src._id}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-[var(--surface-solid)] border border-[var(--line)] flex items-center justify-center">
-                      {getSourceIcon(src.icon)}
-                    </div>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-bold ${
-                        isOk
-                          ? 'bg-[var(--teal)]/15 text-[var(--teal)] border border-[var(--teal)]/30'
-                          : isWarn
-                          ? 'bg-[var(--amber)]/15 text-[var(--amber)] border border-[var(--amber)]/30'
-                          : 'bg-[var(--rose)]/15 text-[var(--rose)] border border-[var(--rose)]/30'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          isOk ? 'bg-[var(--teal)]' : isWarn ? 'bg-[var(--amber)]' : 'bg-[var(--rose)]'
-                        }`}
-                      />
-                      <span>{isOk ? 'Healthy' : isWarn ? 'Warnings' : 'Disconnected'}</span>
+                  <div className="top">
+                    <span className="logo">
+                      <Icon name={src.icon || 'database'} />
+                    </span>
+                    <span className={`pill ${src.status}`}>
+                      <span className={`dot ${isOk ? 'live' : ''}`} />
+                      {isOk ? 'Healthy' : isWarn ? 'Warnings' : 'Disconnected'}
                     </span>
                   </div>
 
                   <div>
-                    <strong className="text-[13.5px] text-[var(--text)] block">{src.name}</strong>
-                    <p className="text-[11.5px] text-[var(--muted)] leading-snug mt-1">{src.desc}</p>
+                    <b>{src.name}</b>
+                    <small style={{ display: 'block', marginTop: 2 }}>{src.desc}</small>
                   </div>
 
                   {/* Metadata key-values */}
-                  <div className="space-y-1 py-2 border-y border-[var(--line)] text-[11.5px]">
+                  <div className="kv" style={{ fontSize: 12 }}>
                     {src.meta.map(([label, val], idx) => (
-                      <div key={idx} className="flex justify-between text-[var(--muted)]">
-                        <span>{label}</span>
-                        <strong className="text-[var(--text)] font-mono text-[11px]">{val}</strong>
-                      </div>
+                      <React.Fragment key={idx}>
+                        <dt>{label}</dt>
+                        <dd style={{ fontFamily: 'var(--font-mono)' }}>{val}</dd>
+                      </React.Fragment>
                     ))}
-                    <div className="flex justify-between text-[var(--muted)]">
-                      <span>Last sync</span>
-                      <strong className="text-[var(--text)] font-mono text-[11px]">{src.lastSync}</strong>
-                    </div>
+                    <dt>Last sync</dt>
+                    <dd style={{ fontFamily: 'var(--font-mono)' }}>{src.lastSync}</dd>
                   </div>
 
                   {/* Animated Progress Bar during Sync */}
                   {src.isSyncing && (
-                    <div className="space-y-1">
-                      <div className="h-1.5 w-full rounded-full bg-[var(--surface-solid)] overflow-hidden border border-[var(--line)]">
-                        <div
-                          className="h-full rounded-full transition-all duration-300"
-                          style={{
-                            width: `${src.syncProgress || 0}%`,
-                            background: 'linear-gradient(90deg, var(--teal), var(--cyan), var(--violet))'
-                          }}
-                        />
-                      </div>
-                      <span className="text-[10px] text-[var(--cyan)] font-mono block text-right">
-                        Syncing... {src.syncProgress}%
-                      </span>
+                    <div className="prog" style={{ display: 'block' }}>
+                      <i style={{ width: `${src.syncProgress || 15}%`, transition: 'width .3s' }} />
                     </div>
                   )}
 
                   {/* Sync Trigger Action */}
-                  <button
-                    onClick={() => handleSyncSource(src._id)}
-                    disabled={src.isSyncing}
-                    className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border text-[12px] font-bold transition-all ${
-                      isBad
-                        ? 'bg-[var(--rose)]/15 border-[var(--rose)]/40 text-[var(--rose)] hover:bg-[var(--rose)]/25'
-                        : 'bg-[var(--surface-solid)] border-[var(--line)] text-[var(--text)] hover:border-[var(--cyan)] hover:text-[var(--cyan)]'
-                    }`}
-                  >
-                    {isBad ? (
-                      <>
-                        <LinkIcon className="w-3.5 h-3.5" />
-                        <span>Reconnect</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className={`w-3.5 h-3.5 ${src.isSyncing ? 'animate-spin' : ''}`} />
-                        <span>Sync now</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="row">
+                    <button
+                      className="btn sm"
+                      data-sync={src._id}
+                      onClick={() => handleSyncSource(src._id)}
+                      disabled={src.isSyncing}
+                    >
+                      <Icon name={isBad ? 'link' : 'refresh'} />
+                      {isBad ? 'Reconnect' : 'Sync now'}
+                    </button>
+                    <span className="note" style={{ marginLeft: 'auto' }}>{src.lastSync}</span>
+                  </div>
                 </div>
               );
             })}
@@ -818,286 +725,231 @@ function DataManagementContent() {
         </section>
 
         {/* Right: Dataset Upload & Browser Validation Engine */}
-        <section className="lg:col-span-4 rounded-2xl glass-panel p-5 flex flex-col justify-between space-y-4">
-          <div>
-            <div className="pb-3 border-b border-[var(--line)]">
-              <h3 className="text-base font-bold text-[var(--text)]">Dataset upload</h3>
-              <p className="text-[12px] text-[var(--muted)]">CSV with a GEOID column and indicator columns</p>
+        <section className="panel c-4">
+          <div className="panel-h">
+            <div>
+              <h3>Dataset upload</h3>
+              <div className="sub">CSV with a GEOID column and indicator columns</div>
             </div>
-
-            {/* Drag & Drop Zone */}
-            <div
-              onDragOver={e => {
-                e.preventDefault();
-                setIsDragOver(true);
-              }}
-              onDragLeave={() => setIsDragOver(false)}
-              onDrop={e => {
-                e.preventDefault();
-                setIsDragOver(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = () => runValidation(file.name, reader.result as string);
-                  reader.readAsText(file);
-                }
-              }}
-              onClick={() => fileInputRef.current?.click()}
-              className={`mt-4 border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
-                isDragOver
-                  ? 'border-[var(--cyan)] bg-[var(--cyan)]/10 shadow-[0_0_0_5px_var(--glow)]'
-                  : 'border-[var(--line-strong)] bg-[var(--surface-2)]/80 hover:border-[var(--cyan)] hover:bg-[var(--surface-2)]'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <div className="w-12 h-12 rounded-2xl bg-[var(--surface-solid)] border border-[var(--line)] flex items-center justify-center text-[var(--cyan)] shadow-xs">
-                <Upload className="w-6 h-6" />
-              </div>
-              <strong className="text-[13px] text-[var(--text)] mt-1">Drop a CSV here or browse</strong>
-              <span className="text-[11px] text-[var(--faint)]">Validated in your browser. Nothing is uploaded.</span>
-            </div>
-
-            {/* Sample File Button */}
-            <button
-              onClick={handleLoadSampleFile}
-              className="w-full mt-3 flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--surface-solid)] hover:bg-[var(--surface-2)] text-[12px] font-bold text-[var(--text)] transition-colors shadow-xs"
-            >
-              <FileText className="w-4 h-4 text-[var(--cyan)]" />
-              <span>Use a sample file with known issues</span>
-            </button>
-
-            {/* Real-time Validation Pipeline Runner & Terminal Log */}
-            {uploadFileName && (
-              <div className="mt-4 p-3.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] space-y-2.5 animate-in fade-in">
-                <div className="flex items-center justify-between text-[12px]">
-                  <strong className="text-[var(--text)] truncate max-w-[180px]">{uploadFileName}</strong>
-                  <span
-                    className={`font-semibold text-[11px] ${
-                      uploadStage.includes('Completed')
-                        ? 'text-[var(--teal)]'
-                        : uploadStage === 'Failed'
-                        ? 'text-[var(--rose)]'
-                        : 'text-[var(--cyan)]'
-                    }`}
-                  >
-                    {uploadStage}
-                  </span>
-                </div>
-
-                {/* Animated Progress Bar */}
-                <div className="h-1.5 w-full rounded-full bg-[var(--surface-solid)] overflow-hidden border border-[var(--line)]">
-                  <div
-                    className="h-full rounded-full transition-all duration-300"
-                    style={{
-                      width: `${uploadProgress}%`,
-                      background:
-                        uploadStage === 'Failed'
-                          ? 'var(--rose)'
-                          : 'linear-gradient(90deg, var(--teal), var(--cyan), var(--violet))'
-                    }}
-                  />
-                </div>
-
-                {/* Log Terminal Console */}
-                <div
-                  ref={logContainerRef}
-                  className="max-h-40 overflow-y-auto p-2.5 rounded-lg bg-[var(--surface-solid)] border border-[var(--line)] font-mono text-[11px] space-y-1"
-                >
-                  {validationLogs.map((log, i) => (
-                    <div
-                      key={i}
-                      className={
-                        log.type === 'ok'
-                          ? 'text-[var(--teal)]'
-                          : log.type === 'warn'
-                          ? 'text-[var(--amber)]'
-                          : log.type === 'err'
-                          ? 'text-[var(--rose)]'
-                          : 'text-[var(--muted)]'
-                      }
-                    >
-                      • {log.text}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
-          <div className="pt-3 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            Supported columns: GEOID (11 digits), and numeric health metrics (rates, prevalences, percentages).
-          </div>
-        </section>
-      </div>
-
-      {/* Middle Grid: Geographic Coverage Map (Col 6) & Data Quality + Processing Errors (Col 6) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: US Geographic Coverage Map */}
-        <section className="lg:col-span-6 rounded-2xl glass-panel p-0 overflow-hidden min-h-[380px] relative border border-[var(--line)]">
-          <StateCoverageMap
-            height={380}
-            coverageOverrides={stateCoverage}
-            onSelectState={(name, cov) => {
-              showToast(`${name}: ${cov.toFixed(1)}% of tracts have complete data`);
+          {/* Drag & Drop Zone */}
+          <label
+            className={`dropzone ${isDragOver ? 'over' : ''}`}
+            id="dm-drop"
+            onDragOver={e => {
+              e.preventDefault();
+              setIsDragOver(true);
             }}
-          />
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={e => {
+              e.preventDefault();
+              setIsDragOver(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = () => runValidation(file.name, reader.result as string);
+                reader.readAsText(file);
+              }
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              id="dm-file"
+              hidden
+              onChange={handleFileChange}
+            />
+            <Icon name="upload" />
+            <div style={{ fontWeight: 700, marginTop: 8 }}>Drop a CSV here or browse</div>
+            <div className="note">Validated in your browser. Nothing is uploaded</div>
+          </label>
+
+          {/* Sample File Button */}
+          <button
+            className="btn mt"
+            style={{ width: '100%' }}
+            id="dm-sample"
+            onClick={handleLoadSampleFile}
+          >
+            <Icon name="file" />
+            Use a sample file with known issues
+          </button>
+
+          {/* Real-time Validation Pipeline Runner & Terminal Log */}
+          {uploadFileName && (
+            <div id="dm-up" className="mt">
+              <div className="row between" style={{ fontSize: '12.5px' }}>
+                <b>{uploadFileName}</b>
+                <span className="note" id="up-st">{uploadStage}</span>
+              </div>
+
+              {/* Animated Progress Bar */}
+              <div className="prog mt-s">
+                <i
+                  id="up-b"
+                  style={{
+                    width: `${uploadProgress}%`,
+                    background: uploadStage === 'Failed' ? 'var(--rose)' : undefined
+                  }}
+                />
+              </div>
+
+              {/* Log Terminal Console */}
+              <div
+                ref={logContainerRef}
+                className="log mt-s"
+                id="up-log"
+              >
+                {validationLogs.map((log, i) => (
+                  <div key={i} className={log.type}>
+                    {log.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
-        {/* Right: Quality Indicators & Processing Errors Queue */}
-        <section className="lg:col-span-6 rounded-2xl glass-panel p-5 flex flex-col justify-between space-y-6">
-          {/* Data Quality Bars */}
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
-              <div>
-                <h3 className="text-base font-bold text-[var(--text)]">Data quality indicators</h3>
-                <p className="text-[12px] text-[var(--muted)]">Across all active surveillance feeds</p>
-              </div>
-              <span className="text-[11px] font-bold text-[var(--teal)]">{compositeScore.toFixed(1)} Composite</span>
-            </div>
+        {/* Geographic Coverage Map (c-6) */}
+        <section
+          className="panel c-6"
+          style={{ padding: 0, overflow: 'hidden', minHeight: 360, position: 'relative' }}
+        >
+          <div style={{ position: 'absolute', inset: 0 }} id="dm-map">
+            <StateCoverageMap
+              height={360}
+              coverageOverrides={stateCoverage}
+              onSelectState={(name, cov) => {
+                showToast(`${name}: ${cov.toFixed(1)}% of tracts have complete data`);
+              }}
+            />
+          </div>
+          <div className="map-float" style={{ left: 14, top: 14, padding: '12px 14px' }}>
+            <b style={{ fontSize: 13 }}>Geographic coverage</b>
+            <div className="note">Share of tracts with complete indicator data, by state</div>
+          </div>
+        </section>
 
-            <div className="space-y-3 mt-4">
-              {qualityIndicators.map(ind => (
-                <div key={ind.label} className="space-y-1">
-                  <div className="flex justify-between text-[11.5px]">
-                    <span className="font-semibold text-[var(--text)]">{ind.label}</span>
-                    <strong className="text-[var(--teal)] font-mono">{ind.value.toFixed(1)}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-[var(--surface-2)] overflow-hidden border border-[var(--line)]">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${ind.value}%`,
-                        background: 'linear-gradient(90deg, var(--teal), var(--cyan))'
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
+        {/* Quality Indicators & Processing Errors Queue (c-6) */}
+        <section className="panel c-6">
+          <div className="panel-h">
+            <div>
+              <h3>Data quality indicators</h3>
+              <div className="sub">Across all active datasets</div>
             </div>
           </div>
 
-          {/* Processing Errors Queue */}
-          <div>
-            <div className="flex items-center justify-between pb-2 border-b border-[var(--line)]">
-              <div>
-                <h4 className="text-[13.5px] font-bold text-[var(--text)]">Processing errors</h4>
-                <p className="text-[11.5px] text-[var(--muted)]">
-                  {openErrorsCount} open of {errors.length}
-                </p>
+          <div id="dm-q">
+            {qualityIndicators.map(q => (
+              <div className="prog-row" key={q.label} style={{ marginBottom: 10 }}>
+                <div className="row between" style={{ fontSize: 12 }}>
+                  <span>{q.label}</span>
+                  <b className="num">{q.value.toFixed(1)}%</b>
+                </div>
+                <div className="prog mt-xs">
+                  <i style={{ width: `${q.value}%` }} />
+                </div>
               </div>
+            ))}
+          </div>
+
+          <div className="panel-h mt" style={{ marginTop: 18 }}>
+            <div>
+              <h3>Processing errors</h3>
+              <div className="sub" id="dm-err-sub">{openErrorsCount} open of {errors.length}</div>
             </div>
+          </div>
 
-            <div className="space-y-2 mt-3 max-h-48 overflow-y-auto pr-1">
-              {errors.map(err => {
-                const isBad = err.severity === 'bad';
-                return (
-                  <div
-                    key={err._id}
-                    className={`p-3 rounded-xl border transition-all flex items-start justify-between gap-3 ${
-                      err.open
-                        ? 'bg-[var(--surface-2)] border-[var(--line)]'
-                        : 'bg-[var(--surface-solid)]/40 border-[var(--line)] opacity-50'
-                    }`}
-                  >
-                    <div className="flex items-start gap-2.5">
-                      <span className={`mt-0.5 flex-shrink-0 ${isBad ? 'text-[var(--rose)]' : 'text-[var(--amber)]'}`}>
-                        {isBad ? <AlertCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-                      </span>
-                      <div>
-                        <strong className="text-[12px] text-[var(--text)] block leading-snug">{err.msg}</strong>
-                        <span className="text-[10.5px] text-[var(--faint)]">
-                          {err._id} • {err.dataset}
-                        </span>
-                      </div>
-                    </div>
-
-                    {err.open ? (
-                      <button
-                        onClick={() => handleResolveError(err._id)}
-                        className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--line)] bg-[var(--surface-solid)] hover:bg-[var(--surface-2)] text-[11px] font-bold text-[var(--text)] transition-colors"
-                      >
-                        <Check className="w-3 h-3 text-[var(--teal)]" />
-                        <span>Resolve</span>
-                      </button>
-                    ) : (
-                      <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--teal)]/15 text-[var(--teal)]">
-                        Resolved
-                      </span>
-                    )}
+          <div className="list" id="dm-err">
+            {errors.map(e => (
+              <div
+                key={e._id}
+                className="item"
+                style={{
+                  padding: '10px 0',
+                  borderBottom: '1px solid var(--line)',
+                  opacity: e.open ? 1 : 0.6
+                }}
+              >
+                <div className="row between">
+                  <div className="row" style={{ gap: 8 }}>
+                    <span className={`pill ${e.severity === 'bad' ? 'bad' : 'warn'}`}>
+                      <span className="dot" />
+                      {e.severity === 'bad' ? 'Error' : 'Warning'}
+                    </span>
+                    <b>{e.dataset}</b>
                   </div>
-                );
-              })}
+                  {e.open ? (
+                    <button
+                      className="btn xs ghost"
+                      onClick={() => handleResolveError(e._id)}
+                    >
+                      Resolve
+                    </button>
+                  ) : (
+                    <span className="pill ok" style={{ fontSize: 10 }}>
+                      Resolved
+                    </span>
+                  )}
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: 12 }}>{e.msg}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Import History Table (c-12) */}
+        <section className="panel c-12">
+          <div className="panel-h">
+            <div>
+              <h3>Import history</h3>
+              <div className="sub">Most recent first</div>
             </div>
+          </div>
+
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Import</th>
+                  <th>Dataset</th>
+                  <th>Source</th>
+                  <th className="r">Rows</th>
+                  <th>Started</th>
+                  <th className="r">Duration</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="dm-hist">
+                {imports.map(i => {
+                  const st = i.status;
+                  const isOk = st === 'Completed';
+                  const isBad = st === 'Failed';
+                  return (
+                    <tr key={i._id}>
+                      <td className="muted num">{i._id}</td>
+                      <td><b>{i.name}</b></td>
+                      <td>{i.src}</td>
+                      <td className="r num">{(i.rows || 0).toLocaleString()}</td>
+                      <td className="muted">{i.startedAt}</td>
+                      <td className="r num muted">{i.duration}</td>
+                      <td>
+                        <span className={`pill ${isOk ? 'ok' : isBad ? 'bad' : 'warn'}`}>
+                          <span className={`dot ${isOk ? 'live' : ''}`} />
+                          {st}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </section>
       </div>
-
-      {/* Bottom: Import History Table (Col 12) */}
-      <section className="rounded-2xl glass-panel p-5 space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
-          <div>
-            <h3 className="text-base font-bold text-[var(--text)]">Import history</h3>
-            <p className="text-[12px] text-[var(--muted)]">Chronological audit log of dataset syncs and uploads</p>
-          </div>
-          <span className="text-[11px] font-bold text-[var(--muted)] num">
-            Showing latest {imports.length} imports
-          </span>
-        </div>
-
-        <div className="overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--surface-solid)]">
-          <table className="w-full text-left text-[12.5px]">
-            <thead className="bg-[var(--surface-2)] text-[10.5px] font-bold text-[var(--faint)] uppercase border-b border-[var(--line)]">
-              <tr>
-                <th className="p-3">Import ID</th>
-                <th className="p-3">Dataset Name</th>
-                <th className="p-3">Source</th>
-                <th className="p-3 text-right">Rows Ingested</th>
-                <th className="p-3">Started</th>
-                <th className="p-3 text-right">Duration</th>
-                <th className="p-3 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--line)]">
-              {imports.map(item => {
-                const isCompleted = item.status === 'Completed';
-                const isFailed = item.status === 'Failed';
-                return (
-                  <tr key={item._id} className="hover:bg-[var(--surface-2)] transition-colors">
-                    <td className="p-3 font-mono text-[11px] text-[var(--muted)]">{item._id}</td>
-                    <td className="p-3 font-semibold text-[var(--text)]">{item.name}</td>
-                    <td className="p-3 text-[var(--muted)]">{item.src}</td>
-                    <td className="p-3 text-right font-mono font-semibold text-[var(--text)]">
-                      {item.rows > 0 ? item.rows.toLocaleString() : '0'}
-                    </td>
-                    <td className="p-3 text-[var(--muted)]">{item.startedAt}</td>
-                    <td className="p-3 text-right font-mono text-[11px] text-[var(--muted)]">{item.duration}</td>
-                    <td className="p-3 text-center">
-                      <span
-                        className={`inline-block px-2.5 py-0.5 rounded-full text-[10.5px] font-bold ${
-                          isCompleted
-                            ? 'bg-[var(--teal)]/15 text-[var(--teal)]'
-                            : isFailed
-                            ? 'bg-[var(--rose)]/15 text-[var(--rose)]'
-                            : 'bg-[var(--amber)]/15 text-[var(--amber)]'
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
+    </>
   );
 }
 
@@ -1105,7 +957,7 @@ export default function DataManagementPage() {
   return (
     <Suspense
       fallback={
-        <div className="p-8 text-center text-[13px] text-[var(--muted)]">
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
           Loading Data Management platform...
         </div>
       }

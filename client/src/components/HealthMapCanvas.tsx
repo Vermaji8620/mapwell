@@ -17,6 +17,7 @@ import {
   Layers
 } from 'lucide-react';
 import Link from 'next/link';
+import { Icon } from '@/components/Icons';
 
 export interface LayerDef {
   id: string;
@@ -1060,37 +1061,28 @@ export function HealthMapCanvas({
       const vb = getMetricValue(b, activeMetricKey);
       return mMeta.bad === 'low' ? va - vb : vb - va;
     }).slice(0, 8);
-  }, [selectedCounty, selectedState, activeMetricKey, cachedRepoRef.current]);
+  }, [selectedCounty, selectedState, activeMetricKey]);
 
   return (
-    <div className="relative w-full h-[calc(100vh-100px)] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.12)] bg-[#07111F]">
+    <div className="hm">
       {/* Full-bleed Map Viewport */}
-      <div ref={containerRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
+      <div id="hm-map" ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
 
-      {/* Mobile Layers Toggle Button */}
-      <button
-        onClick={() => setMobileLayersOpen(!mobileLayersOpen)}
-        className="md:hidden absolute top-3 left-3 z-30 px-2.5 py-1.5 rounded-xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.18)] shadow-lg text-[11px] font-bold text-white flex items-center gap-1.5 cursor-pointer"
-      >
-        <Layers className="w-3.5 h-3.5 text-[var(--cyan)]" />
-        <span>Layers</span>
-      </button>
-
-      {/* Floating Top Breadcrumb Bar */}
-      <div className="absolute top-3 left-24 sm:left-28 md:top-4 md:left-[310px] z-20 flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] text-[11px] sm:text-[12px] font-bold shadow-md max-w-[calc(100%-110px)] md:max-w-none overflow-x-auto whitespace-nowrap">
+      {/* Floating Top Breadcrumbs */}
+      <div className="map-float hm-crumbs" id="hm-crumbs">
         <button
           onClick={() => resetMapFnRef.current?.()}
-          className={`hover:text-[var(--cyan)] transition-colors ${!selectedState && !selectedCounty ? 'text-white' : 'text-[rgba(255,255,255,0.6)]'}`}
+          className={!selectedState && !selectedCounty ? 'cur' : ''}
         >
           United States
         </button>
 
         {selectedState && (
           <>
-            <span className="text-[rgba(255,255,255,0.4)]">/</span>
+            <span className="sep">/</span>
             <button
               onClick={() => zoomToStateFnRef.current?.(selectedState.fips)}
-              className={`hover:text-[var(--cyan)] transition-colors ${!selectedCounty ? 'text-[var(--cyan)]' : 'text-[rgba(255,255,255,0.7)]'}`}
+              className={!selectedCounty ? 'cur' : ''}
             >
               {selectedState.name}
             </button>
@@ -1099,10 +1091,10 @@ export function HealthMapCanvas({
 
         {selectedCounty && (
           <>
-            <span className="text-[rgba(255,255,255,0.4)]">/</span>
+            <span className="sep">/</span>
             <button
               onClick={() => selectCountyFnRef.current?.(selectedCounty.id, true)}
-              className={`hover:text-[var(--cyan)] transition-colors ${!selectedTract ? 'text-[var(--cyan)]' : 'text-white'}`}
+              className={!selectedTract ? 'cur' : ''}
             >
               {selectedCounty.name}
             </button>
@@ -1111,529 +1103,437 @@ export function HealthMapCanvas({
 
         {selectedTract && (
           <>
-            <span className="text-[rgba(255,255,255,0.4)]">/</span>
-            <span className="text-[var(--cyan)] font-bold">{selectedTract.name.replace('Census ', '')}</span>
+            <span className="sep">/</span>
+            <span className="cur">{selectedTract.name.replace('Census ', '')}</span>
           </>
         )}
       </div>
 
       {/* Floating Left Layers & Indicators Panel */}
-      <aside className={`absolute z-30 transition-all ${
-        mobileLayersOpen
-          ? 'top-12 left-3 w-[285px] max-w-[85vw] max-h-[70vh] flex'
-          : 'hidden md:flex top-4 left-4 w-[285px] max-h-[calc(100%-32px)]'
-      } p-4 rounded-2xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl overflow-y-auto flex-col justify-between text-white`}>
-        <div className="space-y-4">
-          {/* Search a County */}
-          <div className="relative">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[rgba(255,255,255,0.16)] bg-[rgba(255,255,255,0.06)]">
-              <Search className="w-3.5 h-3.5 text-[rgba(255,255,255,0.5)] flex-shrink-0" />
-              <input
-                type="text"
-                placeholder="Search a county..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-[12px] bg-transparent text-white outline-none placeholder:text-[rgba(255,255,255,0.45)]"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="text-[rgba(255,255,255,0.4)] hover:text-white">
-                  <X className="w-3 h-3" />
+      <aside className="map-float hm-layers" id="hm-layers">
+        <button
+          className="hm-sheet-handle"
+          id="hm-handle"
+          onClick={() => setMobileLayersOpen(!mobileLayersOpen)}
+        >
+          <span>
+            <Icon name="layers" size={16} /> Layers and indicators
+          </span>
+          <Icon name="chevd" size={14} />
+        </button>
+
+        <div className="search" style={{ maxWidth: 'none', marginBottom: '12px' }}>
+          <Icon name="search" size={15} />
+          <input
+            id="hm-q"
+            type="text"
+            placeholder="Search a county"
+            autoComplete="off"
+            aria-label="Search counties on the map"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchResults.length > 0 && (
+            <div className="search-results show" id="hm-qr" style={{ display: 'block', maxHeight: '180px', overflowY: 'auto' }}>
+              {searchResults.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSearchResults([]);
+                    selectCountyFnRef.current?.(c.id, true);
+                  }}
+                  style={{ width: '100%', display: 'flex', justifyContent: 'space-between', padding: '6px 10px', fontSize: '12px', border: 0, background: 'none', textAlign: 'left', cursor: 'pointer' }}
+                >
+                  <span style={{ fontWeight: 600 }}>{c.name} County</span>
+                  <span className="note" style={{ color: 'var(--faint)', fontSize: '10.5px' }}>{c.stateAbbr}</span>
                 </button>
-              )}
+              ))}
             </div>
+          )}
+        </div>
 
-            {/* Live Search Results */}
-            {searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 p-1 rounded-xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl z-30 space-y-0.5">
-                {searchResults.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => {
-                      setSearchQuery('');
-                      setSearchResults([]);
-                      selectCountyFnRef.current?.(c.id, true);
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11.5px] hover:bg-[var(--surface-2)] flex items-center justify-between text-[var(--text)]"
-                  >
-                    <span className="font-semibold">{c.name} County</span>
-                    <span className="text-[10px] text-[var(--faint)]">{c.stateAbbr}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Map Layers Section */}
-          <div>
-            <h3 className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider mb-2">Map Layers</h3>
-            <div className="space-y-1">
-              {HEALTH_MAP_LAYERS.map(l => {
-                const isActive = l.id === activeLayerId;
-                return (
-                  <button
-                    key={l.id}
-                    onClick={() => handleSelectLayer(l.id)}
-                    className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all ${
-                      isActive
-                        ? 'border-[var(--line-strong)] bg-[var(--surface-2)] shadow-xs'
-                        : 'border-transparent hover:bg-[var(--surface-2)]/60'
-                    }`}
-                  >
-                    <span
-                      className="w-7 h-7 rounded-lg flex-shrink-0 shadow-xs"
-                      style={{ background: `linear-gradient(135deg, ${l.ramp.join(',')})` }}
-                    />
-                    <div className="overflow-hidden">
-                      <b className="block text-[12px] font-bold text-[var(--text)] truncate">{l.name}</b>
-                      <small className="block text-[10.5px] text-[var(--faint)] truncate">{l.desc}</small>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Indicators Section (Subheadings) */}
-          <div>
-            <h3 className="text-[11.5px] font-bold text-[var(--faint)] uppercase tracking-wider mb-2">Indicator</h3>
-            <div className="flex flex-wrap gap-1">
-              {activeLayer.metrics.map(k => {
-                const meta = METRICS_CONFIG[k] || { short: k };
-                const isChipActive = k === activeMetricKey;
-                return (
-                  <button
-                    key={k}
-                    onClick={() => setActiveMetricKey(k)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
-                      isChipActive
-                        ? 'bg-[var(--cyan)] text-white shadow-xs'
-                        : 'bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)]/80'
-                    }`}
-                  >
-                    {meta.short || meta.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Toggles */}
-          <div className="pt-3 border-t border-[var(--line)] space-y-2 text-[12px] font-bold text-[var(--muted)]">
-            <div className="flex items-center justify-between">
-              <span>Hotspot heatmap</span>
+        <h3>Map layers</h3>
+        <div id="hm-lb">
+          {HEALTH_MAP_LAYERS.map((l) => {
+            const isActive = l.id === activeLayerId;
+            return (
               <button
-                onClick={() => setHeatmapEnabled(!heatmapEnabled)}
-                className={`w-9 h-5 rounded-full p-0.5 transition-colors ${heatmapEnabled ? 'bg-[var(--cyan)]' : 'bg-[var(--surface-2)] border border-[var(--line-strong)]'}`}
+                key={l.id}
+                className={`layer-btn ${isActive ? 'on' : ''}`}
+                onClick={() => handleSelectLayer(l.id)}
               >
-                <div className={`w-4 h-4 rounded-full bg-white transition-transform ${heatmapEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                <span
+                  className="sw"
+                  style={{ background: `linear-gradient(135deg, ${l.ramp.join(',')})` }}
+                />
+                <span>
+                  <b>{l.name}</b>
+                  <small>{l.desc}</small>
+                </span>
               </button>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>Highest-need markers</span>
+            );
+          })}
+        </div>
+
+        <h3 style={{ marginTop: '12px' }}>Indicator</h3>
+        <div className="chips" id="hm-ind">
+          {activeLayer.metrics.map((k) => {
+            const meta = METRICS_CONFIG[k] || { short: k };
+            const isChipActive = k === activeMetricKey;
+            return (
               <button
-                onClick={() => setMarkersEnabled(!markersEnabled)}
-                className={`w-9 h-5 rounded-full p-0.5 transition-colors ${markersEnabled ? 'bg-[var(--cyan)]' : 'bg-[var(--surface-2)] border border-[var(--line-strong)]'}`}
+                key={k}
+                className={`chip ${isChipActive ? 'on' : ''}`}
+                onClick={() => setActiveMetricKey(k)}
               >
-                <div className={`w-4 h-4 rounded-full bg-white transition-transform ${markersEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                {meta.short || meta.label}
               </button>
-            </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: '14px', borderTop: '1px solid var(--line)', paddingTop: '8px' }}>
+          <div className="hm-toggle">
+            <span>Hotspot heatmap</span>
+            <button
+              className={`switch ${heatmapEnabled ? 'on' : ''}`}
+              role="switch"
+              aria-checked={heatmapEnabled}
+              aria-label="Hotspot heatmap"
+              onClick={() => setHeatmapEnabled(!heatmapEnabled)}
+            />
+          </div>
+          <div className="hm-toggle">
+            <span>Highest-need markers</span>
+            <button
+              className={`switch ${markersEnabled ? 'on' : ''}`}
+              role="switch"
+              aria-checked={markersEnabled}
+              aria-label="Highest-need markers"
+              onClick={() => setMarkersEnabled(!markersEnabled)}
+            />
           </div>
         </div>
 
-        <div className="pt-3 mt-3 border-t border-[var(--line)] flex items-center gap-1.5 text-[10.5px] text-[var(--faint)]">
-          <span className="w-2 h-2 rounded-full bg-[var(--amber)]" />
-          <span>Synthetic demo data</span>
+        <div className="note mt" style={{ marginTop: '12px' }}>
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
         </div>
       </aside>
 
       {/* Floating Performance Readout */}
-      <div className="hidden xl:flex absolute bottom-[80px] left-[310px] z-20 px-3 py-1.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-md text-[11px] text-[rgba(255,255,255,0.7)] items-center gap-2">
-        <span className="w-2 h-2 rounded-full bg-[var(--teal)] animate-pulse" />
+      <div className="map-float perf" id="hm-perf">
+        <span className="dot" style={{ color: 'var(--teal)' }} />
         <span>
-          <b className="num text-white">{recolorPerf.n.toLocaleString()}</b> counties recolored in{' '}
-          <b className="num text-[var(--cyan)]">{recolorPerf.ms} ms</b> in this browser
+          <b className="num">{recolorPerf.n.toLocaleString()}</b> counties recolored in{' '}
+          <b className="num">{recolorPerf.ms} ms</b> in this browser
         </span>
       </div>
 
       {/* Floating Legend */}
-      <div className="hidden sm:block absolute bottom-3 md:bottom-4 left-3 md:left-[310px] z-20 px-3.5 py-2.5 rounded-xl bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-lg min-w-[210px] text-[11px] text-white">
-        <span className="font-bold text-white block mb-1">{legendInfo.title}</span>
-        <div className="flex h-2.5 rounded overflow-hidden mb-1.5">
+      <div className="map-float legend hm-legend" id="hm-leg">
+        <span className="legend-title" style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+          {legendInfo.title}
+        </span>
+        <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', marginBottom: '3px' }}>
           {legendInfo.bins.map((c, i) => (
-            <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
+            <div key={i} style={{ flex: 1, height: '100%', backgroundColor: c }} />
           ))}
         </div>
-        <div className="flex justify-between items-center text-[10px] text-[rgba(255,255,255,0.5)]">
+        <div className="ends" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--faint)' }}>
           <span>{legendInfo.lo}</span>
           <span>{legendInfo.note}</span>
           <span>{legendInfo.hi}</span>
         </div>
       </div>
 
-      {/* Floating Map HUD Controls (Bottom Right) */}
-      <div className="absolute bottom-3 right-3 md:bottom-4 md:right-[350px] z-20 flex items-center gap-1 bg-[#0c1427]/90 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] p-1 rounded-xl shadow-lg">
+      {/* Floating Map Controls */}
+      <div className="map-float map-ctrls hm-ctrls">
         <button
           onClick={() => svgRef.current?.transition().duration(300).call(zoomBehaviorRef.current!.scaleBy, 1.4)}
+          aria-label="Zoom in"
           title="Zoom In"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
-          <ZoomIn className="w-4 h-4" />
+          <Icon name="plus" size={16} />
         </button>
         <button
           onClick={() => svgRef.current?.transition().duration(300).call(zoomBehaviorRef.current!.scaleBy, 1 / 1.4)}
+          aria-label="Zoom out"
           title="Zoom Out"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
-          <ZoomOut className="w-4 h-4" />
+          <Icon name="minus" size={16} />
         </button>
         <button
           onClick={() => resetMapFnRef.current?.()}
+          aria-label="Reset view"
           title="Reset to Full Country"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
+          <Icon name="expand" size={16} />
         </button>
         <button
           onClick={() => selectCountyFnRef.current?.('17031', true)}
+          aria-label="Go to my jurisdiction"
           title="Go to Jurisdiction"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--cyan)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
         >
-          <Crosshair className="w-3.5 h-3.5" />
+          <Icon name="locate" size={16} />
         </button>
       </div>
 
       {/* Floating Right Inspector Panel */}
-      <aside className="absolute z-20 max-md:bottom-2 max-md:left-2 max-md:right-2 max-md:top-auto max-md:w-auto max-md:max-h-[50vh] md:top-4 md:right-4 md:bottom-4 md:w-[330px] p-4 sm:p-5 rounded-2xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl overflow-y-auto flex flex-col justify-between text-white">
+      <aside className="map-float hm-right" id="hm-right">
         {selectedTract ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-bold bg-[var(--violet)]/15 text-[var(--violet)] border border-[var(--violet)]/30">
-                Census tract
-              </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="pill info" style={{ fontSize: '10.5px' }}>Census tract</span>
               <button
                 onClick={() => setSelectedTract(null)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--faint)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+                className="icon-btn"
+                style={{ width: '26px', height: '26px' }}
+                aria-label="Close"
               >
-                <X className="w-4 h-4" />
+                <Icon name="x" size={14} />
               </button>
             </div>
 
             <div>
-              <h3 className="text-lg font-bold text-[var(--text)] leading-tight">{selectedTract.name}</h3>
-              <div className="text-[11.5px] text-[var(--faint)] mt-0.5">
+              <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>{selectedTract.name}</h3>
+              <div style={{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '2px' }}>
                 {selectedCounty?.name} County, {selectedCounty?.stateAbbr}. GEOID {selectedTract.id}
               </div>
             </div>
 
             {/* Big Metric Display */}
-            <div className="pt-2">
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-display font-bold text-[var(--cyan)] num">
+            <div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                <span className="num" style={{ fontSize: '30px', fontWeight: 700, color: 'var(--cyan)' }}>
                   {getMetricValue(selectedTract, activeMetricKey).toFixed(1)}%
                 </span>
-                <span className="text-[13px] font-bold text-[var(--muted)]">{activeMetricMeta.short}</span>
+                <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--muted)' }}>
+                  {activeMetricMeta.short}
+                </span>
               </div>
-              <div className="text-[11px] text-[var(--faint)] mt-1">
-                <strong className="text-[var(--text)]">{tractPercentile}th</strong> percentile of{' '}
-                {countyTracts.length} tracts in the county
-              </div>
-
-              {/* Rank bar */}
-              <div className="relative h-2 rounded-full bg-gradient-to-r from-[var(--teal)] via-[var(--amber)] to-[var(--rose)] mt-3 mb-1 opacity-85">
-                <i
-                  className="absolute -top-1 w-1.5 h-4 rounded-xs bg-[var(--text)] shadow-md transition-all duration-500"
-                  style={{ left: `${tractPercentile}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[10px] text-[var(--faint)]">
-                <span>Lowest</span>
-                <span>Highest</span>
+              <div style={{ fontSize: '11px', color: 'var(--faint)', marginTop: '2px' }}>
+                {tractPercentile}th percentile within {selectedCounty?.name} County
               </div>
             </div>
 
-            {/* 6 Mini Metrics Grid */}
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <div className="p-2.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)]">
-                <small className="block text-[10.5px] font-bold text-[var(--faint)]">Vulnerability</small>
-                <b className="text-[14px] font-bold text-[var(--text)] num">{selectedTract.svi.toFixed(2)}</b>
+            {/* Key Indicator Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Vulnerability (SVI)</small>
+                <b className="num" style={{ fontSize: '13.5px' }}>{selectedTract.svi.toFixed(2)}</b>
               </div>
-              <div className="p-2.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)]">
-                <small className="block text-[10.5px] font-bold text-[var(--faint)]">Poverty</small>
-                <b className="text-[14px] font-bold text-[var(--text)] num">
-                  {getMetricValue(selectedTract, 'poverty').toFixed(1)}%
-                </b>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Poverty rate</small>
+                <b className="num" style={{ fontSize: '13.5px' }}>{getMetricValue(selectedTract, 'poverty').toFixed(1)}%</b>
               </div>
-              <div className="p-2.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)]">
-                <small className="block text-[10.5px] font-bold text-[var(--faint)]">Uninsured</small>
-                <b className="text-[14px] font-bold text-[var(--text)] num">
-                  {getMetricValue(selectedTract, 'uninsured').toFixed(1)}%
-                </b>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Uninsured</small>
+                <b className="num" style={{ fontSize: '13.5px' }}>{getMetricValue(selectedTract, 'uninsured').toFixed(1)}%</b>
               </div>
-              <div className="p-2.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)]">
-                <small className="block text-[10.5px] font-bold text-[var(--faint)]">Diabetes</small>
-                <b className="text-[14px] font-bold text-[var(--text)] num">
-                  {getMetricValue(selectedTract, 'diabetes').toFixed(1)}%
-                </b>
-              </div>
-              <div className="p-2.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)]">
-                <small className="block text-[10.5px] font-bold text-[var(--faint)]">Access score</small>
-                <b className="text-[14px] font-bold text-[var(--text)] num">
-                  {getMetricValue(selectedTract, 'access').toFixed(0)}
-                </b>
-              </div>
-              <div className="p-2.5 rounded-xl bg-[var(--surface-2)] border border-[var(--line)]">
-                <small className="block text-[10.5px] font-bold text-[var(--faint)]">Life expectancy</small>
-                <b className="text-[14px] font-bold text-[var(--text)] num">
-                  {getMetricValue(selectedTract, 'lifeExp').toFixed(1)} yrs
-                </b>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Diabetes</small>
+                <b className="num" style={{ fontSize: '13.5px' }}>{getMetricValue(selectedTract, 'diabetes').toFixed(1)}%</b>
               </div>
             </div>
 
             {/* Badges */}
-            <div className="flex items-center gap-2 pt-1">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span
-                className="px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1.5"
+                className="pill"
                 style={{
-                  backgroundColor: `${TIER_COLORS[selectedTract.tier]}20`,
+                  background: `${TIER_COLORS[selectedTract.tier]}20`,
                   color: TIER_COLORS[selectedTract.tier]
                 }}
               >
-                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: TIER_COLORS[selectedTract.tier] }} />
                 {TIER_LABELS[selectedTract.tier]} vulnerability
               </span>
-              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--surface-2)] text-[var(--muted)]">
+              <span className="pill sm" style={{ color: 'var(--muted)' }}>
                 {selectedTract.pop.toLocaleString()} residents
               </span>
             </div>
 
-            {/* Action Buttons */}
-            <div className="space-y-2 pt-3 border-t border-[var(--line)]">
+            {/* Actions */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '10px', borderTop: '1px solid var(--line)' }}>
               <Link
                 href={`/census-tracts?county=${selectedCounty?.id}&tract=${selectedTract.id}`}
-                className="w-full py-2.5 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-[#07111F] text-[12.5px] font-bold flex items-center justify-center gap-2 shadow-md transition-all"
+                className="btn primary"
+                style={{ width: '100%', justifyContent: 'center' }}
               >
-                <FileText className="w-4 h-4" />
+                <Icon name="file" size={14} />
                 <span>Review in tract explorer</span>
               </Link>
 
-              <div className="flex gap-2">
+              <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   onClick={() => onToggleCompare?.(selectedTract.id)}
-                  className={`flex-1 py-2 rounded-xl border text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all ${
-                    compareSet.has(selectedTract.id)
-                      ? 'border-[var(--amber)] bg-[var(--amber)]/15 text-[var(--amber)]'
-                      : 'border-[var(--line)] hover:bg-[var(--surface-2)] text-[var(--text)]'
-                  }`}
+                  className="btn sm"
+                  style={{ flex: 1, justifyContent: 'center' }}
                 >
                   <span>{compareSet.has(selectedTract.id) ? 'Remove compare' : 'Compare'}</span>
                 </button>
-
                 <button
                   onClick={() => onToggleFlag?.(selectedTract.id)}
-                  className={`flex-1 py-2 rounded-xl border text-[11.5px] font-bold flex items-center justify-center gap-1.5 transition-all ${
-                    flaggedSet.has(selectedTract.id)
-                      ? 'border-[var(--rose)] bg-[var(--rose)]/15 text-[var(--rose)]'
-                      : 'border-[var(--line)] hover:bg-[var(--surface-2)] text-[var(--text)]'
-                  }`}
+                  className="btn sm"
+                  style={{ flex: 1, justifyContent: 'center', color: flaggedSet.has(selectedTract.id) ? 'var(--rose)' : undefined }}
                 >
-                  <Flag className="w-3.5 h-3.5" />
-                  <span>{flaggedSet.has(selectedTract.id) ? 'Flagged' : 'Flag underserved'}</span>
+                  <Icon name="flag" size={14} />
+                  <span>{flaggedSet.has(selectedTract.id) ? 'Flagged' : 'Flag tract'}</span>
                 </button>
               </div>
 
               <button
                 onClick={() => onAddFinding?.(selectedTract)}
-                className="w-full py-2 rounded-xl border border-[var(--line-strong)] hover:border-[var(--cyan)] bg-[var(--surface-2)] text-[12px] font-bold text-[var(--text)] flex items-center justify-center gap-1.5 transition-all"
+                className="btn sm"
+                style={{ width: '100%', justifyContent: 'center' }}
               >
                 <span>+ Add finding to assessment</span>
               </button>
             </div>
           </div>
         ) : selectedCounty ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-bold bg-[var(--cyan)]/15 text-[var(--cyan)] border border-[var(--cyan)]/30">
-                County overview
-              </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="pill ok" style={{ fontSize: '10.5px' }}>County Jurisdiction</span>
               <button
-                onClick={() => resetMapFnRef.current?.()}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--faint)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+                onClick={() => {
+                  setSelectedCounty(null);
+                  if (selectedState) zoomToStateFnRef.current?.(selectedState.fips);
+                  else resetMapFnRef.current?.();
+                }}
+                className="icon-btn"
+                style={{ width: '26px', height: '26px' }}
+                aria-label="Back to state"
               >
-                <X className="w-4 h-4" />
+                <Icon name="x" size={14} />
               </button>
             </div>
 
             <div>
-              <h3 className="text-xl font-bold text-[var(--text)] leading-tight">{selectedCounty.name} County</h3>
-              <div className="text-[12px] text-[var(--faint)] mt-0.5">
-                {selectedCounty.stateName} • FIPS {selectedCounty.id} • {countyTracts.length} tracts
+              <h3 style={{ fontSize: '17px', fontWeight: 700, margin: 0 }}>{selectedCounty.name} County</h3>
+              <div style={{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '2px' }}>
+                {selectedCounty.stateName}. FIPS {selectedCounty.id}
               </div>
             </div>
 
-            <div className="pt-2">
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-display font-bold text-[var(--cyan)] num">
+            {/* Quick Metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Total population</small>
+                <b className="num" style={{ fontSize: '14px' }}>{selectedCounty.pop.toLocaleString()}</b>
+              </div>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Census tracts</small>
+                <b className="num" style={{ fontSize: '14px' }}>{countyTracts.length || (selectedCounty as any).tractsCount || (selectedCounty as any).tractCount || 0}</b>
+              </div>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Mean SVI vulnerability</small>
+                <b className="num" style={{ fontSize: '14px', color: 'var(--amber)' }}>{selectedCounty.svi.toFixed(2)}</b>
+              </div>
+              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>{activeMetricMeta.short}</small>
+                <b className="num" style={{ fontSize: '14px', color: 'var(--cyan)' }}>
                   {getMetricValue(selectedCounty, activeMetricKey).toFixed(1)}%
-                </span>
-                <span className="text-[13px] font-bold text-[var(--muted)]">{activeMetricMeta.short}</span>
-              </div>
-              <div className="text-[11px] text-[var(--faint)] mt-1">
-                Countywide population: <strong className="text-[var(--text)]">{selectedCounty.pop.toLocaleString()}</strong> residents
+                </b>
               </div>
             </div>
 
-            {/* Highest-need Tracts in County */}
-            <div className="pt-2">
-              <h4 className="text-[12.5px] font-bold text-[var(--text)] mb-2">Tracts with highest need</h4>
-              <div className="space-y-1.5">
-                {topCountyTracts.map(t => (
+            {/* Top High Need Tracts */}
+            <div>
+              <b style={{ fontSize: '12px', display: 'block', marginBottom: '6px' }}>Highest need tracts</b>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {topCountyTracts.map((t) => (
                   <button
                     key={t.id}
-                    onClick={() => selectTractFnRef.current?.(t.id)}
-                    className="w-full p-2.5 rounded-xl border border-[var(--line)] hover:border-[var(--cyan)] hover:bg-[var(--surface-2)] flex items-center justify-between text-left transition-all"
+                    onClick={() => {
+                      setSelectedTract(t);
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 8px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--line)',
+                      background: 'var(--surface-solid)',
+                      fontSize: '11.5px',
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
                   >
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: TIER_COLORS[t.tier] }}
-                      />
-                      <div>
-                        <b className="text-[12px] font-bold text-[var(--text)] block leading-tight">{t.name}</b>
-                        <small className="text-[10.5px] text-[var(--faint)]">{TIER_LABELS[t.tier]} vulnerability</small>
-                      </div>
-                    </div>
-                    <b className="text-[12.5px] font-bold text-[var(--cyan)] num">
+                    <span style={{ fontWeight: 600 }}>{t.name}</span>
+                    <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
                       {getMetricValue(t, activeMetricKey).toFixed(1)}%
-                    </b>
+                    </span>
                   </button>
                 ))}
               </div>
             </div>
 
-            <Link
-              href={`/census-tracts?county=${selectedCounty.id}`}
-              className="w-full py-2.5 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-[#07111F] text-[12.5px] font-bold flex items-center justify-center gap-2 shadow-md transition-all mt-3"
-            >
-              <FileText className="w-4 h-4" />
-              <span>Open in tract explorer</span>
-            </Link>
-          </div>
-        ) : selectedState ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-bold bg-[var(--cyan)]/15 text-[var(--cyan)] border border-[var(--cyan)]/30">
-                State overview
-              </span>
-              <button
-                onClick={() => resetMapFnRef.current?.()}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--faint)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+            <div style={{ paddingTop: '8px', borderTop: '1px solid var(--line)' }}>
+              <Link
+                href={`/census-tracts?county=${selectedCounty.id}`}
+                className="btn primary"
+                style={{ width: '100%', justifyContent: 'center' }}
               >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold text-[var(--text)] leading-tight">{selectedState.name}</h3>
-              <div className="text-[12px] text-[var(--faint)] mt-0.5">
-                {topStateCounties.length} focus counties • {selectedState.abbr}
-              </div>
-            </div>
-
-            <div className="pt-1">
-              <h4 className="text-[13px] font-bold text-[var(--text)]">Highest need in {selectedState.name}</h4>
-              <div className="text-[11px] text-[var(--muted)] mt-0.5">
-                {activeMetricMeta.label || activeLayer.name}. Click a county to inspect tracts.
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              {topStateCounties.map((c, i) => (
-                <button
-                  key={c.id}
-                  onClick={() => selectCountyFnRef.current?.(c.id, true)}
-                  className="w-full p-2.5 rounded-xl border border-[var(--line)] hover:border-[var(--cyan)] hover:bg-[var(--surface-2)] flex items-center justify-between text-left transition-all"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-5 h-5 rounded-full bg-[var(--surface-2)] text-[var(--muted)] text-[11px] font-bold flex items-center justify-center">
-                      {i + 1}
-                    </span>
-                    <div>
-                      <b className="text-[12.5px] font-bold text-[var(--text)] block leading-tight">{c.name} County</b>
-                      <small className="text-[11px] text-[var(--faint)]">{Math.round(c.pop / 1000)}k residents</small>
-                    </div>
-                  </div>
-                  <b className="text-[12.5px] font-bold text-[var(--cyan)] num">
-                    {getMetricValue(c, activeMetricKey).toFixed(1)}%
-                  </b>
-                </button>
-              ))}
-            </div>
-
-            <div className="p-3 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] text-[11.5px] text-[var(--faint)] mt-2">
-              Click any county in {selectedState.name} to drill down into its census tracts.
+                <span>Explore all county tracts</span>
+              </Link>
             </div>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="panel-h mb-2">
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-bold bg-[var(--teal)]/15 text-[var(--teal)] border border-[var(--teal)]/30 inline-block mb-2">
-                National Overview
-              </span>
-              <h3 className="text-base font-bold text-[var(--text)]">Highest need nationally</h3>
-              <div className="text-[11.5px] text-[var(--muted)] mt-1">
-                {activeMetricMeta.label || activeLayer.name}. Click a county to drill into its tracts.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <span className="pill info" style={{ fontSize: '10.5px' }}>Overview</span>
+              <h3 style={{ fontSize: '16px', fontWeight: 700, margin: '6px 0 2px' }}>National Overview</h3>
+              <p style={{ fontSize: '11.5px', color: 'var(--muted)', margin: 0 }}>
+                Click any county to zoom in and inspect tract-level health disparities.
+              </p>
+            </div>
+
+            <div style={{ padding: '10px 12px', borderRadius: '12px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--faint)' }}>Active Indicator</div>
+              <b style={{ fontSize: '14px', color: 'var(--text)' }}>{activeMetricMeta.label || activeMetricMeta.short}</b>
+              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+                Showing quantile distribution across 3,142 US counties
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              {topNationalCounties.map((c, i) => (
-                <button
-                  key={c.id}
-                  onClick={() => selectCountyFnRef.current?.(c.id, true)}
-                  className="w-full p-2.5 rounded-xl border border-[var(--line)] hover:border-[var(--cyan)] hover:bg-[var(--surface-2)] flex items-center justify-between text-left transition-all"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-5 h-5 rounded-full bg-[var(--surface-2)] text-[var(--muted)] text-[11px] font-bold flex items-center justify-center">
-                      {i + 1}
+            {/* Top National Counties */}
+            <div>
+              <b style={{ fontSize: '12px', display: 'block', marginBottom: '6px' }}>Highest burden counties</b>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {topNationalCounties.slice(0, 6).map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => selectCountyFnRef.current?.(c.id, true)}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 8px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--line)',
+                      background: 'var(--surface-solid)',
+                      fontSize: '11.5px',
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
+                  >
+                    <span>{c.name}, {c.stateAbbr}</span>
+                    <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
+                      {getMetricValue(c, activeMetricKey).toFixed(1)}%
                     </span>
-                    <div>
-                      <b className="text-[12.5px] font-bold text-[var(--text)] block leading-tight">{c.name} County</b>
-                      <small className="text-[11px] text-[var(--faint)]">{c.stateAbbr} • {Math.round(c.pop / 1000)}k residents</small>
-                    </div>
-                  </div>
-                  <b className="text-[12.5px] font-bold text-[var(--cyan)] num">
-                    {getMetricValue(c, activeMetricKey).toFixed(1)}%
-                  </b>
-                </button>
-              ))}
-            </div>
-
-            <div className="p-3 rounded-xl bg-[var(--surface-2)] border border-[var(--line)] text-[11.5px] text-[var(--faint)] mt-3">
-              Click any state to zoom in, then click a county to load its census tracts.
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
       </aside>
-
-      {/* Floating Hover Tooltip */}
-      {tooltip.visible && (
-        <div
-          className="absolute z-50 pointer-events-none p-3 rounded-xl bg-[#0c1427]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.18)] shadow-2xl min-w-[170px] text-white text-[12px] animate-in fade-in-50 duration-100"
-          style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
-        >
-          <b className="block text-[12.5px] text-white font-bold border-b border-[rgba(255,255,255,0.1)] pb-1.5 mb-1.5">
-            {tooltip.title}
-          </b>
-          <div className="space-y-1">
-            {tooltip.lines.map((l, i) => (
-              <div key={i} className="flex justify-between items-center text-[11px] gap-3">
-                <span className="text-[rgba(255,255,255,0.6)]">{l.label}:</span>
-                <b className="num text-[var(--cyan)] font-bold">{l.val}</b>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

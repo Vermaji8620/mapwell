@@ -3,8 +3,8 @@ import './globals.css';
 import { ShellLayout } from '@/components/ShellLayout';
 
 export const metadata: Metadata = {
-  title: 'MapWell - Community Health Mapping & Needs Assessment',
-  description: 'Geospatial health data visualization and community needs assessment platform for public health departments.',
+  title: 'MapWell',
+  description: 'Community Health Mapping & Needs Assessment Platform',
 };
 
 export default function RootLayout({
@@ -14,7 +14,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="antialiased">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body>
         <ShellLayout>{children}</ShellLayout>
       </body>
     </html>

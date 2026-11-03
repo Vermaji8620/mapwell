@@ -11,7 +11,6 @@ function HealthMapContent() {
   const urlTract = searchParams.get('tract');
 
   const {
-    activeCounty,
     setActiveJurisdiction,
     session,
     toggleFlagTract,
@@ -20,7 +19,7 @@ function HealthMapContent() {
   } = useSession();
 
   return (
-    <div className="w-full h-full animate-in fade-in duration-300">
+    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
       <HealthMapCanvas
         initialCountyId={urlCounty || undefined}
         initialTractId={urlTract || undefined}
@@ -42,7 +41,21 @@ function HealthMapContent() {
 
 export default function HealthMapPage() {
   return (
-    <Suspense fallback={<div className="h-[calc(100vh-100px)] flex items-center justify-center text-[var(--muted)]">Loading Health Map...</div>}>
+    <Suspense
+      fallback={
+        <div
+          style={{
+            display: 'flex',
+            height: '100%',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--muted)'
+          }}
+        >
+          Loading Health Map...
+        </div>
+      }
+    >
       <HealthMapContent />
     </Suspense>
   );

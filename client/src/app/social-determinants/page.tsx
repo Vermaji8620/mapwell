@@ -16,6 +16,7 @@ import {
   X
 } from 'lucide-react';
 import Link from 'next/link';
+import { Icon } from '@/components/Icons';
 import { StateCountyMap, createSdohColorScale } from '@/components/StateCountyMap';
 import { DumbbellPlot, DumbbellItem } from '@/components/DumbbellPlot';
 import { HistogramChart } from '@/components/HistogramChart';
@@ -255,270 +256,235 @@ function SocialDeterminantsContent() {
     return `${val.toFixed(1)}${metricMeta.unit || '%'}`;
   };
 
-  return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
-      {/* Screen Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Social Determinants of Health
-          </h1>
-          <p className="text-[13px] text-[var(--muted)] mt-0.5">
-            Explore the conditions where people live, learn, work and age. Switch domains, indicators and states to compare.
-          </p>
-        </div>
+  const selectedStateFips = activeStateFips;
+  const setSelectedStateFips = setActiveStateFips;
+  const activeMetricKey = activeMetric;
+  const setActiveMetricKey = setActiveMetric;
+  const activeMetricMeta = metricMeta;
+  const selectedStateMeta = currentState;
+  const selectedCounty = focusCounty;
+  const allStates = availableStates.map(s => ({ ...s, countiesCount: repo?.countiesByState.get(s.fips)?.length || 0 }));
+  const stateStats = { median: stateMedianVal };
+  const nationalStats = { median: nationalMedianVal };
+  const stateCountyValues = histogramValues;
+  const rankedCounties = greatestNeedCounties;
+  const metricVal = (c: any, k: string) => ((c.indicators as any)?.[k] ?? (c as any)[k] ?? 0);
+  const handleSelectDomain = (dId: string) => {
+    setActiveDomainId(dId);
+    const d = SDOH_DOMAINS.find(x => x.id === dId);
+    if (d && d.indicators[0]) setActiveMetric(d.indicators[0]);
+  };
 
-        {/* State Selector Dropdown */}
-        <div className="flex items-center gap-3">
-          <label className="text-[12px] font-bold text-[var(--faint)] uppercase flex items-center gap-2">
-            <span>State:</span>
+  return (
+    <>
+      {/* Page Header */}
+      <div className="page-head">
+        <div>
+          <h1>Social determinants of health</h1>
+          <p>Explore the conditions where people live, learn, work and age. Track structural barriers by domain.</p>
+        </div>
+        <div className="head-actions">
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
+          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>State</span>
             <select
-              value={activeStateFips}
+              className="input"
+              value={selectedStateFips}
               onChange={(e) => {
-                setActiveStateFips(e.target.value);
-                const nextCounties = repo?.countiesByState.get(e.target.value) || [];
-                setSelectedCountyId(nextCounties[0]?.id || null);
+                setSelectedStateFips(e.target.value);
+                setSelectedCountyId(null);
               }}
-              className="h-10 px-3.5 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[13px] font-bold text-[var(--text)] outline-none cursor-pointer hover:border-[var(--cyan)] transition-colors shadow-xs"
+              style={{ height: '36px', borderRadius: '10px', padding: '0 10px', fontSize: '13px', background: 'var(--surface-solid)' }}
             >
-              {availableStates.map((s) => (
-                <option key={s.fips} value={s.fips}>
-                  {s.name} ({s.abbr})
+              {allStates.map((st) => (
+                <option key={st.fips} value={st.fips}>
+                  {st.name} ({st.countiesCount} counties)
                 </option>
               ))}
             </select>
-          </label>
+          </div>
         </div>
       </div>
 
-      {/* 6 SDOH Domain Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-[var(--line)]">
-        {SDOH_DOMAINS.map((dom) => {
-          const Icon = dom.icon;
-          const isActive = dom.id === activeDomainId;
+      {/* Domain Navigation Tabs */}
+      <div className="tabs" id="sd-tabs" role="tablist" style={{ marginBottom: '16px' }}>
+        {SDOH_DOMAINS.map((d) => {
+          const isOn = d.id === activeDomainId;
           return (
             <button
-              key={dom.id}
-              onClick={() => setActiveDomainId(dom.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-all whitespace-nowrap ${
-                isActive
-                  ? 'bg-[var(--cyan)] text-white shadow-sm'
-                  : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)]'
-              }`}
+              key={d.id}
+              role="tab"
+              aria-selected={isOn}
+              className={isOn ? 'on' : ''}
+              onClick={() => handleSelectDomain(d.id)}
             >
-              <Icon className="w-4 h-4" />
-              <span>{dom.label}</span>
+              <Icon name={d.id === 'income' ? 'dollar' : d.id === 'housing' ? 'home' : d.id === 'transport' ? 'bus' : d.id === 'education' ? 'book' : d.id === 'employment' ? 'brief' : 'cross'} size={15} />
+              <span>{d.label}</span>
             </button>
           );
         })}
       </div>
 
-      {/* Main 12-Column Responsive Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Col 7: Interactive State County Map with Overlay Controls */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel relative overflow-hidden flex flex-col justify-between min-h-[500px] border border-[var(--line)] bg-[var(--surface-solid)]/70">
-          {/* Floating Indicator Chips inside Map */}
-          <div className="absolute top-4 left-4 z-20 flex items-center gap-2 flex-wrap max-w-[calc(100%-32px)]">
-            <div className="px-2.5 py-1.5 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] flex items-center gap-1.5 shadow-md">
-              {activeDomain.indicators.map((indKey) => {
-                const meta = METRICS_CONFIG[indKey] || { short: indKey };
-                const isChipActive = indKey === activeMetric;
+      {/* Main Grid Layout */}
+      <div className="grid g-12" style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '16px' }}>
+        {/* Panel 1: State Choropleth Map (c-7) */}
+        <section className="panel c-7" style={{ gridColumn: 'span 7', padding: 0, overflow: 'hidden', minHeight: '470px', position: 'relative' }}>
+          <div style={{ position: 'absolute', inset: 0 }} id="sd-map">
+            <StateCountyMap
+              stateFips={selectedStateFips}
+              metric={activeMetricKey}
+              selectedCountyId={selectedCountyId}
+              onSelectCounty={(c) => setSelectedCountyId(c.id)}
+              layerId={activeDomainId === 'access' ? 'access' : 'sdoh'}
+              height={470}
+            />
+          </div>
+
+          {/* Indicator Chips overlay */}
+          <div className="map-float" style={{ position: 'absolute', left: '14px', top: '14px', padding: '10px 12px', maxWidth: 'calc(100% - 28px)', zIndex: 10 }}>
+            <div className="chips" id="sd-k">
+              {activeDomain.indicators.map((k) => {
+                const meta = METRICS_CONFIG[k] || { short: k };
+                const isChipOn = k === activeMetricKey;
                 return (
                   <button
-                    key={indKey}
-                    onClick={() => setActiveMetric(indKey)}
-                    className={`px-3 py-1 rounded-lg text-[11.5px] font-bold transition-all ${
-                      isChipActive
-                        ? 'bg-[var(--cyan)] text-white shadow-xs'
-                        : 'text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)]'
-                    }`}
+                    key={k}
+                    className={`chip ${isChipOn ? 'on' : ''}`}
+                    onClick={() => setActiveMetricKey(k)}
                   >
-                    {meta.short}
+                    {meta.short || meta.label}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* D3 Pre-projected Albers TopoJSON State County Choropleth */}
-          <div className="w-full h-full flex-1 min-h-[480px]">
-            <StateCountyMap
-              stateFips={activeStateFips}
-              selectedCountyId={selectedCountyId}
-              onSelectCounty={(c) => setSelectedCountyId(c.id)}
-              onClearCounty={() => setSelectedCountyId(null)}
-              metric={activeMetric}
-              layerId={activeDomainId === 'access' ? 'access' : 'sdoh'}
-              height={490}
-            />
-          </div>
-
-          {/* Floating Bottom Left: Legend matching prototype */}
-          <div className="absolute bottom-4 left-4 z-20 px-3.5 py-2.5 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-lg min-w-[220px] text-[11px]">
-            <div className="font-bold text-[var(--text)] mb-1.5 flex justify-between items-center">
-              <span>{metricMeta.short || metricMeta.label}</span>
+          {/* Float Legend */}
+          <div className="map-float legend" style={{ position: 'absolute', left: '14px', bottom: '14px', zIndex: 10 }} id="sd-leg">
+            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)', marginBottom: '4px' }}>
+              {activeMetricMeta.label || activeMetricMeta.short}
             </div>
-            <div className="flex h-2.5 rounded overflow-hidden mb-1.5">
-              {scaleInfo.bins.map((c, i) => (
-                <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
+            <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', width: '170px' }}>
+              {['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D'].map((c, i) => (
+                <div key={i} style={{ flex: 1, height: '100%', backgroundColor: c }} />
               ))}
             </div>
-            <div className="flex justify-between items-center text-[10px] text-[var(--faint)]">
-              <span>{formatMetricVal(scaleInfo.extent[0] ?? 0)}</span>
-              <span>Quantile bins</span>
-              <span>{formatMetricVal(scaleInfo.extent[1] ?? 0)}</span>
+            <div className="ends" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--faint)', marginTop: '2px' }}>
+              <span>Low</span>
+              <span>High burden</span>
             </div>
           </div>
 
-          {/* Floating Bottom Right: Selected County Inspection Badge */}
-          <div className="absolute bottom-4 right-4 z-20 p-3.5 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-xl max-w-[250px] text-[12px]">
-            {focusCounty ? (
+          {/* Float Selected County Readout */}
+          <div className="map-float" style={{ position: 'absolute', right: '14px', bottom: '14px', padding: '10px 14px', maxWidth: '240px', zIndex: 10 }} id="sd-hov">
+            {selectedCounty ? (
               <div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-[var(--text)] truncate">
-                    {focusCounty.name} County
+                <b style={{ fontSize: '13px', display: 'block' }}>{selectedCounty.name} County, {selectedCounty.stateAbbr}</b>
+                <div className="big-metric" style={{ margin: '4px 0 0' }}>
+                  <span className="v num" style={{ fontSize: '26px', fontWeight: 700, color: 'var(--cyan)' }}>
+                    {metricVal(selectedCounty, activeMetricKey).toFixed(1)}%
                   </span>
-                  <button
-                    onClick={() => setSelectedCountyId(null)}
-                    className="text-[var(--faint)] hover:text-[var(--text)]"
-                    title="Clear selection"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <small style={{ color: 'var(--muted)', fontSize: '12px', marginLeft: '4px' }}>{activeMetricMeta.short}</small>
                 </div>
-                <div className="text-2xl font-bold font-display text-[var(--cyan)] num mt-1">
-                  {formatMetricVal((focusCounty.indicators as any)[activeMetric] ?? 0)}
+                <div className="note" style={{ fontSize: '11px', color: 'var(--faint)', marginTop: '2px' }}>
+                  State median {stateStats.median.toFixed(1)}%
                 </div>
-                {percentileRank != null && (
-                  <div className="text-[11px] text-[var(--muted)] mt-0.5">
-                    <strong className="text-[var(--text)]">{percentileRank}th</strong> percentile in {currentState.name}
-                  </div>
-                )}
               </div>
             ) : (
-              <div className="text-[11.5px] text-[var(--muted)] flex items-center gap-1.5">
-                <MapPin className="w-4 h-4 text-[var(--cyan)] flex-shrink-0" />
-                <span>Click any county to compare against state & nation</span>
+              <div>
+                <b style={{ fontSize: '12.5px', display: 'block' }}>{selectedStateMeta?.name}</b>
+                <div className="note" style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+                  Click a county to inspect local rates
+                </div>
               </div>
             )}
           </div>
         </section>
 
-        {/* Col 5: Geographic Comparison (Dumbbell Range Plots) */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Geographic Comparison</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              {activeDomain.label}: {focusCounty ? `${focusCounty.name} County against ` : ''}
-              {currentState.name} and national county medians
-            </p>
+        {/* Panel 2: Geographic Comparison Dumbbell Plot (c-5) */}
+        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Geographic comparison</h3>
+              <div className="sub" id="sd-cmp-sub">
+                {activeDomain.label}: {selectedCounty ? `${selectedCounty.name} County against ` : ''}
+                {selectedStateMeta?.name} and national median
+              </div>
+            </div>
           </div>
-
-          <div className="my-4">
-            <DumbbellPlot items={dumbbellItems} />
-          </div>
-
-          <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)] flex items-center justify-between">
-            <span>Click any indicator card to switch active map overlay</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </div>
-        </section>
-
-        {/* Col 6: Distribution Across Counties (Histogram) */}
-        <section className="lg:col-span-6 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Distribution Across Counties</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              {metricMeta.label}, {stateCounties.length} counties in {currentState.name}
-            </p>
-          </div>
-
-          <div className="my-4">
-            <HistogramChart
-              values={histogramValues}
-              height={200}
-              binsCount={20}
-              format={formatMetricVal}
-              mark={
-                focusCounty
-                  ? (focusCounty.indicators as any)[activeMetric] ?? stateMedianVal
-                  : stateMedianVal
-              }
-              markLabel={focusCounty ? `${focusCounty.name} County` : `${currentState.abbr} Median`}
-              unit="Counties"
+          <div style={{ marginTop: '14px' }}>
+            <DumbbellPlot
+              items={dumbbellItems}
             />
           </div>
+        </section>
 
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)]">
-            <span>Vertical line marks active county or state median</span>
-            <span>State Median: <strong className="text-[var(--text)] num">{formatMetricVal(stateMedianVal)}</strong></span>
+        {/* Panel 3: Distribution Histogram across Counties (c-6) */}
+        <section className="panel c-6" style={{ gridColumn: 'span 6' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Distribution across counties</h3>
+              <div className="sub" id="sd-hist-sub">
+                {activeMetricMeta.label}, {stateCounties.length} counties in {selectedStateMeta?.name}
+              </div>
+            </div>
+          </div>
+          <div style={{ height: '220px', marginTop: '10px' }}>
+            <HistogramChart
+              values={stateCountyValues}
+              mark={selectedCounty ? metricVal(selectedCounty, activeMetricKey) : stateStats.median}
+              markLabel={selectedCounty ? `${selectedCounty.name}` : `${selectedStateMeta?.abbr} Median`}
+              height={220}
+              unit="%"
+            />
           </div>
         </section>
 
-        {/* Col 6: Counties with the Greatest Need (Ranked Table) */}
-        <section className="lg:col-span-6 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="pb-3 border-b border-[var(--line)]">
-            <h3 className="text-base font-bold text-[var(--text)]">Counties with Greatest Need</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              {metricMeta.label}, ranked within {currentState.name}. National median {formatMetricVal(nationalMedianVal)}
-            </p>
+        {/* Panel 4: Counties with Greatest Need Ranked Table (c-6) */}
+        <section className="panel c-6" style={{ gridColumn: 'span 6' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Counties with the greatest need</h3>
+              <div className="sub" id="sd-top-sub">
+                {activeMetricMeta.label}, ranked within {selectedStateMeta?.name}. National median {nationalStats.median.toFixed(1)}%
+              </div>
+            </div>
           </div>
-
-          <div className="my-3 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface-solid)]">
-            <table className="w-full text-left text-[12.5px]">
-              <thead className="bg-[var(--surface-2)] text-[10.5px] font-bold text-[var(--faint)] uppercase border-b border-[var(--line)]">
+          <div className="tbl-wrap" style={{ marginTop: '10px', maxHeight: '220px', overflowY: 'auto' }}>
+            <table className="tbl">
+              <thead>
                 <tr>
-                  <th className="p-3">County</th>
-                  <th className="p-3 text-right">Value</th>
-                  <th className="p-3 text-right">Population</th>
-                  <th className="p-3 text-right">Action</th>
+                  <th style={{ width: '40px' }}>Rank</th>
+                  <th>County</th>
+                  <th className="r">Population</th>
+                  <th className="r">{activeMetricMeta.short}</th>
+                  <th className="r">SVI</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--line)]">
-                {greatestNeedCounties.map((c) => {
-                  const val = (c.indicators as any)[activeMetric] ?? 0;
-                  const isSelected = c.id === selectedCountyId;
-
-                  return (
-                    <tr
-                      key={c.id}
-                      onClick={() => setSelectedCountyId(c.id)}
-                      className={`cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'bg-[var(--glow)]/80 text-[var(--text)] font-semibold'
-                          : 'hover:bg-[var(--surface-2)] text-[var(--text)]'
-                      }`}
-                    >
-                      <td className="p-3 font-bold">{c.name}</td>
-                      <td className="p-3 text-right num font-semibold text-[var(--rose)]">
-                        {formatMetricVal(val)}
-                      </td>
-                      <td className="p-3 text-right num text-[var(--muted)]">
-                        {c.pop.toLocaleString()}
-                      </td>
-                      <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                        <Link
-                          href={`/health-map?county=${c.id}`}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--surface-2)] hover:bg-[var(--cyan)] hover:text-white border border-[var(--line)] text-[11px] font-bold text-[var(--text)] transition-colors shadow-xs"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Map</span>
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
+              <tbody>
+                {rankedCounties.slice(0, 8).map((c: any, i: number) => (
+                  <tr
+                    key={c.id}
+                    className={`clickable ${c.id === selectedCountyId ? 'sel' : ''}`}
+                    onClick={() => setSelectedCountyId(c.id)}
+                  >
+                    <td className="num" style={{ fontWeight: 600, color: 'var(--muted)' }}>#{i + 1}</td>
+                    <td><b>{c.name} County</b></td>
+                    <td className="r num">{(c.pop || 0).toLocaleString()}</td>
+                    <td className="r num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
+                      {metricVal(c, activeMetricKey).toFixed(1)}%
+                    </td>
+                    <td className="r num">{(c.svi || 0).toFixed(2)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-
-          <div className="pt-2 border-t border-[var(--line)] text-[11px] text-[var(--faint)] flex items-center justify-between">
-            <span>Click any row to inspect on the state map and histogram</span>
-            <span className="text-[var(--cyan)] font-semibold">Live CDC/ACS Indicators</span>
-          </div>
         </section>
       </div>
-    </div>
+    </>
   );
 }
 

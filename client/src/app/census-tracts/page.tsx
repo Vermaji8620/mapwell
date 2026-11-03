@@ -21,6 +21,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import Link from 'next/link';
+import { Icon } from '@/components/Icons';
 import { useSearchParams } from 'next/navigation';
 import { CensusTractMap } from '@/components/CensusTractMap';
 import { GroupedBarChart } from '@/components/GroupedBarChart';
@@ -369,681 +370,433 @@ function CensusTractsContent() {
   }, [comparedTracts]);
 
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
+    <>
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-[200] px-4 py-2.5 rounded-xl bg-[var(--surface-solid)] border border-[var(--cyan)] shadow-2xl text-[12.5px] font-bold text-[var(--cyan)] flex items-center gap-2 animate-in slide-in-from-bottom-3">
-          <Check className="w-4 h-4" />
+        <div className="toast" role="status" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 200 }}>
+          <span className="ic"><Icon name="check" size={15} /></span>
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Screen Header & Top Action Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Page Header */}
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Census Tract Explorer
-          </h1>
-          <p className="text-[13px] text-[var(--muted)] mt-0.5">
-            Search, filter and compare tracts. Selecting a tract updates the map, the details panel and the comparison set.
-          </p>
+          <h1>Census tract explorer</h1>
+          <p>Explore community vulnerability, poverty, healthcare access and chronic disease by census tract.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs transition-all"
-          >
-            <Download className="w-4 h-4 text-[var(--cyan)]" />
+        <div className="head-actions">
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
+          <button className="btn" id="ct-exp" onClick={handleExportCSV}>
+            <Icon name="download" size={14} />
             <span>Export CSV</span>
           </button>
-          <Link
-            href={`/health-map?county=${currentCountyId}&tract=${selectedTractId || ''}`}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-[12.5px] font-bold text-white shadow-md transition-all"
-          >
-            <MapPin className="w-4 h-4" />
-            <span>View on Health Map</span>
+          <Link href={`/health-map?county=${currentCountyId}`} className="btn primary">
+            <Icon name="map" size={14} />
+            <span>Open in health map</span>
           </Link>
         </div>
       </div>
 
-      {/* Main 12-Column Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (Col 8): Search, Filters, & Sortable Data Table */}
-        <section className="lg:col-span-8 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          {/* Filter Bar Controls */}
-          <div className="flex flex-col md:flex-row md:items-end gap-3 pb-4 border-b border-[var(--line)]">
-            {/* County Selector Dropdown */}
-            <div className="w-full md:w-56">
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                County Jurisdiction
-              </label>
-              <select
-                value={currentCountyId}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setCurrentCountyId(val);
-                  setActiveJurisdiction(val);
-                }}
-                className="w-full h-9 px-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12px] font-bold text-[var(--text)] outline-none focus:border-[var(--cyan)]"
-              >
-                {jurisdictions.map(j => (
-                  <option key={j._id} value={j._id}>
-                    {j.name}, {j.stateAbbr}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Real-time Search Tracts input */}
-            <div className="flex-1 min-w-[200px]">
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                Search Tracts
-              </label>
-              <div className="relative flex items-center">
-                <Search className="w-3.5 h-3.5 text-[var(--faint)] absolute left-3 pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Tract number or 11-digit GEOID..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full h-9 pl-9 pr-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12px] text-[var(--text)] outline-none focus:border-[var(--cyan)]"
-                />
-              </div>
-            </div>
-
-            {/* Vulnerability Tier Filter Chips */}
-            <div>
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                Vulnerability Tier
-              </label>
-              <div className="flex items-center gap-1">
-                {TIER_LABELS.map((label, idx) => (
-                  <button
-                    key={label}
-                    onClick={() => toggleTierFilter(idx)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition-all ${
-                      selectedTiers.has(idx)
-                        ? 'border-[var(--cyan)] bg-[var(--glow)] text-[var(--cyan)] shadow-xs'
-                        : 'border-[var(--line)] bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: TIER_COLORS[idx] }} />
-                    <span className="hidden sm:inline">{label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+      {/* Filter and Search Toolbar */}
+      <div className="toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', flex: 1 }}>
+          {/* County select */}
+          <div className="field">
+            <select
+              id="ct-county"
+              className="input"
+              value={currentCountyId}
+              onChange={(e) => setCurrentCountyId(e.target.value)}
+              style={{ height: '36px', borderRadius: '10px', padding: '0 10px', fontSize: '12.5px', background: 'var(--surface-solid)' }}
+            >
+              {jurisdictions.map((c) => (
+                <option key={c._id} value={c._id}>
+                  {c.name}, {c.stateAbbr}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Census Tracts Table with Custom Scroll Area */}
-          <div className="my-3 overflow-x-auto max-h-[460px] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface-solid)]">
-            <table className="w-full text-left text-[12.5px] border-collapse">
-              <thead className="sticky top-0 z-10 bg-[var(--surface-2)] border-b border-[var(--line-strong)] text-[11px] font-bold text-[var(--faint)] uppercase">
+          {/* Search Input */}
+          <div className="search" style={{ minWidth: '220px', maxWidth: '300px' }}>
+            <Icon name="search" size={14} />
+            <input
+              id="ct-q"
+              placeholder="Search by tract or GEOID…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          {/* Tier filter chips */}
+          <div className="chips" id="ct-tier">
+            {[0, 1, 2, 3, 4].map((tierIdx) => (
+              <button
+                key={tierIdx}
+                className={`chip ${selectedTiers.has(tierIdx) ? 'on' : ''}`}
+                onClick={() => toggleTierFilter(tierIdx)}
+              >
+                <i
+                  className="tier"
+                  style={{
+                    background: TIER_COLORS[tierIdx],
+                    width: '7px',
+                    height: '7px',
+                    borderRadius: '50%',
+                    display: 'inline-block',
+                    marginRight: '5px'
+                  }}
+                />
+                {TIER_LABELS[tierIdx]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <span id="ct-count" style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 500 }}>
+          {filteredTracts.length} of {tracts.length} tracts in {currentCounty?.name || 'King County'}
+        </span>
+      </div>
+
+      {/* Main Grid: Table (c-8) and Side Inspector (c-4) */}
+      <div className="grid g-12" style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '16px' }}>
+        {/* Left Column: Tracts Table */}
+        <section className="panel c-8" style={{ gridColumn: 'span 8', padding: 0, overflow: 'hidden' }}>
+          <div className="tbl-wrap" style={{ maxHeight: '620px', overflowY: 'auto' }}>
+            <table className="tbl" id="ct-tbl">
+              <thead>
                 <tr>
-                  <th className="p-3 w-10 text-center">
-                    <span className="sr-only">Compare</span>
+                  <th style={{ width: '36px' }}></th>
+                  <th className={`sort ${sortKey === 'name' ? 'sorted' : ''}`} onClick={() => handleSort('name')}>
+                    Tract <Icon name="chev" size={12} />
                   </th>
-                  <th
-                    onClick={() => handleSort('name')}
-                    className="p-3 cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>Tract</span>
-                      {sortKey === 'name' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
+                  <th className={`r sort ${sortKey === 'population' ? 'sorted' : ''}`} onClick={() => handleSort('population')}>
+                    Population <Icon name="chev" size={12} />
                   </th>
-                  <th
-                    onClick={() => handleSort('population')}
-                    className="p-3 text-right cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Population</span>
-                      {sortKey === 'population' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
+                  <th className={`r sort ${sortKey === 'svi' ? 'sorted' : ''}`} onClick={() => handleSort('svi')}>
+                    Vulnerability <Icon name="chev" size={12} />
                   </th>
-                  <th
-                    onClick={() => handleSort('svi')}
-                    className="p-3 text-right cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Vulnerability</span>
-                      {sortKey === 'svi' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
+                  <th className={`r sort ${sortKey === 'poverty' ? 'sorted' : ''}`} onClick={() => handleSort('poverty')}>
+                    Poverty <Icon name="chev" size={12} />
                   </th>
-                  <th
-                    onClick={() => handleSort('poverty')}
-                    className="p-3 text-right cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Poverty</span>
-                      {sortKey === 'poverty' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
+                  <th className={`r sort ${sortKey === 'uninsured' ? 'sorted' : ''}`} onClick={() => handleSort('uninsured')}>
+                    Uninsured <Icon name="chev" size={12} />
                   </th>
-                  <th
-                    onClick={() => handleSort('uninsured')}
-                    className="p-3 text-right cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Uninsured</span>
-                      {sortKey === 'uninsured' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
+                  <th className={`r sort ${sortKey === 'diabetes' ? 'sorted' : ''}`} onClick={() => handleSort('diabetes')}>
+                    Diabetes <Icon name="chev" size={12} />
                   </th>
-                  <th
-                    onClick={() => handleSort('diabetes')}
-                    className="p-3 text-right cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Diabetes</span>
-                      {sortKey === 'diabetes' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort('access')}
-                    className="p-3 text-right cursor-pointer hover:text-[var(--text)] transition-colors select-none"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Access</span>
-                      {sortKey === 'access' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[var(--cyan)]" /> : <ArrowDown className="w-3 h-3 text-[var(--cyan)]" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-40" />
-                      )}
-                    </div>
+                  <th className={`r sort ${sortKey === 'access' ? 'sorted' : ''}`} onClick={() => handleSort('access')}>
+                    Access <Icon name="chev" size={12} />
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--line)]">
-                {filteredTracts.length > 0 ? (
+              <tbody>
+                {filteredTracts.length === 0 ? (
+                  <tr>
+                    <td colSpan={8}>
+                      <div className="empty" style={{ padding: '32px', textAlign: 'center' }}>
+                        <b>No census tracts match this filter</b>
+                        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Try adjusting your search query or tier filters.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
                   filteredTracts.map((t) => {
-                    const isSelected = t._id === selectedTractId;
-                    const isCompared = compareIds.includes(t._id);
-                    const isFlagged = session?.flaggedTracts?.includes(t._id);
+                    const isSel = selectedTract?._id === t._id;
+                    const isCmp = session?.compareTracts?.includes(t._id);
+                    const isFlg = session?.flaggedTracts?.includes(t._id);
 
-                    const povVal = (t.indicators as any)?.poverty || 0;
-                    const uninsVal = (t.indicators as any)?.uninsured || 0;
-                    const diabVal = (t.indicators as any)?.diabetes || 0;
-                    const accessVal = (t.indicators as any)?.access || 0;
+                    const pov = (t.indicators as any)?.poverty || 0;
+                    const unin = (t.indicators as any)?.uninsured || 0;
+                    const diab = (t.indicators as any)?.diabetes || 0;
+                    const acc = (t.indicators as any)?.accessScore || 50;
 
                     return (
                       <tr
                         key={t._id}
+                        className={`clickable ${isSel ? 'sel' : ''}`}
                         onClick={() => setSelectedTractId(t._id)}
-                        className={`cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'bg-[var(--glow)]/80 text-[var(--text)] font-semibold'
-                            : 'hover:bg-[var(--surface-2)] text-[var(--text)]'
-                        }`}
                       >
-                        {/* Compare Checkbox */}
-                        <td
-                          className="p-3 text-center"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                        <td onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
-                            checked={isCompared}
+                            checked={!!isCmp}
                             onChange={() => toggleCompareTract(t._id)}
-                            className="w-4 h-4 rounded accent-[var(--cyan)] cursor-pointer"
+                            style={{ accentColor: 'var(--cyan)' }}
                             aria-label={`Compare ${t.name}`}
                           />
                         </td>
-
-                        {/* Tract Name & Flagged Tag */}
-                        <td className="p-3">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold">{t.name.replace('Census ', '')}</span>
-                            {isFlagged && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--rose)]/15 border border-[var(--rose)]/30 text-[10px] font-bold text-[var(--rose)]">
-                                <Flag className="w-2.5 h-2.5" />
-                                <span>Flagged</span>
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10.5px] text-[var(--faint)] font-mono">{t._id}</div>
+                        <td>
+                          <b>{t.name.replace('Census Tract ', 'Tract ')}</b>
+                          {isFlg && (
+                            <span className="pill bad" style={{ padding: '1px 5px', fontSize: '10px', marginLeft: '6px' }}>
+                              Flagged
+                            </span>
+                          )}
                         </td>
-
-                        {/* Population */}
-                        <td className="p-3 text-right num">
-                          {(t.population || 0).toLocaleString()}
-                        </td>
-
-                        {/* SVI Vulnerability with Tier Dot */}
-                        <td className="p-3 text-right">
-                          <div className="inline-flex items-center gap-1.5 num font-bold">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full"
-                              style={{ backgroundColor: TIER_COLORS[t.tier] }}
+                        <td className="r num">{(t.population || 0).toLocaleString()}</td>
+                        <td className="r">
+                          <span className="num">
+                            <i
+                              className="tier"
+                              style={{
+                                background: TIER_COLORS[t.tier],
+                                width: '7px',
+                                height: '7px',
+                                borderRadius: '50%',
+                                display: 'inline-block',
+                                marginRight: '6px'
+                              }}
                             />
-                            <span>{t.svi.toFixed(2)}</span>
-                          </div>
+                            {(t.svi || 0).toFixed(2)}
+                          </span>
                         </td>
-
-                        {/* Poverty Rate with Mini-bar */}
-                        <td className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <span className="num">{povVal.toFixed(1)}%</span>
-                            <div className="w-12 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden hidden sm:block">
-                              <div
-                                className="h-full bg-[var(--rose)] rounded-full"
-                                style={{ width: `${Math.min(100, (povVal / maxVals.poverty) * 100)}%` }}
-                              />
+                        <td className="r">
+                          <div className="bar-cell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                            <span className="num">{pov.toFixed(1)}%</span>
+                            <div style={{ width: '40px', height: '5px', background: 'var(--surface-2)', borderRadius: '2px', overflow: 'hidden' }}>
+                              <i style={{ display: 'block', height: '100%', width: `${Math.min(100, (pov / maxVals.poverty) * 100)}%`, background: 'var(--cyan)' }} />
                             </div>
                           </div>
                         </td>
-
-                        {/* Uninsured Rate with Mini-bar */}
-                        <td className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <span className="num">{uninsVal.toFixed(1)}%</span>
-                            <div className="w-12 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden hidden sm:block">
-                              <div
-                                className="h-full bg-[var(--amber)] rounded-full"
-                                style={{ width: `${Math.min(100, (uninsVal / maxVals.uninsured) * 100)}%` }}
-                              />
+                        <td className="r">
+                          <div className="bar-cell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                            <span className="num">{unin.toFixed(1)}%</span>
+                            <div style={{ width: '40px', height: '5px', background: 'var(--surface-2)', borderRadius: '2px', overflow: 'hidden' }}>
+                              <i style={{ display: 'block', height: '100%', width: `${Math.min(100, (unin / maxVals.uninsured) * 100)}%`, background: 'var(--teal)' }} />
                             </div>
                           </div>
                         </td>
-
-                        {/* Diabetes Prevalence with Mini-bar */}
-                        <td className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <span className="num">{diabVal.toFixed(1)}%</span>
-                            <div className="w-12 h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden hidden sm:block">
-                              <div
-                                className="h-full bg-[var(--violet)] rounded-full"
-                                style={{ width: `${Math.min(100, (diabVal / maxVals.diabetes) * 100)}%` }}
-                              />
+                        <td className="r">
+                          <div className="bar-cell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                            <span className="num">{diab.toFixed(1)}%</span>
+                            <div style={{ width: '40px', height: '5px', background: 'var(--surface-2)', borderRadius: '2px', overflow: 'hidden' }}>
+                              <i style={{ display: 'block', height: '100%', width: `${Math.min(100, (diab / maxVals.diabetes) * 100)}%`, background: 'var(--rose)' }} />
                             </div>
                           </div>
                         </td>
-
-                        {/* Access Score */}
-                        <td className="p-3 text-right num font-semibold">
-                          {accessVal.toFixed(0)}
-                        </td>
+                        <td className="r num">{acc.toFixed(0)}</td>
                       </tr>
                     );
                   })
-                ) : (
-                  <tr>
-                    <td colSpan={8} className="p-8 text-center text-[12px] text-[var(--muted)]">
-                      <div className="flex flex-col items-center gap-2">
-                        <AlertCircle className="w-5 h-5 text-[var(--faint)]" />
-                        <span>No census tracts match your current search or tier filters.</span>
-                      </div>
-                    </td>
-                  </tr>
                 )}
               </tbody>
             </table>
           </div>
-
-          {/* Table Footer Count & Help */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11.5px] text-[var(--muted)] pt-2 border-t border-[var(--line)]">
-            <span>
-              {filteredTracts.length} of {tracts.length} tracts in {currentCounty?.name || 'King County'}, {currentCounty?.stateAbbr}
-            </span>
-            <span className="text-[var(--faint)] mt-1 sm:mt-0">
-              Tick the box on any row to add to comparison set (up to 4).
-            </span>
-          </div>
         </section>
 
-        {/* Right Column (Col 4): Map Preview & Selected Tract Detail Card */}
-        <div className="lg:col-span-4 flex flex-col gap-6">
-          {/* Top Panel: Centered D3 County Vector Map Preview (290px) */}
-          <section className="rounded-2xl glass-panel p-0 overflow-hidden relative h-[290px] border border-[var(--line)]">
-            <CensusTractMap
-              countyFips={currentCountyId}
-              tracts={tracts}
-              selectedTractId={selectedTractId}
-              compareTractIds={compareIds}
-              onSelectTract={(t) => setSelectedTractId(t._id)}
-              onCountySelect={(cid) => {
-                setCurrentCountyId(cid);
-                setSelectedTractId(null);
-              }}
-              height={290}
-            />
+        {/* Right Column: Mini Map & Tract Detail (c-4) */}
+        <div className="c-4 stack" style={{ gridColumn: 'span 4', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <section className="panel" style={{ padding: 0, overflow: 'hidden', height: '280px', position: 'relative' }}>
+            <div id="ct-map-el" style={{ position: 'absolute', inset: 0 }}>
+              <CensusTractMap
+                countyFips={currentCountyId}
+                tracts={tracts}
+                selectedTractId={selectedTract?._id}
+                compareTractIds={session?.compareTracts || []}
+                onSelectTract={(t: any) => setSelectedTractId(t._id)}
+                height={280}
+              />
+            </div>
+            <div className="map-float legend" id="ct-leg" style={{ position: 'absolute', left: '10px', bottom: '10px' }}>
+              <div style={{ fontSize: '10.5px', color: 'var(--muted)', fontWeight: 600 }}>Tract vulnerability</div>
+              <div style={{ height: '6px', width: '130px', borderRadius: '3px', background: 'linear-gradient(90deg, #E4ECFA, #2584EB, #123A7D)', marginTop: '2px' }} />
+            </div>
           </section>
 
-          {/* Bottom Panel: Selected Tract Detail Card */}
-          <section className="rounded-2xl glass-panel p-5 flex flex-col justify-between flex-1">
+          <section className="panel" id="ct-detail" style={{ padding: '16px' }}>
             {selectedTract ? (
-              <div className="space-y-4">
-                <div className="flex items-start justify-between pb-3 border-b border-[var(--line)]">
+              <>
+                <div className="panel-h" style={{ marginBottom: '10px' }}>
                   <div>
-                    <h3 className="text-base font-bold text-[var(--text)]">{selectedTract.name}</h3>
-                    <div className="text-[11px] text-[var(--faint)] mt-0.5 font-mono">
-                      GEOID {selectedTract._id} • {(selectedTract.population || 0).toLocaleString()} residents
+                    <h3 style={{ fontSize: '16px' }}>{selectedTract.name}</h3>
+                    <div className="sub" style={{ fontSize: '11px' }}>
+                      GEOID {selectedTract._id} • {currentCounty?.name}
                     </div>
                   </div>
-                  <span
-                    className="px-2.5 py-1 rounded-full text-[11px] font-bold text-white shadow-xs"
-                    style={{ backgroundColor: TIER_COLORS[selectedTract.tier] }}
-                  >
-                    {TIER_LABELS[selectedTract.tier]}
-                  </span>
                 </div>
 
-                {/* Tract vs County Indicator Comparison Table */}
-                <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface-solid)] text-[12px]">
-                  <table className="w-full text-left">
-                    <thead className="bg-[var(--surface-2)] text-[10.5px] font-bold text-[var(--faint)] uppercase border-b border-[var(--line)]">
-                      <tr>
-                        <th className="p-2.5">Indicator</th>
-                        <th className="p-2.5 text-right">Tract</th>
-                        <th className="p-2.5 text-right">County</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--line)]">
-                      {[
-                        { key: 'svi', label: 'Vulnerability', bad: 'high', unit: '' },
-                        { key: 'poverty', label: 'Poverty Rate', bad: 'high', unit: '%' },
-                        { key: 'uninsured', label: 'Uninsured Rate', bad: 'high', unit: '%' },
-                        { key: 'noVehicle', label: 'No Vehicle', bad: 'high', unit: '%' },
-                        { key: 'diabetes', label: 'Diabetes', bad: 'high', unit: '%' },
-                        { key: 'asthma', label: 'Asthma', bad: 'high', unit: '%' },
-                        { key: 'lifeExp', label: 'Life Expectancy', bad: 'low', unit: ' yrs' }
-                      ].map(item => {
-                        const tv = (selectedTract.indicators as any)?.[item.key] ?? (selectedTract as any)[item.key] ?? 0;
-                        const cv = (currentCounty?.indicators as any)?.[item.key] ?? (currentCounty as any)?.[item.key] ?? (item.key === 'lifeExp' ? 80.5 : 12.0);
-                        const isWorse = item.bad === 'low' ? tv < cv : tv > cv;
-
-                        return (
-                          <tr key={item.key}>
-                            <td className="p-2.5 font-medium text-[var(--text)]">{item.label}</td>
-                            <td className={`p-2.5 text-right font-bold num ${isWorse ? 'text-[var(--rose)]' : 'text-[var(--teal)]'}`}>
-                              {typeof tv === 'number' ? (item.key === 'svi' ? tv.toFixed(2) : tv.toFixed(1)) : 'N/A'}{item.unit}
-                            </td>
-                            <td className="p-2.5 text-right num text-[var(--muted)]">
-                              {typeof cv === 'number' ? (item.key === 'svi' ? cv.toFixed(2) : cv.toFixed(1)) : 'N/A'}{item.unit}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Action Buttons: Compare, Flag, Add Finding */}
-                <div className="pt-2 space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => toggleCompareTract(selectedTract._id)}
-                      className={`py-2 px-3 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1.5 border transition-all ${
-                        compareIds.includes(selectedTract._id)
-                          ? 'bg-[var(--cyan)]/15 border-[var(--cyan)] text-[var(--cyan)]'
-                          : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--text)] hover:border-[var(--cyan)]'
-                      }`}
-                    >
-                      <Share2 className="w-3.5 h-3.5" />
-                      <span>{compareIds.includes(selectedTract._id) ? 'Remove Compare' : 'Compare'}</span>
-                    </button>
-
-                    <button
-                      onClick={() => toggleFlagTract(selectedTract._id)}
-                      className={`py-2 px-3 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1.5 border transition-all ${
-                        session?.flaggedTracts?.includes(selectedTract._id)
-                          ? 'bg-[var(--rose)]/15 border-[var(--rose)] text-[var(--rose)]'
-                          : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--text)] hover:border-[var(--rose)]'
-                      }`}
-                    >
-                      <Flag className="w-3.5 h-3.5" />
-                      <span>{session?.flaggedTracts?.includes(selectedTract._id) ? 'Flagged' : 'Flag Area'}</span>
-                    </button>
-                  </div>
-
-                  <button
-                    onClick={() => handleOpenFindingModal(selectedTract)}
-                    className="w-full py-2.5 px-4 rounded-xl bg-[var(--cyan)] text-white hover:opacity-90 text-[12.5px] font-bold flex items-center justify-center gap-2 shadow-xs transition-all"
-                  >
-                    <ClipboardList className="w-4 h-4" />
-                    <span>Add Finding to Assessment</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[12.5px] text-[var(--muted)]">
-                <MapPin className="w-6 h-6 text-[var(--faint)] mb-2" />
-                <span className="font-bold text-[var(--text)]">Select a Census Tract</span>
-                <span className="text-[11.5px] mt-1">Click any row in the table or polygon on the map to review details.</span>
-              </div>
-            )}
-          </section>
-        </div>
-      </div>
-
-      {/* Full-Width Bottom Section (Col 12): Tract Comparison Tray */}
-      <section className="rounded-2xl glass-panel p-5">
-        <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
-          <div>
-            <h3 className="text-base font-bold text-[var(--text)]">Tract Comparison Tray</h3>
-            <p className="text-[12px] text-[var(--muted)]">
-              {comparedTracts.length >= 2
-                ? `${comparedTracts.length} tracts compared side-by-side (values in %)`
-                : 'Select 2 to 4 tracts using the row checkboxes to evaluate inequities side-by-side.'}
-            </p>
-          </div>
-          {comparedTracts.length > 0 && (
-            <button
-              onClick={async () => {
-                await fetch('/api/session', {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ compareTracts: [] })
-                });
-                setComparedTracts([]);
-              }}
-              className="text-[12px] font-bold text-[var(--rose)] hover:underline flex items-center gap-1"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>Clear Comparison ({comparedTracts.length})</span>
-            </button>
-          )}
-        </div>
-
-        {comparedTracts.length >= 2 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
-            {/* D3 Multi-Bar Grouped Chart (Col 8) */}
-            <div className="lg:col-span-8 flex flex-col justify-between space-y-4">
-              <GroupedBarChart
-                categories={compareMetrics.map(m => m.label)}
-                series={comparedTracts.map((t, i) => ({
-                  name: t.name.replace('Census Tract ', 'Tract ').replace('Census ', ''),
-                  color: comparePalette[i % 4],
-                  values: compareMetrics.map(m => {
-                    const val = (t.indicators as any)?.[m.key] ?? (t as any)?.[m.key] ?? 0;
-                    return typeof val === 'number' ? val : parseFloat(val) || 0;
-                  })
-                }))}
-                height={250}
-              />
-
-              {/* Legend Row under the Graph */}
-              <div className="flex items-center gap-4 flex-wrap text-[12px] pt-3 border-t border-[var(--line)]">
-                {comparedTracts.map((t, i) => (
-                  <div key={t._id} className="flex items-center gap-1.5 font-bold text-[var(--text)]">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: comparePalette[i % 4] }} />
-                    <span>{t.name.replace('Census ', '')}, {currentCounty?.name || ''}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Life Expectancy Gap Summary Table & Insight Callout (Col 4) */}
-            <div className="lg:col-span-4 flex flex-col justify-between gap-4">
-              <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface-solid)] text-[12px]">
-                <table className="w-full text-left">
-                  <thead className="bg-[var(--surface-2)] text-[10.5px] font-bold text-[var(--faint)] uppercase border-b border-[var(--line)]">
+                <table className="tbl" style={{ fontSize: '12px' }}>
+                  <thead>
                     <tr>
-                      <th className="p-2.5">Tract</th>
-                      <th className="p-2.5 text-right">SVI</th>
-                      <th className="p-2.5 text-right">Life Exp.</th>
+                      <th>Indicator</th>
+                      <th className="r">Tract</th>
+                      <th className="r">County Avg</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[var(--line)]">
-                    {comparedTracts.map((t, i) => (
-                      <tr key={t._id}>
-                        <td className="p-2.5 font-bold flex items-center gap-1.5 text-[var(--text)]">
-                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: comparePalette[i % 4] }} />
-                          <span>{t.name.replace('Census Tract ', '')}</span>
-                        </td>
-                        <td className="p-2.5 text-right num font-semibold">{t.svi.toFixed(2)}</td>
-                        <td className="p-2.5 text-right num font-bold text-[var(--cyan)]">
-                          {((t.indicators as any)?.lifeExp || 78.5).toFixed(1)} yrs
-                        </td>
+                  <tbody>
+                    {[
+                      { key: 'svi', label: 'Vulnerability (SVI)', val: (selectedTract.svi || 0).toFixed(2), avg: '0.45' },
+                      { key: 'poverty', label: 'Poverty Rate', val: `${((selectedTract.indicators as any)?.poverty || 0).toFixed(1)}%`, avg: '11.8%' },
+                      { key: 'uninsured', label: 'Uninsured Rate', val: `${((selectedTract.indicators as any)?.uninsured || 0).toFixed(1)}%`, avg: '6.4%' },
+                      { key: 'diabetes', label: 'Diabetes', val: `${((selectedTract.indicators as any)?.diabetes || 0).toFixed(1)}%`, avg: '8.2%' },
+                      { key: 'access', label: 'Access Score', val: `${((selectedTract.indicators as any)?.accessScore || 50).toFixed(0)}`, avg: '65' }
+                    ].map((row) => (
+                      <tr key={row.key}>
+                        <td style={{ fontWeight: 600 }}>{row.label}</td>
+                        <td className="r num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>{row.val}</td>
+                        <td className="r num" style={{ color: 'var(--muted)' }}>{row.avg}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
 
-              {/* Automated Inequity & Gap Insight */}
-              {lifeExpGapInsight && (
-                <div className="p-4 rounded-xl bg-[var(--cyan)]/10 border border-[var(--cyan)]/30 text-[12.5px] leading-relaxed">
-                  <div className="flex items-center gap-1.5 font-bold text-[var(--cyan)] mb-1">
-                    <Sparkles className="w-4 h-4" />
-                    <span>Clinical Inequity Observation</span>
-                  </div>
-                  <p className="text-[var(--text)]">
-                    <strong className="text-[var(--cyan)]">{lifeExpGapInsight.mostName}</strong> carries the highest social vulnerability, with a life expectancy gap of{' '}
-                    <strong className="text-[var(--rose)]">{lifeExpGapInsight.gap} years</strong> compared to{' '}
-                    <strong>{lifeExpGapInsight.leastName}</strong>.
-                  </p>
-                  <span className="block text-[10.5px] text-[var(--faint)] mt-2">
-                    Computed dynamically from live census surveillance records.
-                  </span>
+                <div className="row mt" style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button
+                    className="btn sm"
+                    style={{ flex: 1, justifyContent: 'center' }}
+                    onClick={() => toggleCompareTract(selectedTract._id)}
+                  >
+                    <Icon name="compare" size={14} />
+                    <span>{session?.compareTracts?.includes(selectedTract._id) ? 'Remove compare' : 'Compare'}</span>
+                  </button>
+                  <button
+                    className="btn sm"
+                    style={{ flex: 1, justifyContent: 'center', color: session?.flaggedTracts?.includes(selectedTract._id) ? 'var(--rose)' : undefined }}
+                    onClick={() => toggleFlagTract(selectedTract._id)}
+                  >
+                    <Icon name="flag" size={14} />
+                    <span>{session?.flaggedTracts?.includes(selectedTract._id) ? 'Flagged' : 'Flag tract'}</span>
+                  </button>
                 </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="p-8 text-center text-[12.5px] text-[var(--muted)]">
-            <Share2 className="w-6 h-6 text-[var(--faint)] mx-auto mb-2" />
-            <div className="font-bold text-[var(--text)]">
-              {comparedTracts.length === 1 ? '1 Tract Selected' : 'No Tracts in Comparison Set'}
-            </div>
-            <p className="text-[11.5px] text-[var(--muted)] mt-1 max-w-md mx-auto">
-              Check the comparison checkbox on at least two tracts in the table above to generate multi-metric grouped charts and automated life expectancy gap insights.
-            </p>
-          </div>
-        )}
-      </section>
 
-      {/* Add Finding to Assessment Modal */}
-      {findingModalOpen && findingTract && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-lg rounded-2xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
-            <div className="flex items-start justify-between pb-3 border-b border-[var(--line)]">
+                <button
+                  className="btn primary mt-s"
+                  style={{ width: '100%', marginTop: '8px', justifyContent: 'center' }}
+                  onClick={() => handleOpenFindingModal(selectedTract)}
+                >
+                  <Icon name="clipboard" size={14} />
+                  <span>Add finding to assessment</span>
+                </button>
+              </>
+            ) : (
+              <div className="empty" style={{ textAlign: 'center', padding: '24px 0' }}>
+                <b>Select a tract</b>
+                <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Click a row in the table or a tract on the map.</span>
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Comparison Section (c-12) */}
+        {comparedTracts.length >= 2 && (
+          <section className="panel c-12" id="ct-cmp" style={{ gridColumn: 'span 12', padding: '18px' }}>
+            <div className="panel-h" style={{ marginBottom: '14px' }}>
               <div>
-                <h3 className="text-lg font-bold text-[var(--text)]">Add Finding to Assessment</h3>
-                <p className="text-[12px] text-[var(--muted)]">
-                  {findingTract.name} • GEOID {findingTract._id}
-                </p>
+                <h3>Tract comparison</h3>
+                <div className="sub">{comparedTracts.length} tracts compared side-by-side (values in %)</div>
               </div>
               <button
-                onClick={() => setFindingModalOpen(false)}
-                className="w-8 h-8 rounded-lg bg-[var(--surface-2)] flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)]"
+                className="btn sm"
+                onClick={() => {
+                  fetch('/api/session', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ compareTracts: [] })
+                  }).catch(() => {});
+                }}
               >
-                <X className="w-4 h-4" />
+                <span>Clear comparison</span>
               </button>
             </div>
 
-            {/* Tract Snapshot Indicators */}
-            <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-[var(--surface-2)] text-[11.5px]">
+            <div className="tbl-wrap">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Tract</th>
+                    <th className="r">Population</th>
+                    <th className="r">Vulnerability</th>
+                    <th className="r">Poverty</th>
+                    <th className="r">Uninsured</th>
+                    <th className="r">Diabetes</th>
+                    <th className="r">Access</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparedTracts.map((t) => (
+                    <tr key={t._id}>
+                      <td><b>{t.name}</b></td>
+                      <td className="r num">{(t.population || 0).toLocaleString()}</td>
+                      <td className="r num">{(t.svi || 0).toFixed(2)}</td>
+                      <td className="r num">{((t.indicators as any)?.poverty || 0).toFixed(1)}%</td>
+                      <td className="r num">{((t.indicators as any)?.uninsured || 0).toFixed(1)}%</td>
+                      <td className="r num">{((t.indicators as any)?.diabetes || 0).toFixed(1)}%</td>
+                      <td className="r num">{((t.indicators as any)?.accessScore || 50).toFixed(0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* Add Finding Modal */}
+      {findingModalOpen && findingTract && (
+        <div id="modal-root" className="open">
+          <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
+          <div className="modal" role="dialog" aria-modal="true" style={{ width: '480px', maxWidth: '90vw' }}>
+            <div className="modal-h">
               <div>
-                <span className="text-[var(--faint)] block">SVI Index</span>
-                <span className="font-bold text-[var(--text)] num">{findingTract.svi.toFixed(2)}</span>
+                <h3>Add Finding to Needs Assessment</h3>
+                <div className="sub">Tag a priority observation for {findingTract.name}</div>
               </div>
+              <button className="icon-btn" onClick={() => setFindingModalOpen(false)}>
+                <Icon name="x" size={16} />
+              </button>
+            </div>
+
+            <div className="modal-b" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
-                <span className="text-[var(--faint)] block">Poverty</span>
-                <span className="font-bold text-[var(--rose)] num">{((findingTract.indicators as any)?.poverty || 14.2).toFixed(1)}%</span>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                  Target Assessment
+                </label>
+                <select
+                  className="input"
+                  value={selectedAssessmentId}
+                  onChange={(e) => setSelectedAssessmentId(e.target.value)}
+                  style={{ width: '100%', height: '38px', borderRadius: '10px', padding: '0 10px', fontSize: '13px' }}
+                >
+                  <option value="new">+ Create New Assessment for {currentCounty?.name || 'this County'}</option>
+                  {assessmentsList.map((a) => (
+                    <option key={a._id} value={a._id}>
+                      {a.title} ({a.status})
+                    </option>
+                  ))}
+                </select>
               </div>
+
               <div>
-                <span className="text-[var(--faint)] block">Uninsured</span>
-                <span className="font-bold text-[var(--amber)] num">{((findingTract.indicators as any)?.uninsured || 8.6).toFixed(1)}%</span>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
+                  Finding Note & Observations
+                </label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  placeholder="Describe observed health disparity, service bottleneck, or intervention need..."
+                  value={findingNote}
+                  onChange={(e) => setFindingNote(e.target.value)}
+                  style={{ width: '100%', borderRadius: '10px', padding: '10px', fontSize: '13px', resize: 'vertical' }}
+                />
               </div>
             </div>
 
-            {/* Target Assessment Picker */}
-            <div>
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                Select Target Assessment
-              </label>
-              <select
-                value={selectedAssessmentId}
-                onChange={(e) => setSelectedAssessmentId(e.target.value)}
-                className="w-full h-10 px-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12.5px] font-bold text-[var(--text)] outline-none"
-              >
-                {assessmentsList.map(a => (
-                  <option key={a._id} value={a._id}>
-                    {a.title} ({a.status})
-                  </option>
-                ))}
-                <option value="__new">+ Create New Draft Assessment</option>
-              </select>
-            </div>
-
-            {/* Clinical Observation Finding Note */}
-            <div>
-              <label className="text-[11px] font-bold text-[var(--faint)] uppercase block mb-1">
-                Clinical Observation / Public Health Note
-              </label>
-              <textarea
-                rows={4}
-                value={findingNote}
-                onChange={(e) => setFindingNote(e.target.value)}
-                className="w-full p-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[12.5px] text-[var(--text)] outline-none focus:border-[var(--cyan)]"
-                placeholder="Enter detailed clinical observation..."
-              />
-            </div>
-
-            {/* Modal Footer Actions */}
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--line)]">
-              <button
-                onClick={() => setFindingModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-[12.5px] font-bold text-[var(--muted)] hover:text-[var(--text)]"
-              >
+            <div className="modal-f" style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button className="btn" onClick={() => setFindingModalOpen(false)}>
                 Cancel
               </button>
-              <button
-                onClick={handleSubmitFinding}
-                disabled={submittingFinding || !findingNote.trim()}
-                className="px-5 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 disabled:opacity-50 text-[12.5px] font-bold text-white shadow-md transition-all flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{submittingFinding ? 'Recording...' : 'Attach Finding'}</span>
+              <button className="btn primary" onClick={handleSubmitFinding} disabled={submittingFinding}>
+                {submittingFinding ? 'Saving...' : 'Save Finding'}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

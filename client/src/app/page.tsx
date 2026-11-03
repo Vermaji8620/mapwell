@@ -5,30 +5,9 @@ import { useSession } from '@/context/SessionContext';
 import { CensusTract, Assessment, Finding, Report } from '@/types';
 import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG, MAP_LAYERS, WORKFLOW_STEPS } from '@/config/metrics';
 import Link from 'next/link';
-import {
-  Grid,
-  MapPin,
-  Activity,
-  ClipboardList,
-  Flame,
-  ArrowRight,
-  ChevronRight,
-  TrendingUp,
-  FileText,
-  Clock,
-  Sparkles,
-  CheckCircle2,
-  Sliders,
-  Scale,
-  Flag,
-  FileSpreadsheet,
-  Layers,
-  Database
-} from 'lucide-react';
-
+import { Icon } from '@/components/Icons';
 import { MapViewCanvas, getMetricVal } from '@/components/MapViewCanvas';
 import { DashboardCoverageMap } from '@/components/DashboardCoverageMap';
-import { CountyRecord } from '@/utils/countyRepository';
 
 function formatRelativeTime(dateString?: string) {
   if (!dateString) return 'recently';
@@ -41,16 +20,14 @@ function formatRelativeTime(dateString?: string) {
   return `${Math.floor(diffDays / 30)} months ago`;
 }
 
-// 5 Assessment Pipeline Workflow Stages matching prototype
 const ASSESSMENT_PIPELINE = [
-  { step: 1, name: 'Scope & Jurisdiction', icon: MapPin },
-  { step: 2, name: 'Indicator Prioritization', icon: Sliders },
-  { step: 3, name: 'Disparity Analysis', icon: Scale },
-  { step: 4, name: 'Needs Tagging', icon: Flag },
-  { step: 5, name: 'Report & Presentation', icon: FileSpreadsheet }
+  { step: 1, name: 'Scope & Jurisdiction', icon: 'map' },
+  { step: 2, name: 'Indicator Prioritization', icon: 'sliders' },
+  { step: 3, name: 'Disparity Analysis', icon: 'scale' },
+  { step: 4, name: 'Needs Tagging', icon: 'flag' },
+  { step: 5, name: 'Report & Presentation', icon: 'file' }
 ];
 
-// Regional coverage data matching prototype
 const REGION_COVERAGE = [
   { name: 'Midwest', cov: 96.2, counties: 1055, color: '#2584EB' },
   { name: 'Northeast', cov: 98.4, counties: 217, color: '#66B6F5' },
@@ -58,7 +35,6 @@ const REGION_COVERAGE = [
   { name: 'West', cov: 97.1, counties: 446, color: '#9FE3E7' }
 ];
 
-// Recent data imports matching prototype
 const RECENT_DATA_IMPORTS = [
   {
     id: 'IMP-3391',
@@ -66,7 +42,6 @@ const RECENT_DATA_IMPORTS = [
     src: 'Census Bureau API',
     rows: '2,841,203 rows',
     status: 'Completed',
-    statusClass: 'bg-[var(--teal)]/15 text-[var(--teal)] border-[var(--teal)]/30',
     when: '2026-10-27 06:12'
   },
   {
@@ -75,7 +50,6 @@ const RECENT_DATA_IMPORTS = [
     src: 'File upload',
     rows: '72,337 rows',
     status: 'Warnings',
-    statusClass: 'bg-[var(--amber)]/15 text-[var(--amber)] border-[var(--amber)]/30',
     when: '2026-10-25 15:40'
   },
   {
@@ -84,7 +58,6 @@ const RECENT_DATA_IMPORTS = [
     src: 'State program registry',
     rows: '18,422 rows',
     status: 'Failed',
-    statusClass: 'bg-[var(--rose)]/15 text-[var(--rose)] border-[var(--rose)]/30',
     when: '2026-10-24 09:03'
   },
   {
@@ -93,446 +66,358 @@ const RECENT_DATA_IMPORTS = [
     src: 'Census Bureau',
     rows: '85,187 rows',
     status: 'Completed',
-    statusClass: 'bg-[var(--teal)]/15 text-[var(--teal)] border-[var(--teal)]/30',
     when: '2026-10-20 02:00'
   }
 ];
 
 export default function DashboardPage() {
-  const {
-    activeCounty,
-    setActiveJurisdiction,
-    markWorkflowMilestone,
-    trendYears,
-    session,
-    setWorkflowDrawerOpen
-  } = useSession();
+  const { activeCounty, session, trendYears, markWorkflowMilestone } = useSession();
 
   const [tracts, setTracts] = useState<CensusTract[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [trendMetric, setTrendMetric] = useState<string>('diabetes');
-  const [trendsData, setTrendsData] = useState<{
-    years: string[];
-    countyVals: number[];
-    stateVals: number[];
-  } | null>(null);
-  const [importsData, setImportsData] = useState<any[] | null>(null);
-  const [activeLayer, setActiveLayer] = useState<string>('sdoh');
-  const [dashboardHeatmap, setDashboardHeatmap] = useState<boolean>(true);
-  const [selectedTract, setSelectedTract] = useState<any | null>(null);
+  const [trendsData, setTrendsData] = useState<any>(null);
+  const [importsData, setImportsData] = useState<any[]>(RECENT_DATA_IMPORTS);
+  const [activeLayer, setActiveLayer] = useState<'sdoh' | 'disease' | 'program' | 'access'>('sdoh');
+  const [dashboardHeatmap, setDashboardHeatmap] = useState<boolean>(false);
+  const [selectedTract, setSelectedTract] = useState<CensusTract | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    markWorkflowMilestone('dash');
-  }, [markWorkflowMilestone]);
-
-  // Fetch live import logs from database
+  // Fetch real data imports from backend if available
   useEffect(() => {
     fetch('/api/data/imports')
-      .then(r => r.ok ? r.json() : [])
-      .then(logs => {
-        if (Array.isArray(logs) && logs.length > 0) {
-          const formatted = logs.slice(0, 4).map(l => ({
-            id: l._id || `IMP-${l.id}`,
-            name: l.name || l.dataset || 'Data Import',
-            src: l.source || 'Automated Sync',
-            rows: `${(l.rows || 0).toLocaleString()} rows`,
-            status: l.status || 'Completed',
-            statusClass: l.status === 'Failed'
-              ? 'bg-[var(--rose)]/15 text-[var(--rose)] border-[var(--rose)]/30'
-              : l.status === 'Completed with warnings' || l.status === 'Warnings'
-              ? 'bg-[var(--amber)]/15 text-[var(--amber)] border-[var(--amber)]/30'
-              : 'bg-[var(--teal)]/15 text-[var(--teal)] border-[var(--teal)]/30',
-            when: l.startedAt ? l.startedAt.slice(0, 16).replace('T', ' ') : 'Recent'
-          }));
-          setImportsData(formatted);
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data) && data.length > 0) {
+          setImportsData(data.slice(0, 4));
         }
       })
       .catch(() => {});
   }, []);
 
-  // Fetch live trends from analytics endpoint
+  // Fetch trend line data for active jurisdiction
   useEffect(() => {
     if (!activeCounty?._id) return;
     fetch(`/api/analytics/trends?metric=${trendMetric}&county=${activeCounty._id}&range=10`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data && data.years && data.series && data.series.length >= 2) {
-          setTrendsData({
-            years: data.years,
-            countyVals: data.series[0].values,
-            stateVals: data.series[1].values
-          });
-        } else {
-          setTrendsData(null);
-        }
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setTrendsData(data);
       })
-      .catch(() => setTrendsData(null));
-  }, [activeCounty?._id, trendMetric]);
+      .catch(() => {});
+  }, [activeCounty?._id, trendMetric, trendYears]);
 
-  // Fetch live data from endpoints
+  // Fetch core analytics data for active jurisdiction
   useEffect(() => {
-    if (!activeCounty) return;
-
+    if (!activeCounty?._id) return;
     setLoading(true);
-    setSelectedTract(null);
 
     Promise.all([
-      fetch(`/api/tracts?county=${activeCounty._id}`).then(r => r.ok ? r.json() : { data: [] }),
-      fetch(`/api/assessments?jurisdiction=${activeCounty._id}`).then(r => r.ok ? r.json() : []),
-      fetch(`/api/findings?jurisdiction=${activeCounty._id}`).then(r => r.ok ? r.json() : []),
-      fetch(`/api/reports?jurisdiction=${activeCounty._id}`).then(r => r.ok ? r.json() : [])
+      fetch(`/api/tracts?county=${activeCounty._id}`).then((r) => (r.ok ? r.json() : { data: [] })),
+      fetch(`/api/assessments?jurisdiction=${activeCounty._id}`).then((r) => (r.ok ? r.json() : [])),
+      fetch(`/api/findings?jurisdiction=${activeCounty._id}`).then((r) => (r.ok ? r.json() : [])),
+      fetch(`/api/reports?jurisdiction=${activeCounty._id}`).then((r) => (r.ok ? r.json() : []))
     ])
-      .then(([tractsRes, assessmentsRes, findingsRes, reportsRes]) => {
-        setTracts(tractsRes.data || []);
-        setAssessments(assessmentsRes || []);
-        setFindings(findingsRes || []);
-        setReports(reportsRes || []);
+      .then(([tRes, aRes, fRes, rRes]) => {
+        const rawTracts = Array.isArray(tRes) ? tRes : tRes.data || [];
+        setTracts(rawTracts);
+        setAssessments(Array.isArray(aRes) ? aRes : []);
+        setFindings(Array.isArray(fRes) ? fRes : []);
+        setReports(Array.isArray(rRes) ? rRes : []);
+        markWorkflowMilestone('dash');
       })
-      .catch(err => console.error('[Dashboard Fetch Error]:', err))
-      .finally(() => setLoading(false));
-  }, [activeCounty]);
+      .catch((err) => {
+        console.error('Failed to load dashboard data', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [activeCounty?._id, markWorkflowMilestone]);
 
-  // SVI Tier Distribution
-  const tiersCount = useMemo(() => {
-    return [0, 1, 2, 3, 4].map(tierIdx => tracts.filter(t => t.tier === tierIdx).length);
+  // Group tracts into 5 vulnerability tiers
+  const tierDistribution = useMemo(() => {
+    const counts = [0, 0, 0, 0, 0];
+    tracts.forEach((t) => {
+      const tier = t.tier !== undefined ? t.tier : Math.min(4, Math.floor((t.svi || 0) * 5));
+      counts[tier] = (counts[tier] || 0) + 1;
+    });
+    return counts;
   }, [tracts]);
 
-  const highNeedCount = tiersCount[3] + tiersCount[4];
-  const inReviewAssessments = assessments.filter(a => a.status === 'In review').length;
-  const inDraftAssessments = assessments.filter(a => a.status === 'Draft').length;
+  const highNeedCount = tierDistribution[3] + tierDistribution[4];
+  const activeAssessments = assessments.filter((a) => a.status !== 'Completed');
+  const inReviewCount = assessments.filter((a) => a.status === 'In review').length;
+  const inDraftCount = assessments.filter((a) => a.status === 'Draft').length;
 
-  // Program utilization
-  const programData = useMemo(() => [
-    { name: 'WIC Nutrition', key: 'wic', value: activeCounty?.prog?.wic || 74 },
-    { name: 'Immunization', key: 'imm', value: activeCounty?.prog?.imm || 82 },
-    { name: 'Diabetes Prevention (DPP)', key: 'dpp', value: activeCounty?.prog?.dpp || 46 },
-    { name: 'Tobacco Cessation', key: 'tob', value: activeCounty?.prog?.tob || 38 },
-    { name: 'Mobile Health Vans (MHV)', key: 'mhv', value: activeCounty?.prog?.mhv || 52 }
-  ], [activeCounty]);
+  const countyName = activeCounty?.name || 'King County';
+  const stateName = activeCounty?.stateName || activeCounty?.stateAbbr || 'Washington';
 
-  // Activity Feed
-  const activityItems = useMemo(() => [
-    ...findings.map(f => ({
-      id: f._id,
-      type: 'finding',
-      title: f.tractName ? `Finding on ${f.tractName}: ${f.note}` : `Finding: ${f.note}`,
-      time: f.addedDate || f.createdAt || '',
-      badge: 'Finding'
-    })),
-    ...reports.map(r => ({
-      id: r._id,
-      type: 'report',
-      title: `Report generated: ${r.title}`,
-      time: r.createdAt,
-      badge: r.status
-    })),
-    ...assessments.map(a => ({
-      id: a._id,
-      type: 'assessment',
-      title: `${a.title} (${a.status})`,
-      time: a.updatedAt || a.createdAt || a.due || '',
-      badge: 'CHNA'
-    }))
-  ]
-    .sort((a, b) => new Date(b.time || 0).getTime() - new Date(a.time || 0).getTime())
-    .slice(0, 4), [findings, reports, assessments]);
-
-  // Workflow steps counter
-  const completedSteps = Object.keys(session?.workflowMilestones || {}).filter(
-    k => session?.workflowMilestones?.[k]
-  ).length;
-
-  // Active Metric for map layer
-  const activeMetric = useMemo(() => {
-    if (activeLayer === 'disease') return 'incidence';
-    if (activeLayer === 'programs') return 'utilization';
-    if (activeLayer === 'access') return 'access';
-    return 'sdoh';
-  }, [activeLayer]);
-
-  // Tier groupings for Disparity Analysis Table
+  // Compute tier averages for the Disparity Table
   const tierAverages = useMemo(() => {
-    return [4, 3, 2, 1, 0].map(tierIdx => {
-      const tierTracts = tracts.filter(t => t.tier === tierIdx);
-      const tractCount = tierTracts.length;
-      const popSum = tierTracts.reduce((sum, t) => sum + (t.population || 2800), 0);
+    return [4, 3, 2, 1, 0].map((tierIdx) => {
+      const tierTracts = tracts.filter((t) => {
+        const tier = t.tier !== undefined ? t.tier : Math.min(4, Math.floor((t.svi || 0) * 5));
+        return tier === tierIdx;
+      });
 
-      // Diabetes average
-      const dmVals = tierTracts.map(t => getMetricVal(t, 'diabetes'));
-      const dmAvg = dmVals.length ? dmVals.reduce((a, b) => a + b, 0) / dmVals.length : (14.5 - tierIdx * 1.8);
-
-      // Uninsured average
-      const unVals = tierTracts.map(t => getMetricVal(t, 'uninsured'));
-      const unAvg = unVals.length ? unVals.reduce((a, b) => a + b, 0) / unVals.length : (16.2 - tierIdx * 2.2);
-
-      // Life expectancy average
-      const leVals = tierTracts.map(t => getMetricVal(t, 'lifeExp'));
-      const leAvg = leVals.length ? leVals.reduce((a, b) => a + b, 0) / leVals.length : (72.5 + tierIdx * 1.9);
+      const count = tierTracts.length;
+      const pop = tierTracts.reduce((sum, t) => sum + (t.population || 0), 0);
+      const diabetes =
+        count > 0 ? tierTracts.reduce((sum, t) => sum + (getMetricVal(t, 'diabetes') || 0), 0) / count : 12.0 + tierIdx * 1.5;
+      const uninsured =
+        count > 0 ? tierTracts.reduce((sum, t) => sum + (getMetricVal(t, 'uninsured') || 0), 0) / count : 5.0 + tierIdx * 2.2;
+      const lifeExp =
+        count > 0
+          ? tierTracts.reduce((sum, t) => sum + (t.indicators?.lifeExpectancy || 78.5 - tierIdx * 1.4), 0) / count
+          : 81.2 - tierIdx * 1.4;
 
       return {
         tierIdx,
         label: TIER_LABELS[tierIdx],
         color: TIER_COLORS[tierIdx],
-        count: tractCount,
-        population: popSum,
-        diabetes: dmAvg,
-        uninsured: unAvg,
-        lifeExp: leAvg
+        count,
+        pop,
+        diabetes,
+        uninsured,
+        lifeExp
       };
     });
   }, [tracts]);
 
-  // 10-year trend data comparison (County vs State average)
-  const trendComparison = useMemo(() => {
-    if (trendsData) return trendsData;
-
-    const years = ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
-    const baseVal = (activeCounty?.indicators as any)?.[trendMetric] ?? (trendMetric === 'diabetes' ? 10.5 : trendMetric === 'hypertension' ? 31.0 : 12.0);
-    const countyVals = years.map((_, i) => Math.max(2, parseFloat((baseVal * (0.88 + i * 0.014)).toFixed(1))));
-    const stateVals = years.map((_, i) => Math.max(2, parseFloat(((baseVal * 0.92) * (0.90 + i * 0.011)).toFixed(1))));
-    return { years, countyVals, stateVals };
-  }, [activeCounty, trendMetric, trendsData]);
+  // Program utilization items
+  const programs = [
+    { name: 'WIC Nutrition', rate: 71, target: 80, enrolled: '3,410' },
+    { name: 'Immunizations', rate: 84, target: 90, enrolled: '8,920' },
+    { name: 'Diabetes Prevention', rate: 58, target: 70, enrolled: '1,240' },
+    { name: 'Tobacco Cessation', rate: 42, target: 60, enrolled: '890' },
+    { name: 'Maternal Health', rate: 79, target: 85, enrolled: '2,150' }
+  ];
 
   return (
-    <div className="space-y-6 pb-20 animate-in fade-in duration-300">
-      {/* 1. Header with Title and Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <>
+      {/* Page Header */}
+      <div className="page-head">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text)] tracking-tight">
-            Community Health Dashboard
-          </h1>
-          <p className="text-[13.5px] text-[var(--muted)] mt-0.5">
-            Geographic health insights for smarter public health decisions in{' '}
-            <span className="font-bold text-[var(--text)]">
-              {activeCounty?.name || 'Cook County'}, {activeCounty?.stateAbbr || 'IL'}
-            </span>.
-          </p>
+          <h1>Community Health Dashboard</h1>
+          <p>Geographic health insights for smarter public health decisions.</p>
         </div>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full sm:w-auto">
-          {/* Layer 1: Synthetic demo badge */}
-          <div className="flex items-center">
-            <span className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-[var(--amber)]/10 text-[var(--amber)] border border-[var(--amber)]/25 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--amber)]" />
-              <span>Synthetic demo data</span>
-            </span>
-          </div>
-
-          {/* Layer 2: Action Buttons */}
-          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto">
-            <Link
-              href="/assessments"
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-[var(--line-strong)] bg-[var(--surface-solid)] text-[12px] sm:text-[12.5px] font-bold text-[var(--text)] hover:bg-[var(--surface-2)] shadow-xs transition-all text-center"
-            >
-              <ClipboardList className="w-4 h-4 text-[var(--violet)] flex-shrink-0" />
-              <span className="truncate">New assessment</span>
-            </Link>
-
-            <Link
-              href="/health-map"
-              className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 rounded-xl bg-[var(--cyan)] hover:opacity-90 text-[12px] sm:text-[12.5px] font-bold text-[#07111F] shadow-md transition-all text-center"
-            >
-              <MapPin className="w-4 h-4 flex-shrink-0" />
-              <span className="truncate">Open health map</span>
-            </Link>
-          </div>
+        <div className="head-actions">
+          <span className="pill demo">
+            <span className="dot"></span>Demo environment
+          </span>
+          <Link href="/assessments?new=1" className="btn">
+            <Icon name="plus" size={14} />
+            <span>New assessment</span>
+          </Link>
+          <Link href="/health-map" className="btn primary">
+            <Icon name="map" size={14} />
+            <span>Open health map</span>
+          </Link>
         </div>
       </div>
 
-      {/* 2. Top Metrics Strip (4 Ruled Cards matching prototype) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4 rounded-2xl glass-panel">
-        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
-          <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
-            <Grid className="w-4 h-4 text-[var(--cyan)]" />
-            <span>Census tracts analyzed</span>
+      {/* KPI Strip */}
+      <section className="strip">
+        <div className="strip-i">
+          <span className="m-ico">
+            <Icon name="grid" size={20} />
+          </span>
+          <div className="strip-l">Census tracts analyzed</div>
+          <div className="strip-v">
+            <span className="num">{tracts.length || 398}</span>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num">
-            {tracts.length}
-          </div>
-          <div className="text-[11.5px] text-[var(--cyan)] font-semibold mt-1 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-[var(--cyan)]" />
-            <span>{highNeedCount} high-need tracts in {activeCounty?.name || 'Cook County'}</span>
-          </div>
-        </div>
-
-        <div className="p-3 border-b sm:border-b-0 lg:border-r border-[var(--line)]">
-          <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
-            <MapPin className="w-4 h-4 text-[var(--teal)]" />
-            <span>Geographic coverage</span>
-          </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num">
-            3,142 <small className="text-sm font-normal text-[var(--muted)]">counties</small>
-          </div>
-          <div className="text-[11.5px] text-[var(--faint)] mt-1">
-            50 states and DC loaded
+          <div className="strip-f">
+            <span className="up-ok">{highNeedCount || 86}</span> high-need tracts in {countyName}
           </div>
         </div>
 
-        <div className="p-3 border-b sm:border-b-0 sm:border-r border-[var(--line)]">
-          <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
-            <Activity className="w-4 h-4 text-[var(--violet)]" />
-            <span>Health indicators</span>
+        <div className="strip-i">
+          <span className="m-ico t">
+            <Icon name="map" size={20} />
+          </span>
+          <div className="strip-l">Geographic coverage</div>
+          <div className="strip-v">
+            <span className="num">3,142</span>
+            <small> counties</small>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num">
-            28
-          </div>
-          <div className="text-[11.5px] text-[var(--faint)] mt-1">
-            Across 5 map layers
-          </div>
+          <div className="strip-f">50 states and DC loaded</div>
         </div>
 
-        <div className="p-3">
-          <div className="flex items-center gap-2 text-[12px] font-bold text-[var(--muted)]">
-            <ClipboardList className="w-4 h-4 text-[var(--amber)]" />
-            <span>Active assessments</span>
+        <div className="strip-i">
+          <span className="m-ico">
+            <Icon name="activity" size={20} />
+          </span>
+          <div className="strip-l">Health indicators</div>
+          <div className="strip-v">
+            <span className="num">24</span>
           </div>
-          <div className="text-3xl font-display font-bold text-[var(--text)] mt-1.5 num">
-            {assessments.length}
+          <div className="strip-f">Across 5 map layers</div>
+        </div>
+
+        <div className="strip-i">
+          <span className="m-ico t">
+            <Icon name="clipboard" size={20} />
+          </span>
+          <div className="strip-l">Active assessments</div>
+          <div className="strip-v">
+            <span className="num">{activeAssessments.length || 3}</span>
           </div>
-          <div className="text-[11.5px] text-[var(--teal)] font-semibold mt-1">
-            {inReviewAssessments} in review, {inDraftAssessments} in draft
+          <div className="strip-f">
+            {inReviewCount || 2} in review, {inDraftCount || 1} in draft
           </div>
         </div>
       </section>
 
-      {/* 3. Row 1: Interactive Health Map & Indicator Trends */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: Community Health Map (Col 7) */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between min-h-[470px]">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[var(--line)] gap-3">
+      {/* Main Dashboard Grid */}
+      <div className="dgrid">
+        {/* Panel 1: Community Health Map */}
+        <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Community Health Map</h3>
-              <p className="text-[12px] text-[var(--muted)]">
-                Census tracts in {activeCounty?.name || 'Cook County'}, {activeCounty?.stateAbbr || 'IL'}. Click a tract for details
-              </p>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Hotspot Toggle */}
-              <button
-                onClick={() => setDashboardHeatmap(!dashboardHeatmap)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${
-                  dashboardHeatmap
-                    ? 'bg-[var(--rose)]/15 border-[var(--rose)] text-[var(--rose)] shadow-xs'
-                    : 'border-[var(--line)] text-[var(--muted)] bg-[var(--surface-2)]'
-                }`}
-              >
-                <Flame className="w-3.5 h-3.5" />
-                <span>Hotspots {dashboardHeatmap ? 'ON' : 'OFF'}</span>
-              </button>
-
-              {/* Layer Selector */}
-              <div className="flex rounded-xl border border-[var(--line)] overflow-hidden text-[11px] font-bold bg-[var(--surface-2)]">
-                {['SDOH', 'Disease', 'Programs', 'Access'].map((l) => {
-                  const lId = l.toLowerCase();
-                  return (
-                    <button
-                      key={l}
-                      onClick={() => setActiveLayer(lId)}
-                      className={`px-3 py-1.5 transition-colors ${
-                        activeLayer === lId
-                          ? 'bg-[var(--cyan)] text-white shadow-xs'
-                          : 'text-[var(--muted)] hover:text-[var(--text)]'
-                      }`}
-                    >
-                      {l}
-                    </button>
-                  );
-                })}
+              <h3>Community Health Map</h3>
+              <div className="sub">
+                Census tracts in {countyName}, {activeCounty?.stateAbbr || 'WA'}. Click a tract for details
               </div>
+            </div>
+            <div className="seg" id="d-layer">
+              <button
+                className={activeLayer === 'sdoh' ? 'on' : ''}
+                onClick={() => setActiveLayer('sdoh')}
+              >
+                SDOH
+              </button>
+              <button
+                className={activeLayer === 'disease' ? 'on' : ''}
+                onClick={() => setActiveLayer('disease')}
+              >
+                Disease
+              </button>
+              <button
+                className={activeLayer === 'program' ? 'on' : ''}
+                onClick={() => setActiveLayer('program')}
+              >
+                Programs
+              </button>
+              <button
+                className={activeLayer === 'access' ? 'on' : ''}
+                onClick={() => setActiveLayer('access')}
+              >
+                Access
+              </button>
             </div>
           </div>
 
-          {/* Map View Canvas (with surrounding dimmed counties, hover highlight, and click-to-demonstrate) */}
-          <div className="my-3 h-[370px] w-full rounded-xl overflow-hidden relative border border-[var(--line)]">
-            <MapViewCanvas
-              countyFips={activeCounty?._id || '17031'}
-              tracts={tracts}
-              heatmap={dashboardHeatmap}
-              markers={true}
-              layer={activeLayer}
-              metric={activeMetric}
-              height={370}
-              onSelectTract={(t) => setSelectedTract(t)}
-              onSelectCounty={(c) => {
-                setActiveJurisdiction(c.id);
-              }}
-            />
+          <div style={{ position: 'relative', height: '400px', borderRadius: '14px', overflow: 'hidden' }}>
+            <div id="d-map" style={{ position: 'absolute', inset: 0 }}>
+              <MapViewCanvas
+                metric={
+                  activeLayer === 'sdoh'
+                    ? 'svi'
+                    : activeLayer === 'disease'
+                    ? 'diabetes'
+                    : activeLayer === 'program'
+                    ? 'utilization'
+                    : 'uninsured'
+                }
+                countyFips={activeCounty?._id || '53033'}
+                onSelectTract={(t: any) => setSelectedTract(t)}
+                selectedTractId={selectedTract?._id}
+              />
+            </div>
 
-            {/* Top-Right Floating Status Card */}
-            <div className="absolute top-3 right-3 max-w-[250px] p-3 rounded-xl bg-[#0c1427]/95 backdrop-blur-md border border-[rgba(255,255,255,0.18)] shadow-2xl text-[12px] text-white">
+            {/* Bottom-left Legend */}
+            <div
+              className="map-float legend"
+              style={{
+                position: 'absolute',
+                left: '12px',
+                bottom: '12px',
+                minWidth: '200px',
+                zIndex: 10
+              }}
+            >
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)', marginBottom: '4px' }}>
+                {activeLayer.toUpperCase()} Index (Tract Level)
+              </div>
+              <div
+                style={{
+                  height: '8px',
+                  borderRadius: '4px',
+                  background: 'linear-gradient(90deg, #E4ECFA, #2584EB, #123A7D)'
+                }}
+              />
+              <div
+                className="ends"
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginTop: '3px',
+                  fontSize: '10.5px',
+                  color: 'var(--faint)'
+                }}
+              >
+                <span>Lower need</span>
+                <span>Higher need</span>
+              </div>
+            </div>
+
+            {/* Top-right Callout */}
+            <div
+              className="map-float"
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: '12px',
+                padding: '10px 12px',
+                fontSize: '12px',
+                maxWidth: '220px',
+                zIndex: 10
+              }}
+              id="d-sel"
+            >
               {selectedTract ? (
                 <div>
-                  <b className="block text-[13px] text-white font-bold leading-tight">{selectedTract.name}</b>
-                  <div className="text-[11px] text-[rgba(255,255,255,0.6)] mt-0.5">
-                    {TIER_LABELS[selectedTract.tier]} vulnerability • {(selectedTract.pop || selectedTract.population || 0).toLocaleString()} residents
+                  <b style={{ display: 'block', fontSize: '13px' }}>{selectedTract.name}</b>
+                  <div className="note" style={{ color: 'var(--muted)', fontSize: '11.5px', margin: '3px 0 6px' }}>
+                    {TIER_LABELS[selectedTract.tier]} vulnerability. {(selectedTract.population || 0).toLocaleString()} residents
                   </div>
                   <Link
-                    href={`/census-tracts?county=${activeCounty?._id}&tract=${selectedTract.id || selectedTract._id}`}
-                    className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--cyan)] text-[#07111F] text-[11px] font-bold hover:opacity-90 shadow-md transition-all"
+                    href={`/census-tracts?county=${activeCounty?._id}&tract=${selectedTract._id}`}
+                    className="btn sm primary"
+                    style={{ fontSize: '11px', padding: '3px 8px', height: 'auto' }}
                   >
-                    <span>Open in tract explorer</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    Open in tract explorer
                   </Link>
                 </div>
               ) : (
                 <div>
-                  <b className="block text-[12.5px] text-white font-bold flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-[var(--rose)]" />
-                    <span>{highNeedCount} high vulnerability tracts</span>
-                  </b>
-                  <div className="text-[11px] text-[rgba(255,255,255,0.55)] mt-1">
-                    Highlighted with pulsing markers & outside region tap to switch county
+                  <b style={{ display: 'block', fontSize: '12.5px' }}>{highNeedCount || 86} high vulnerability tracts</b>
+                  <div className="note" style={{ color: 'var(--muted)', fontSize: '11.5px', marginTop: '2px' }}>
+                    Highlighted with markers
                   </div>
                 </div>
               )}
             </div>
-
-            {/* Bottom-Left Floating Legend */}
-            <div className="absolute bottom-3 left-3 px-3 py-2 rounded-xl bg-[#0c1427]/95 backdrop-blur-md border border-[rgba(255,255,255,0.18)] shadow-xl text-[11px] text-white min-w-[200px]">
-              <div className="font-bold text-white capitalize mb-1">
-                {METRICS_CONFIG[activeMetric]?.short || activeMetric} (Tracts in county)
-              </div>
-              <div className="flex h-2.5 rounded overflow-hidden mb-1">
-                {['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D'].map((c, i) => (
-                  <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
-                ))}
-              </div>
-              <div className="flex justify-between items-center text-[9.5px] text-[rgba(255,255,255,0.5)]">
-                <span>Lowest</span>
-                <span>Quantile bins</span>
-                <span>Highest</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)] text-[12px] text-[var(--muted)]">
-            <span>Tap outside region to focus neighbor county</span>
-            <div className="flex items-center gap-3">
-              {TIER_LABELS.map((lbl, idx) => (
-                <div key={lbl} className="flex items-center gap-1 text-[11px] text-[var(--muted)]">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: TIER_COLORS[idx] }} />
-                  <span className="hidden sm:inline">{lbl}</span>
-                </div>
-              ))}
-            </div>
           </div>
         </section>
 
-        {/* Right: Health Indicator Trends (Col 5) */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 2: Health Indicator Trends */}
+        <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Health Indicator Trends</h3>
-              <p className="text-[12px] text-[var(--muted)]">
-                10 Years surveillance • {activeCounty?.name || 'Cook County'} against {activeCounty?.stateName || 'Illinois'}
-              </p>
+              <h3>Health Indicator Trends</h3>
+              <div className="sub">
+                2016 – 2025. {countyName} against {stateName}
+              </div>
             </div>
             <select
+              className="input"
+              id="d-tk"
+              style={{ height: '34px', width: 'auto', borderRadius: '8px', padding: '0 8px', fontSize: '12px' }}
               value={trendMetric}
               onChange={(e) => setTrendMetric(e.target.value)}
-              className="text-[12px] font-bold px-2.5 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--text)] outline-none"
+              aria-label="Indicator"
             >
               <option value="diabetes">Diabetes</option>
               <option value="hypertension">Hypertension</option>
@@ -542,543 +427,619 @@ export default function DashboardPage() {
             </select>
           </div>
 
-          {/* Legend row */}
-          <div className="flex items-center gap-4 text-[12px] my-2">
-            <div className="flex items-center gap-1.5 font-bold text-[var(--text)]">
-              <span className="w-3 h-3 rounded-full bg-[var(--cyan)]" />
-              <span>{activeCounty?.name || 'Cook County'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[var(--muted)] font-semibold">
-              <span className="w-3 h-3 rounded-full bg-[var(--teal)]" />
-              <span>{activeCounty?.stateName || 'Illinois'} average</span>
-            </div>
+          <div className="legend-row" style={{ margin: '0 0 10px', display: 'flex', gap: '16px', fontSize: '12px' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <i style={{ width: '8px', height: '8px', background: 'var(--cyan)', borderRadius: '50%', display: 'inline-block' }} />
+              {countyName}
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <i style={{ width: '8px', height: '8px', background: 'var(--teal)', borderRadius: '50%', display: 'inline-block' }} />
+              {stateName} average
+            </span>
           </div>
 
-          {/* SVG Line Chart */}
-          <div className="my-2 h-[260px] w-full relative flex items-center justify-center">
-            <svg viewBox="0 0 440 220" className="w-full h-full overflow-visible">
+          {/* Inline SVG Multi-Series Trend Line Chart matching prototype */}
+          <div id="d-trend" style={{ height: '330px', position: 'relative' }}>
+            <svg viewBox="0 0 440 280" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
               <defs>
-                <linearGradient id="trendCyanFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--cyan)" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="var(--cyan)" stopOpacity="0.0" />
+                <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#0090C2" stopOpacity="0.22" />
+                  <stop offset="100%" stopColor="#0090C2" stopOpacity="0.0" />
                 </linearGradient>
               </defs>
 
-              {/* County Line & Area */}
-              {(() => {
-                const allVals = [...trendComparison.countyVals, ...trendComparison.stateVals];
-                const minRaw = Math.min(...allVals);
-                const maxRaw = Math.max(...allVals);
-                const yMin = Math.max(0, Math.floor(minRaw - 2));
-                const yMax = Math.ceil(maxRaw + 2);
-                const ySpan = Math.max(1, yMax - yMin);
-                const numSteps = Math.max(1, trendComparison.years.length - 1);
+              {/* Y Grid lines */}
+              {[40, 100, 160, 220].map((y, i) => (
+                <g key={y}>
+                  <line x1="36" y1={y} x2="420" y2={y} stroke="var(--line)" strokeDasharray="3 3" />
+                  <text x="30" y={y + 4} textAnchor="end" fontSize="10.5" fill="var(--faint)" fontFamily="var(--font-u)">
+                    {[16, 12, 8, 4][i]}%
+                  </text>
+                </g>
+              ))}
 
-                const pts = trendComparison.countyVals.map((v, i) => {
-                  const x = 50 + (i * 360) / numSteps;
-                  const y = 180 - ((Math.min(yMax, Math.max(yMin, v)) - yMin) / ySpan) * 160;
-                  return [x, y];
-                });
-                const dPath = pts.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'}${p[0]},${p[1]}`, '');
-                const areaPath = `${dPath} L${pts[pts.length - 1][0]},180 L${pts[0][0]},180 Z`;
-
-                const statePts = trendComparison.stateVals.map((v, i) => {
-                  const x = 50 + (i * 360) / numSteps;
-                  const y = 180 - ((Math.min(yMax, Math.max(yMin, v)) - yMin) / ySpan) * 160;
-                  return [x, y];
-                });
-                const statePath = statePts.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'}${p[0]},${p[1]}`, '');
-
-                const yTicks = [0, 1, 2, 3, 4].map(idx => {
-                  const val = yMax - (idx * ySpan) / 4;
-                  const y = 20 + idx * 40;
-                  return { val, y };
-                });
-
-                return (
-                  <g>
-                    {/* Dynamic Y Axis labels & grid lines */}
-                    {yTicks.map(tick => (
-                      <g key={tick.y}>
-                        <line
-                          x1="40"
-                          y1={tick.y}
-                          x2="420"
-                          y2={tick.y}
-                          stroke="rgba(255,255,255,0.08)"
-                          strokeWidth="1"
-                          strokeDasharray="4 4"
-                        />
-                        <text x="32" y={tick.y + 4} textAnchor="end" fill="var(--faint)" fontSize="10" className="num">
-                          {tick.val.toFixed(0)}%
-                        </text>
-                      </g>
-                    ))}
-
-                    <path d={areaPath} fill="url(#trendCyanFill)" />
-                    <path d={statePath} fill="none" stroke="var(--teal)" strokeWidth="2.4" strokeDasharray="5 3" />
-                    <path d={dPath} fill="none" stroke="var(--cyan)" strokeWidth="3" />
-                    {pts.map((p, i) => (
-                      <circle key={i} cx={p[0]} cy={p[1]} r="3.5" fill="var(--cyan)" stroke="#07111F" strokeWidth="2" />
-                    ))}
-                  </g>
-                );
-              })()}
-
-              {/* X Axis Years */}
-              {trendComparison.years.map((yr, i) => (
+              {/* X Axis years */}
+              {[2016, 2018, 2020, 2022, 2024, 2025].map((year, i) => (
                 <text
-                  key={yr}
-                  x={50 + (i * 360) / 9}
-                  y="204"
+                  key={year}
+                  x={50 + i * 70}
+                  y="250"
                   textAnchor="middle"
-                  fill="var(--faint)"
-                  fontSize="10"
-                  className="num"
+                  fontSize="10.5"
+                  fill="var(--muted)"
+                  fontFamily="var(--font-u)"
                 >
-                  {yr}
+                  {year}
                 </text>
+              ))}
+
+              {/* State baseline trendline (Teal dashed) */}
+              <path
+                d="M 50 170 Q 120 165, 190 155 T 330 148 T 400 142"
+                fill="none"
+                stroke="var(--teal)"
+                strokeWidth="2.2"
+                strokeDasharray="4 4"
+              />
+
+              {/* County Area Fill */}
+              <path
+                d="M 50 145 Q 120 135, 190 120 T 330 105 T 400 95 L 400 230 L 50 230 Z"
+                fill="url(#area-grad)"
+              />
+
+              {/* County Trendline (Cyan Solid) */}
+              <path
+                d="M 50 145 Q 120 135, 190 120 T 330 105 T 400 95"
+                fill="none"
+                stroke="var(--cyan)"
+                strokeWidth="2.8"
+                strokeLinecap="round"
+              />
+
+              {/* Key Data Point Dots */}
+              {[
+                { cx: 50, cy: 145, v: '9.2%' },
+                { cx: 190, cy: 120, v: '11.0%' },
+                { cx: 330, cy: 105, v: '12.4%' },
+                { cx: 400, cy: 95, v: '13.1%' }
+              ].map((pt, i) => (
+                <g key={i}>
+                  <circle cx={pt.cx} cy={pt.cy} r="4.5" fill="#fff" stroke="var(--cyan)" strokeWidth="2.5" />
+                  <text
+                    x={pt.cx}
+                    y={pt.cy - 10}
+                    textAnchor="middle"
+                    fontSize="11"
+                    fontWeight="700"
+                    fill="var(--text)"
+                    fontFamily="var(--font-u)"
+                  >
+                    {pt.v}
+                  </text>
+                </g>
               ))}
             </svg>
           </div>
-
-          <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-[12px] text-[var(--muted)]">
-            <span>Source: CDC BRFSS surveillance</span>
-            <Link href="/health-disparities" className="text-[var(--cyan)] font-bold hover:underline flex items-center gap-1">
-              <span>Disparity analysis</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
-          </div>
         </section>
-      </div>
 
-      {/* 4. Row 2: Vulnerability Donut, Program Bars, Recent Activity (3 Columns) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Card 1: Community Vulnerability Tiers Donut */}
-        <div className="rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 3: Community Vulnerability Tier Distribution */}
+        <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Community Vulnerability</h3>
-              <p className="text-[12px] text-[var(--muted)]">Tracts by vulnerability tier</p>
+              <h3>Community Vulnerability</h3>
+              <div className="sub">Tracts by vulnerability tier</div>
             </div>
-            <Link href="/census-tracts" className="text-[12px] font-bold text-[var(--cyan)] hover:underline flex items-center gap-1">
-              <span>View all</span>
-              <ChevronRight className="w-3.5 h-3.5" />
+            <Link href="/census-tracts" className="btn sm ghost">
+              View all <Icon name="chevr" size={12} />
             </Link>
           </div>
 
-          <div className="my-4 flex items-center gap-5">
-            {/* SVG Donut Visualizer */}
-            <div className="relative w-32 h-32 flex-shrink-0 flex items-center justify-center">
-              <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                {tiersCount.map((count, i) => {
-                  const total = Math.max(tracts.length, 1);
-                  const pct = count / total;
-                  const strokeLen = pct * 282.7;
-                  const prevPct = tiersCount.slice(0, i).reduce((sum, c) => sum + c / total, 0);
-                  const strokeOffset = -prevPct * 282.7;
+          <div className="row" style={{ flexWrap: 'nowrap', gap: '18px', alignItems: 'center', minHeight: '190px' }}>
+            {/* SVG Donut Chart */}
+            <div id="d-donut" style={{ width: '160px', height: '160px', flex: 'none', position: 'relative' }}>
+              <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
+                {(() => {
+                  const total = tracts.length || 398;
+                  let cumulative = 0;
+                  const c = 2 * Math.PI * 34; // r=34
 
-                  return (
-                    <circle
-                      key={i}
-                      cx="50"
-                      cy="50"
-                      r="40"
-                      fill="none"
-                      stroke={TIER_COLORS[i]}
-                      strokeWidth="14"
-                      strokeDasharray={`${strokeLen} 282.7`}
-                      strokeDashoffset={strokeOffset}
-                      className="transition-all duration-500"
-                    />
-                  );
-                })}
+                  return [4, 3, 2, 1, 0].map((tIdx) => {
+                    const cnt = tierDistribution[tIdx] || [36, 50, 110, 122, 80][tIdx];
+                    const frac = cnt / total;
+                    const strokeLen = frac * c;
+                    const offset = c - cumulative;
+                    cumulative += strokeLen;
+
+                    return (
+                      <circle
+                        key={tIdx}
+                        cx="50"
+                        cy="50"
+                        r="34"
+                        fill="none"
+                        stroke={TIER_COLORS[tIdx]}
+                        strokeWidth="15"
+                        strokeDasharray={`${strokeLen} ${c}`}
+                        strokeDashoffset={-offset}
+                      />
+                    );
+                  });
+                })()}
               </svg>
-              <div className="absolute text-center leading-tight">
-                <span className="block text-xl font-bold font-display text-[var(--text)] num">
-                  {tracts.length}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  pointerEvents: 'none'
+                }}
+              >
+                <span className="num" style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text)' }}>
+                  {tracts.length || 398}
                 </span>
-                <span className="text-[10px] text-[var(--faint)] font-bold uppercase">
-                  Tracts
-                </span>
+                <span style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 600 }}>TRACTS</span>
               </div>
             </div>
 
-            {/* Tier Breakdown Percentages */}
-            <div className="flex-1 space-y-1.5">
-              {[4, 3, 2, 1, 0].map(tierIdx => {
-                const count = tiersCount[tierIdx];
-                const pct = tracts.length ? Math.round((count / tracts.length) * 100) : 0;
+            {/* Tier Legend */}
+            <div className="dlegend" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {[4, 3, 2, 1, 0].map((tIdx) => {
+                const cnt = tierDistribution[tIdx] || [36, 50, 110, 122, 80][tIdx];
+                const pct = Math.round((cnt / (tracts.length || 398)) * 100);
+
                 return (
-                  <div key={tierIdx} className="flex items-center justify-between text-[11.5px]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: TIER_COLORS[tierIdx] }} />
-                      <span className="text-[var(--text)] font-semibold">{TIER_LABELS[tierIdx]}</span>
+                  <div
+                    key={tIdx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <i
+                        style={{
+                          width: '9px',
+                          height: '9px',
+                          background: TIER_COLORS[tIdx],
+                          borderRadius: '2px',
+                          display: 'inline-block'
+                        }}
+                      />
+                      <span style={{ color: 'var(--text)' }}>{TIER_LABELS[tIdx]}</span>
                     </div>
-                    <span className="font-bold text-[var(--muted)] num">{pct}%</span>
+                    <b className="num" style={{ color: 'var(--muted)' }}>
+                      {pct}%
+                    </b>
                   </div>
                 );
               })}
             </div>
           </div>
+        </section>
 
-          <div className="pt-2 text-[11.5px] text-[var(--faint)]">
-            CDC Social Vulnerability Index methodology
-          </div>
-        </div>
-
-        {/* Card 2: Program Utilization */}
-        <div className="rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 4: Program Utilization */}
+        <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Program Utilization</h3>
-              <p className="text-[12px] text-[var(--muted)]">Share of eligible residents enrolled</p>
+              <h3>Program Utilization</h3>
+              <div className="sub">Share of eligible residents enrolled</div>
             </div>
-            <Link href="/program-utilization" className="text-[12px] font-bold text-[var(--cyan)] hover:underline flex items-center gap-1">
-              <span>Details</span>
-              <ChevronRight className="w-3.5 h-3.5" />
+            <Link href="/program-utilization" className="btn sm ghost">
+              Details <Icon name="chevr" size={12} />
             </Link>
           </div>
 
-          <div className="my-4 space-y-3">
-            {programData.map((prog) => (
-              <div key={prog.key} className="space-y-1">
-                <div className="flex items-center justify-between text-[12px]">
-                  <span className="font-medium text-[var(--text)]">{prog.name}</span>
-                  <span className="font-bold text-[var(--cyan)] num">{prog.value}%</span>
+          <div id="d-prog" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+            {programs.map((p, i) => (
+              <div key={i} style={{ fontSize: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text)' }}>{p.name}</span>
+                  <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
+                    {p.rate}% <small style={{ color: 'var(--faint)', fontWeight: 400 }}>({p.enrolled})</small>
+                  </span>
                 </div>
-                <div className="h-2 w-full bg-[var(--surface-2)] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-[var(--teal)] to-[var(--cyan)] rounded-full transition-all duration-500"
-                    style={{ width: `${prog.value}%` }}
+                <div className="prog" style={{ height: '7px', background: 'var(--surface-2)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <i
+                    style={{
+                      display: 'block',
+                      height: '100%',
+                      width: `${p.rate}%`,
+                      background: p.rate >= p.target ? 'var(--teal)' : 'var(--cyan)',
+                      borderRadius: '4px'
+                    }}
                   />
                 </div>
               </div>
             ))}
           </div>
+        </section>
 
-          <div className="pt-2 text-[11.5px] text-[var(--faint)]">
-            Target benchmark: 80% community saturation
-          </div>
-        </div>
-
-        {/* Card 3: Recent Activity Feed */}
-        <div className="rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 5: Recent Assessment Activity */}
+        <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Recent Activity</h3>
-              <p className="text-[12px] text-[var(--muted)]">Live findings & assessments</p>
+              <h3>Recent Assessment Activity</h3>
             </div>
-            <Link href="/assessments" className="text-[12px] font-bold text-[var(--cyan)] hover:underline flex items-center gap-1">
-              <span>View all</span>
-              <ChevronRight className="w-3.5 h-3.5" />
+            <Link href="/assessments" className="btn sm ghost">
+              View all <Icon name="chevr" size={12} />
             </Link>
           </div>
 
-          <div className="my-3 space-y-2.5">
-            {activityItems.length > 0 ? (
-              activityItems.map((act) => (
-                <div key={act.id} className="flex items-start gap-2.5 p-2 rounded-xl bg-[var(--surface-2)]/60 text-[12px]">
-                  <FileText className="w-4 h-4 text-[var(--violet)] mt-0.5 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-[var(--text)] truncate">{act.title}</div>
-                    <div className="text-[10.5px] text-[var(--faint)] flex items-center gap-1 mt-0.5">
-                      <Clock className="w-3 h-3" />
-                      <span>{formatRelativeTime(act.time)}</span>
-                    </div>
-                  </div>
+          <div id="d-act" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {(assessments.length > 0 ? assessments.slice(0, 3) : [
+              { _id: '1', title: 'South County Health Disparities', status: 'In review', updatedAt: new Date().toISOString(), totalTracts: 42 },
+              { _id: '2', title: 'Eastside Maternal & Child Health', status: 'Draft', updatedAt: new Date().toISOString(), totalTracts: 28 },
+              { _id: '3', title: 'Downtown Chronic Disease Survey', status: 'Completed', updatedAt: new Date().toISOString(), totalTracts: 64 }
+            ]).map((a: any) => (
+              <Link
+                key={a._id}
+                href={`/assessments?id=${a._id}`}
+                className="act"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '10px 12px',
+                  borderRadius: '12px',
+                  background: 'var(--surface-2)',
+                  textDecoration: 'none',
+                  color: 'inherit',
+                  transition: 'background 0.2s'
+                }}
+              >
+                <span
+                  className="m-ico"
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    background: '#EAF4FF',
+                    color: 'var(--cyan)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flex: 'none'
+                  }}
+                >
+                  <Icon name="clipboard" size={16} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <b style={{ display: 'block', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {a.title}
+                  </b>
+                  <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                    {formatRelativeTime(a.updatedAt)} • {a.totalTracts || 35} tracts
+                  </small>
                 </div>
-              ))
-            ) : (
-              <div className="text-[12px] text-[var(--muted)] text-center py-6">
-                No recent activity recorded yet.
-              </div>
-            )}
+                <span
+                  className={`pill ${a.status === 'Completed' ? 'ok' : a.status === 'In review' ? 'info' : 'warn'}`}
+                  style={{ fontSize: '11px', flex: 'none' }}
+                >
+                  {a.status}
+                </span>
+              </Link>
+            ))}
           </div>
+        </section>
 
-          <div className="pt-3 border-t border-[var(--line)] flex items-center justify-between text-[11.5px] text-[var(--muted)]">
-            <span>Workflow: {completedSteps} / 10 steps</span>
-            <button
-              onClick={() => setWorkflowDrawerOpen(true)}
-              className="font-bold text-[var(--cyan)] hover:underline"
-            >
-              Checklist
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 5. Row 3: Health Disparity Analysis Table & Guided Analysis */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Table: Health Disparity Analysis (Col 7) */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 6: Health Disparity Analysis Table */}
+        <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Health Disparity Analysis</h3>
-              <p className="text-[12px] text-[var(--muted)]">Tract averages by vulnerability tier</p>
+              <h3>Health Disparity Analysis</h3>
+              <div className="sub">Tract averages by vulnerability tier</div>
             </div>
-            <Link
-              href="/health-disparities"
-              className="text-[12px] font-bold text-[var(--cyan)] hover:underline flex items-center gap-1"
-            >
-              <span>Open analysis</span>
-              <ChevronRight className="w-3.5 h-3.5" />
+            <Link href="/health-disparities" className="btn sm ghost">
+              Open analysis <Icon name="chevr" size={12} />
             </Link>
           </div>
 
-          <div className="my-3 overflow-x-auto">
-            <table className="w-full text-left text-[12px]">
+          <div className="tbl-wrap">
+            <table className="tbl">
               <thead>
-                <tr className="border-b border-[var(--line)] text-[var(--faint)] font-bold">
-                  <th className="py-2.5 pr-4">Vulnerability tier</th>
-                  <th className="py-2.5 px-3 text-right">Tracts</th>
-                  <th className="py-2.5 px-3 text-right">Residents</th>
-                  <th className="py-2.5 px-3">Diabetes</th>
-                  <th className="py-2.5 px-3 text-right">Uninsured</th>
-                  <th className="py-2.5 pl-3 text-right">Life exp.</th>
+                <tr>
+                  <th>Vulnerability tier</th>
+                  <th className="r">Tracts</th>
+                  <th className="r">Residents</th>
+                  <th>Diabetes</th>
+                  <th className="r">Uninsured</th>
+                  <th className="r">Life exp.</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--line)]/50">
-                {tierAverages.map((row) => (
-                  <tr key={row.tierIdx} className="hover:bg-[var(--surface-2)]/40 transition-colors">
-                    <td className="py-2.5 pr-4 flex items-center gap-2 font-semibold text-[var(--text)]">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
-                      <span>{row.label}</span>
+              <tbody>
+                {tierAverages.map((t) => (
+                  <tr key={t.tierIdx}>
+                    <td>
+                      <i
+                        className="tier"
+                        style={{
+                          width: '9px',
+                          height: '9px',
+                          borderRadius: '50%',
+                          display: 'inline-block',
+                          background: t.color,
+                          marginRight: '8px'
+                        }}
+                      />
+                      <span style={{ fontWeight: 600 }}>{t.label}</span>
                     </td>
-                    <td className="py-2.5 px-3 text-right num text-[var(--muted)] font-medium">
-                      {row.count}
-                    </td>
-                    <td className="py-2.5 px-3 text-right num font-semibold text-[var(--text)]">
-                      {Math.round(row.population / 1000)}k
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2 min-w-[120px]">
-                        <div className="flex-1 h-2 rounded-full bg-[var(--surface-2)] overflow-hidden">
-                          <div
-                            className="h-full bg-[var(--cyan)] rounded-full"
-                            style={{ width: `${Math.min(100, (row.diabetes / 18) * 100)}%` }}
+                    <td className="r num">{t.count}</td>
+                    <td className="r num">{(t.pop || 0).toLocaleString()}</td>
+                    <td>
+                      <div className="row" style={{ flexWrap: 'nowrap', gap: '10px', alignItems: 'center' }}>
+                        <div className="prog" style={{ flex: 1, minWidth: '60px', height: '6px', background: 'var(--surface-2)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <i
+                            style={{
+                              display: 'block',
+                              height: '100%',
+                              width: `${Math.min(100, (t.diabetes / 18) * 100)}%`,
+                              background: 'var(--cyan)'
+                            }}
                           />
                         </div>
-                        <span className="num font-bold text-[var(--text)] text-[11px] w-10 text-right">
-                          {row.diabetes.toFixed(1)}%
+                        <span className="num" style={{ width: '42px', fontSize: '12px' }}>
+                          {t.diabetes.toFixed(1)}%
                         </span>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 text-right num font-semibold text-[var(--muted)]">
-                      {row.uninsured.toFixed(1)}%
-                    </td>
-                    <td className="py-2.5 pl-3 text-right num font-bold text-[var(--text)]">
-                      {row.lifeExp.toFixed(1)}
-                    </td>
+                    <td className="r num">{t.uninsured.toFixed(1)}%</td>
+                    <td className="r num">{t.lifeExp.toFixed(1)} yrs</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-
-          <div className="pt-2 text-[11.5px] text-[var(--faint)]">
-            Based on active jurisdiction census tracts surveillance data
-          </div>
         </section>
 
-        {/* Guided Analysis Workflow (Col 5) */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 7: Guided Analysis Workflow */}
+        <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Guided Analysis</h3>
-              <p className="text-[12px] text-[var(--muted)]">From map selection to exported report</p>
+              <h3>Guided Analysis</h3>
+              <div className="sub">From map selection to exported report</div>
             </div>
-            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--cyan)]/15 text-[var(--cyan)] border border-[var(--cyan)]/30">
-              {completedSteps} of 10 steps
+            <span className="pill info" id="d-wfp">
+              Active
             </span>
           </div>
 
-          <div className="my-3 space-y-2.5">
+          <div id="d-wf" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {WORKFLOW_STEPS.slice(0, 4).map((step, idx) => {
               const isDone = !!session?.workflowMilestones?.[step.id];
+
               return (
                 <div
                   key={step.id}
-                  className="flex items-center justify-between p-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/40 hover:bg-[var(--surface-2)] transition-colors"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '8px 12px',
+                    borderRadius: '10px',
+                    background: isDone ? 'rgba(7, 154, 126, 0.08)' : 'var(--surface-2)',
+                    fontSize: '12.5px'
+                  }}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 ${
-                        isDone
-                          ? 'bg-[var(--teal)] text-[#07111F]'
-                          : 'bg-[var(--surface-solid)] border border-[var(--line-strong)] text-[var(--muted)]'
-                      }`}
-                    >
-                      {isDone ? <CheckCircle2 className="w-3.5 h-3.5" /> : idx + 1}
-                    </span>
-                    <div className="truncate">
-                      <b className="block text-[12.5px] font-bold text-[var(--text)] truncate">{step.title}</b>
-                      <small className="block text-[10.5px] text-[var(--faint)] truncate">{step.desc}</small>
-                    </div>
-                  </div>
-                  <Link
-                    href={step.route}
-                    className="ml-3 px-3 py-1 rounded-lg bg-[var(--surface-solid)] hover:bg-[var(--cyan)] hover:text-[#07111F] text-[11px] font-bold text-[var(--cyan)] border border-[var(--line)] transition-all flex-shrink-0"
+                  <span
+                    style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: isDone ? 'var(--teal)' : 'var(--surface-solid)',
+                      color: isDone ? '#fff' : 'var(--muted)',
+                      border: isDone ? 'none' : '1px solid var(--line-strong)',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      flex: 'none'
+                    }}
                   >
+                    {isDone ? '✓' : idx + 1}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b style={{ display: 'block', fontSize: '13px' }}>{step.title}</b>
+                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{step.desc}</small>
+                  </div>
+                  <Link href={step.route} className="btn sm ghost" style={{ padding: '2px 8px', height: '26px' }}>
                     Go
                   </Link>
                 </div>
               );
             })}
           </div>
+        </section>
 
-          {/* Progress Bar */}
-          <div className="pt-3 border-t border-[var(--line)]">
-            <div className="h-2 w-full bg-[var(--surface-2)] rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-[var(--teal)] to-[var(--cyan)] rounded-full transition-all duration-700"
-                style={{ width: `${Math.max(10, completedSteps * 10)}%` }}
-              />
+        {/* Panel 8: Community Needs Assessment Pipeline Stepper */}
+        <section className="panel" style={{ gridColumn: 'span 12' }}>
+          <div className="panel-h">
+            <div>
+              <h3>Community Needs Assessment Progress</h3>
+              <div className="sub">Assessments at each stage of the workflow</div>
             </div>
+            <span className="pill ok">
+              <span className="dot"></span>
+              {assessments.length || 3} assessments
+            </span>
+          </div>
+
+          <div className="pipe" style={{ display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>
+            {ASSESSMENT_PIPELINE.map((st, i) => {
+              const countAtStep = assessments.filter((a) => (a.status === 'Completed' ? 5 : a.step || 1) === st.step).length;
+
+              return (
+                <React.Fragment key={st.step}>
+                  {i > 0 && (
+                    <span
+                      className="pipe-a"
+                      style={{
+                        width: '18px',
+                        height: '2px',
+                        background: 'var(--line-strong)',
+                        flex: 'none'
+                      }}
+                    />
+                  )}
+                  <Link
+                    href="/assessments"
+                    className="pipe-s"
+                    style={{
+                      flex: 1,
+                      minWidth: '160px',
+                      padding: '14px',
+                      borderRadius: '12px',
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--line)',
+                      textDecoration: 'none',
+                      color: 'inherit',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}
+                  >
+                    <span
+                      className={`m-ico ${i % 2 === 1 ? 't' : ''}`}
+                      style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '8px',
+                        display: 'grid',
+                        placeItems: 'center',
+                        background: '#EAF4FF',
+                        color: 'var(--cyan)'
+                      }}
+                    >
+                      <Icon name={st.icon} size={16} />
+                    </span>
+                    <b style={{ fontSize: '13px', marginTop: '6px' }}>{st.name}</b>
+                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                      {countAtStep} {st.step === 5 ? 'completed' : 'active'}
+                    </small>
+                  </Link>
+                </React.Fragment>
+              );
+            })}
           </div>
         </section>
-      </div>
 
-      {/* 6. Row 4: Community Needs Assessment Progress Pipeline (Col 12) */}
-      <section className="rounded-2xl glass-panel p-5">
-        <div className="flex items-center justify-between pb-3 border-b border-[var(--line)] mb-4">
-          <div>
-            <h3 className="text-base font-bold text-[var(--text)]">Community Needs Assessment Progress</h3>
-            <p className="text-[12px] text-[var(--muted)]">Assessments at each stage of the workflow</p>
-          </div>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--teal)]/15 text-[var(--teal)] border border-[var(--teal)]/30 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--teal)]" />
-            <span>{assessments.length} assessments</span>
-          </span>
-        </div>
-
-        {/* 5 Stages Pipeline */}
-        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-          {ASSESSMENT_PIPELINE.map((stage) => {
-            const Icon = stage.icon;
-            const countInStage = assessments.filter(a => {
-              if (stage.step === 5) return a.status === 'Completed';
-              return (a.step ?? 1) === stage.step;
-            }).length;
-
-            return (
-              <Link
-                key={stage.step}
-                href="/assessments"
-                className="p-3.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/50 hover:border-[var(--cyan)] hover:bg-[var(--surface-2)] transition-all flex flex-col justify-between"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-7 h-7 rounded-lg bg-[var(--cyan)]/15 text-[var(--cyan)] flex items-center justify-center">
-                    <Icon className="w-4 h-4" />
-                  </div>
-                  <span className="text-[10px] font-bold text-[var(--faint)]">Stage {stage.step}</span>
-                </div>
-                <div>
-                  <b className="block text-[12.5px] font-bold text-[var(--text)] leading-tight">{stage.name}</b>
-                  <small className="block text-[11px] text-[var(--muted)] mt-1 font-semibold">
-                    {countInStage} {stage.step === 5 ? 'completed' : 'active'}
-                  </small>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 7. Row 5: Geographic Coverage & Recent Data Updates */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: Geographic Coverage (Col 7) */}
-        <section className="lg:col-span-7 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 9: Geographic Coverage */}
+        <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Geographic Coverage</h3>
-              <p className="text-[12px] text-[var(--muted)]">Share of tracts with complete indicator data, by state</p>
+              <h3>Geographic Coverage</h3>
+              <div className="sub">Share of tracts with complete indicator data, by state</div>
             </div>
-            <Link
-              href="/data-management"
-              className="text-[12px] font-bold text-[var(--cyan)] hover:underline flex items-center gap-1"
-            >
-              <span>Data quality</span>
-              <ChevronRight className="w-3.5 h-3.5" />
+            <Link href="/data-management" className="btn sm ghost">
+              Data quality <Icon name="chevr" size={12} />
             </Link>
           </div>
 
-          <div className="my-4 flex flex-col md:flex-row items-center gap-5">
-            {/* Real SVG US State Coverage Map with active jurisdiction & peer county pins */}
-            <div className="flex-1 w-full min-w-0">
-              <DashboardCoverageMap
-                activeCountyFips={activeCounty?._id || '17031'}
-                onSelectCounty={(c) => setActiveJurisdiction(c.id)}
-              />
+          <div className="row" style={{ flexWrap: 'nowrap', gap: '20px', alignItems: 'center' }}>
+            <div id="d-cov" style={{ flex: 1.6, minWidth: 0, height: '240px', position: 'relative' }}>
+              <DashboardCoverageMap />
             </div>
-
-            {/* Region breakdown list */}
-            <div className="w-full md:w-[210px] space-y-2 flex-shrink-0">
-              {REGION_COVERAGE.map((r) => (
-                <div key={r.name} className="p-2 rounded-xl bg-[var(--surface-2)]/60 border border-[var(--line)]/50 flex items-center justify-between text-[11.5px]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: r.color }} />
-                    <span className="font-semibold text-[var(--text)]">{r.name}</span>
+            <div style={{ flex: 1, minWidth: '150px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {REGION_COVERAGE.map((r, i) => (
+                <div
+                  key={i}
+                  className="reg-row"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '12.5px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <i
+                      style={{
+                        width: '8px',
+                        height: '8px',
+                        background: r.color,
+                        borderRadius: '50%',
+                        display: 'inline-block'
+                      }}
+                    />
+                    <span>{r.name}</span>
                   </div>
-                  <div className="text-right">
-                    <b className="num text-[var(--text)] font-bold">{r.cov}%</b>
-                    <small className="block text-[10px] text-[var(--faint)]">{r.counties.toLocaleString()} counties</small>
-                  </div>
+                  <span className="r num" style={{ fontWeight: 700, color: 'var(--text)' }}>
+                    {r.cov}% <small style={{ color: 'var(--muted)', fontWeight: 400 }}>({r.counties} counties)</small>
+                  </span>
                 </div>
               ))}
             </div>
           </div>
-
-          <div className="pt-2 text-[11.5px] text-[var(--faint)]">
-            Census ACS & CDC PLACES synchronized nightly
-          </div>
         </section>
 
-        {/* Right: Recent Data Updates (Col 5) */}
-        <section className="lg:col-span-5 rounded-2xl glass-panel p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+        {/* Panel 10: Recent Data Updates */}
+        <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
+          <div className="panel-h">
             <div>
-              <h3 className="text-base font-bold text-[var(--text)]">Recent Data Updates</h3>
-              <p className="text-[12px] text-[var(--muted)]">Automated ingest & verification logs</p>
+              <h3>Recent Data Updates</h3>
             </div>
-            <Link
-              href="/data-management"
-              className="text-[12px] font-bold text-[var(--cyan)] hover:underline flex items-center gap-1"
-            >
-              <span>View all</span>
-              <ChevronRight className="w-3.5 h-3.5" />
+            <Link href="/data-management" className="btn sm ghost">
+              View all <Icon name="chevr" size={12} />
             </Link>
           </div>
 
-          <div className="my-3 space-y-2.5">
-            {(importsData || RECENT_DATA_IMPORTS).map((imp) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {importsData.map((r) => (
               <div
-                key={imp.id}
-                className="p-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)]/50 flex flex-col gap-1.5 text-[12px]"
+                key={r.id || r._id}
+                className="act"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '10px 12px',
+                  borderRadius: '12px',
+                  background: 'var(--surface-2)'
+                }}
               >
-                <div className="min-w-0">
-                  <b className="block text-[12.5px] font-bold text-[var(--text)] leading-snug">{imp.name}</b>
-                  <small className="block text-[10.5px] text-[var(--faint)] mt-0.5">
-                    {imp.src} • {imp.rows} • {imp.when}
+                <span
+                  className={`m-ico ${r.status === 'Failed' ? '' : 't'}`}
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    background: r.status === 'Failed' ? '#FDECEE' : '#EAF4FF',
+                    color: r.status === 'Failed' ? 'var(--rose)' : 'var(--cyan)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flex: 'none'
+                  }}
+                >
+                  <Icon
+                    name={r.src?.includes('Census') ? 'cloud' : r.src?.includes('upload') ? 'upload' : 'server'}
+                    size={16}
+                  />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <b style={{ display: 'block', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.name}
+                  </b>
+                  <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                    {r.src}. {r.when || r.createdAt}
                   </small>
                 </div>
-                <div className="flex items-center pt-0.5">
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10.5px] font-bold border ${imp.statusClass}`}>
-                    {imp.status}
-                  </span>
-                </div>
+                <span
+                  className={`pill ${
+                    r.status === 'Completed' ? 'ok' : r.status === 'Failed' ? 'bad' : 'warn'
+                  }`}
+                  style={{ fontSize: '11px', flex: 'none' }}
+                >
+                  {r.status === 'Completed with warnings' ? 'Warnings' : r.status}
+                </span>
               </div>
             ))}
           </div>
-
-          <div className="pt-2 text-[11.5px] text-[var(--faint)] flex items-center justify-between">
-            <span>Next scheduled sync: 02:00 UTC</span>
-            <Link href="/data-management" className="text-[var(--cyan)] font-bold hover:underline">
-              Manage pipelines
-            </Link>
-          </div>
         </section>
       </div>
-    </div>
+    </>
   );
 }
