@@ -1,6 +1,15 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 dotenv.config();
+if (!process.env.MONGODB_URI) {
+  try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+  } catch (e) {}
+}
 
 let memoryServer = null;
 

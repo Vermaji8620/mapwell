@@ -1,7 +1,35 @@
 import express from 'express';
 import { Jurisdiction } from '../models/Jurisdiction.js';
+import { getAllCounties, getCountyFromFullDataset } from '../utils/countyDataHelper.js';
 
 const router = express.Router();
+
+/**
+ * POST /api/jurisdictions/seed-all
+ * Bulk seed all 3,142 US counties into MongoDB
+ */
+router.post('/seed-all', async (req, res, next) => {
+  try {
+    const allCounties = getAllCounties();
+    if (!allCounties || allCounties.length === 0) {
+      return res.status(500).json({ error: 'Counties dataset not loaded.' });
+    }
+
+    try {
+      await Jurisdiction.insertMany(allCounties, { ordered: false });
+    } catch (bulkErr) {
+      // E11000 duplicate keys are safely ignored when ordered: false
+    }
+
+    const finalCount = await Jurisdiction.countDocuments();
+    res.json({
+      message: `Database successfully seeded with full US jurisdiction dataset.`,
+      count: finalCount
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /api/jurisdictions
@@ -28,9 +56,24 @@ router.get('/', async (req, res, next) => {
       ];
     }
 
-    const jurisdictions = await Jurisdiction.find(filter)
+    let jurisdictions = await Jurisdiction.find(filter)
       .sort({ name: 1 })
       .lean();
+
+    // Auto-seed full 3,142 counties if currently containing partial seed
+    if (jurisdictions.length < 100 && !q && !state && !region) {
+      const allCounties = getAllCounties();
+      if (allCounties && allCounties.length > 0) {
+        try {
+          await Jurisdiction.insertMany(allCounties, { ordered: false });
+          jurisdictions = await Jurisdiction.find(filter)
+            .sort({ name: 1 })
+            .lean();
+        } catch (seedErr) {
+          // Ignore duplicates
+        }
+      }
+    }
 
     res.json({
       count: jurisdictions.length,
@@ -48,7 +91,19 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const county = await Jurisdiction.findById(id).lean();
+    let county = await Jurisdiction.findById(id).lean();
+
+    if (!county) {
+      const fullCounty = getCountyFromFullDataset(id);
+      if (fullCounty) {
+        try {
+          await Jurisdiction.create(fullCounty);
+        } catch (e) {
+          // Ignore duplicate
+        }
+        county = fullCounty;
+      }
+    }
 
     if (!county) {
       return res.status(404).json({ error: `Jurisdiction with FIPS '${id}' not found.` });

@@ -3,6 +3,8 @@ import { CensusTract } from '../models/CensusTract.js';
 import { Jurisdiction } from '../models/Jurisdiction.js';
 import { METRICS } from '../config/metrics.js';
 import { getMetricValue } from '../utils/mathAnalytics.js';
+import { generateTractsForCounty } from '../utils/tractGenerator.js';
+import { getCountyFromFullDataset } from '../utils/countyDataHelper.js';
 
 const router = express.Router();
 
@@ -39,9 +41,39 @@ router.get('/', async (req, res, next) => {
       ];
     }
 
-    const tracts = await CensusTract.find(filter)
+    let tracts = await CensusTract.find(filter)
       .sort({ svi: -1 })
       .lean();
+
+    // Auto-generate and persist to database if county is queried but has 0 tracts in MongoDB
+    if (county && tracts.length === 0) {
+      let countyDoc = await Jurisdiction.findById(county).lean();
+      if (!countyDoc) {
+        countyDoc = getCountyFromFullDataset(county);
+        if (countyDoc) {
+          try {
+            await Jurisdiction.create(countyDoc);
+          } catch (err) {
+            // Ignore if race condition
+          }
+        }
+      }
+
+      if (countyDoc) {
+        const generated = generateTractsForCounty(countyDoc);
+        if (generated.length > 0) {
+          try {
+            await CensusTract.insertMany(generated, { ordered: false });
+          } catch (err) {
+            // Ignore duplicate key warnings
+          }
+          // Re-query with original filter
+          tracts = await CensusTract.find(filter)
+            .sort({ svi: -1 })
+            .lean();
+        }
+      }
+    }
 
     res.json({
       count: tracts.length,
@@ -72,7 +104,23 @@ const handleCompare = async (req, res, next) => {
 
     // Limit to max 4
     const queryIds = tractIds.slice(0, 4);
-    const tracts = await CensusTract.find({ _id: { $in: queryIds } }).lean();
+    let tracts = await CensusTract.find({ _id: { $in: queryIds } }).lean();
+
+    // Auto-generate missing tracts if requested by ID
+    if (tracts.length < queryIds.length) {
+      const missingIds = queryIds.filter(id => !tracts.some(t => t._id === id));
+      const missingCounties = [...new Set(missingIds.map(id => id.slice(0, 5)))];
+      for (const cid of missingCounties) {
+        let countyDoc = await Jurisdiction.findById(cid).lean() || getCountyFromFullDataset(cid);
+        if (countyDoc) {
+          const gen = generateTractsForCounty(countyDoc);
+          try {
+            await CensusTract.insertMany(gen, { ordered: false });
+          } catch (e) {}
+        }
+      }
+      tracts = await CensusTract.find({ _id: { $in: queryIds } }).lean();
+    }
 
     if (tracts.length < 2) {
       return res.json({ tracts, lifeExpGap: null, matrix: [] });
@@ -134,7 +182,19 @@ router.post('/compare', handleCompare);
 router.get('/:geoid', async (req, res, next) => {
   try {
     const { geoid } = req.params;
-    const tract = await CensusTract.findById(geoid).lean();
+    let tract = await CensusTract.findById(geoid).lean();
+
+    if (!tract && geoid && geoid.length === 11) {
+      const cid = geoid.slice(0, 5);
+      let countyDoc = await Jurisdiction.findById(cid).lean() || getCountyFromFullDataset(cid);
+      if (countyDoc) {
+        const gen = generateTractsForCounty(countyDoc);
+        try {
+          await CensusTract.insertMany(gen, { ordered: false });
+        } catch (e) {}
+        tract = await CensusTract.findById(geoid).lean();
+      }
+    }
 
     if (!tract) {
       return res.status(404).json({ error: `Census tract '${geoid}' not found.` });
