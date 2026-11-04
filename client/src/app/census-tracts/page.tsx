@@ -68,8 +68,13 @@ function fmtInt(n: any): string {
 
 function countyLabel(c: any): string {
   if (!c) return '';
-  const abbr = c.stateAbbr || (c.state && c.state.abbr) || (c.st && STATE_META[c.st]?.[0]) || (c.stateFips && STATE_META[c.stateFips]?.[0]) || '';
-  return `${c.name}${abbr ? `, ${abbr}` : ''}`;
+  const st = c.st || c.stateFips || (c.id ? String(c.id).slice(0, 2) : '') || (c._id ? String(c._id).slice(0, 2) : '');
+  const abbr = c.stateAbbr || (c.state && c.state.abbr) || (st && STATE_META[st]?.[0]) || '';
+  let rawName = c.name || '';
+  if (!rawName.endsWith(' County') && !rawName.endsWith(' Parish') && !rawName.endsWith(' Borough')) {
+    rawName += st === '22' ? ' Parish' : st === '02' ? ' Borough' : ' County';
+  }
+  return `${rawName}${abbr ? `, ${abbr}` : ''}`;
 }
 
 function CensusTractsContent() {
@@ -148,15 +153,15 @@ function CensusTractsContent() {
       .then(res => {
         const data = res.data || [];
         setTracts(data);
-        if (!selectedTractId || !data.some((t: CensusTract) => (t._id || (t as any).id) === selectedTractId)) {
-          if (data.length > 0) {
-            setSelectedTractId(data[0]._id || (data[0] as any).id);
-          }
+        if (urlTract && data.some((t: CensusTract) => (t._id || (t as any).id) === urlTract)) {
+          setSelectedTractId(urlTract);
+        } else if (selectedTractId && !data.some((t: CensusTract) => (t._id || (t as any).id) === selectedTractId)) {
+          setSelectedTractId(null);
         }
       })
       .catch(err => console.error(err))
       .finally(() => setLoading(false));
-  }, [currentCountyId]);
+  }, [currentCountyId, urlTract]);
 
   // Load compared tracts records when compare set changes
   const compareIds = session?.compareTracts || [];
@@ -237,10 +242,20 @@ function CensusTractsContent() {
     }));
   }, [repo, currentCountyId, jurisdictions]);
 
-  // Selected tract object
+  // Selected tract object (prototype line 2120: null if not explicitly selected)
   const selectedTract = useMemo(() => {
-    return tracts.find(t => (t._id || (t as any).id) === selectedTractId) || tracts[0] || null;
+    if (!selectedTractId) return null;
+    return tracts.find(t => (t._id || (t as any).id) === selectedTractId) || null;
   }, [tracts, selectedTractId]);
+
+  // Dynamic tract vulnerability min/max for map legend (prototype line 2091 & legendHTML)
+  const tractExt = useMemo(() => {
+    if (tracts.length === 0) return ['0.01', '0.99'];
+    const svis = tracts.map(t => getV(t, 'svi'));
+    const lo = Math.min(...svis);
+    const hi = Math.max(...svis);
+    return [lo.toFixed(2), hi.toFixed(2)];
+  }, [tracts]);
 
   // Filtered and sorted tracts matching prototype rows() (prototype lines 2092-2094)
   const filteredTracts = useMemo(() => {
@@ -484,8 +499,8 @@ function CensusTractsContent() {
           </p>
         </div>
         <div className="head-actions">
-          <span className="pill demo">
-            <span className="dot" />Demo environment
+          <span className="pill demo" title="Synthetic values generated for this demo. Not real surveillance or Census data.">
+            <span className="dot" />Synthetic demo data
           </span>
           <button className="btn" id="ct-exp" onClick={handleExportCSV}>
             <Icon name="download" />
@@ -690,9 +705,9 @@ function CensusTractsContent() {
                 ))}
               </div>
               <div className="ends">
-                <span>0.04</span>
+                <span>{tractExt[0]}</span>
                 <span>Tiers</span>
-                <span>0.98</span>
+                <span>{tractExt[1]}</span>
               </div>
             </div>
           </section>
