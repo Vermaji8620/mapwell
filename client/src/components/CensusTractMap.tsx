@@ -16,6 +16,7 @@ export interface CensusTractMapProps {
   onSelectTract?: (tract: CensusTract) => void;
   onCountySelect?: (countyFips: string) => void;
   height?: number;
+  showLegend?: boolean;
 }
 
 // Official Vulnerability Layer Ramp matching local prototype (line 1085: layer 'vuln')
@@ -32,7 +33,8 @@ export function CensusTractMap({
   compareTractIds = [],
   onSelectTract,
   onCountySelect,
-  height = 290
+  height = 290,
+  showLegend = true
 }: CensusTractMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const switchCountyRef = useRef<((targetCid: string) => void) | null>(null);
@@ -592,7 +594,7 @@ export function CensusTractMap({
       </div>
 
       {/* Floating Legend (Bottom Left matching prototype) */}
-      {legendInfo && (
+      {showLegend && legendInfo && (
         <div className="absolute left-3 bottom-3 z-20 px-3 py-2 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-md text-[10.5px] min-w-[170px]">
           <span className="font-bold text-[var(--text)] block mb-1">{legendInfo.title}</span>
           <div className="flex h-2 rounded overflow-hidden mb-1">
