@@ -14,6 +14,7 @@ interface StateCountyMapProps {
   metric: string;
   layerId?: 'sdoh' | 'access';
   height?: number;
+  showControls?: boolean;
 }
 
 // Official SDOH & Healthcare Access Layer Color Ramps matching local prototype (lines 1081 & 1094-1104)
@@ -54,31 +55,14 @@ export function StateCountyMap({
   onClearCounty,
   metric,
   layerId = 'sdoh',
-  height = 490
+  height = 490,
+  showControls = false
 }: StateCountyMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const pathRef = useRef<d3.GeoPath<any, d3.GeoPermissibleObjects> | null>(null);
   const countiesRef = useRef<CountyRecord[]>([]);
-
-  const [tooltip, setTooltip] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    name: string;
-    metricLabel: string;
-    metricVal: string;
-    pop: string;
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    name: '',
-    metricLabel: '',
-    metricVal: '',
-    pop: ''
-  });
 
   // Initial render of SVG and state geometry
   useEffect(() => {
@@ -196,33 +180,39 @@ export function StateCountyMap({
         .attr('cursor', 'pointer')
         .attr('class', 'transition-colors duration-150 hover:brightness-125');
 
-      paths.on('pointerenter', (event, c: CountyRecord) => {
-        const cRect = container.getBoundingClientRect();
+      paths.on('pointerenter', (event: MouseEvent, c: CountyRecord) => {
         const val = (c.indicators as any)[metric] ?? 0;
         const formattedVal = meta.bad === 'low' && metric === 'income'
           ? `$${Math.round(val).toLocaleString()}`
           : `${val.toFixed(1)}${meta.unit || '%'}`;
-
-        setTooltip({
-          visible: true,
-          x: event.clientX - cRect.left + 12,
-          y: event.clientY - cRect.top - 12,
-          name: `${c.name} County, ${c.stateAbbr}`,
-          metricLabel: meta.short || meta.label,
-          metricVal: formattedVal,
-          pop: c.pop.toLocaleString()
-        });
+        const lbl = `${c.name} ${c.st === '22' ? 'Parish' : c.st === '02' ? 'Borough' : 'County'}, ${c.stateAbbr}`;
+        const html = `<b>${lbl}</b><div class="tv"><span>${meta.short || meta.label}</span><span>${formattedVal}</span></div><div class="tv"><span>Vulnerability</span><span>${(c.svi ?? 0).toFixed(2)}</span></div><div class="tv"><span>Population</span><span>${(c.pop || 0).toLocaleString()}</span></div><div class="note" style="margin-top:5px">Synthetic demo values</div>`;
+        const tip = document.getElementById('tooltip');
+        if (tip) {
+          tip.innerHTML = html;
+          tip.classList.add('on');
+          const w = tip.offsetWidth || 220, h = tip.offsetHeight || 100;
+          let x = event.clientX + 16, y = event.clientY + 14;
+          if (x + w > window.innerWidth - 8) x = event.clientX - w - 16;
+          if (y + h > window.innerHeight - 8) y = event.clientY - h - 14;
+          tip.style.left = `${x}px`;
+          tip.style.top = `${y}px`;
+        }
       })
-      .on('pointermove', (event) => {
-        const cRect = container.getBoundingClientRect();
-        setTooltip(prev => ({
-          ...prev,
-          x: event.clientX - cRect.left + 12,
-          y: event.clientY - cRect.top - 12
-        }));
+      .on('pointermove', (event: MouseEvent) => {
+        const tip = document.getElementById('tooltip');
+        if (tip) {
+          const w = tip.offsetWidth || 220, h = tip.offsetHeight || 100;
+          let x = event.clientX + 16, y = event.clientY + 14;
+          if (x + w > window.innerWidth - 8) x = event.clientX - w - 16;
+          if (y + h > window.innerHeight - 8) y = event.clientY - h - 14;
+          tip.style.left = `${x}px`;
+          tip.style.top = `${y}px`;
+        }
       })
       .on('pointerleave', () => {
-        setTooltip(prev => ({ ...prev, visible: false }));
+        const tip = document.getElementById('tooltip');
+        if (tip) tip.classList.remove('on');
       })
       .on('click', (_, c: CountyRecord) => {
         if (onSelectCounty) {
@@ -285,6 +275,8 @@ export function StateCountyMap({
     initMap();
     return () => {
       isCancelled = true;
+      const tip = document.getElementById('tooltip');
+      if (tip) tip.classList.remove('on');
     };
   }, [stateFips, metric, layerId, height]);
 
@@ -364,48 +356,33 @@ export function StateCountyMap({
     <div className="relative w-full h-full" style={{ minHeight: `${height}px` }}>
       <div ref={containerRef} className="w-full h-full" />
 
-      {/* Floating Zoom & Pan HUD Controls (Top Right) */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col gap-1 bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] rounded-xl p-1 shadow-lg">
-        <button
-          onClick={handleZoomIn}
-          aria-label="Zoom in"
-          title="Zoom In"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
-        >
-          <ZoomIn className="w-4 h-4" />
-        </button>
-        <button
-          onClick={handleZoomOut}
-          aria-label="Zoom out"
-          title="Zoom Out"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
-        >
-          <ZoomOut className="w-4 h-4" />
-        </button>
-        <button
-          onClick={handleResetZoom}
-          aria-label="Reset zoom"
-          title="Reset to Full State View"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* Hover Floating Tooltip */}
-      {tooltip.visible && (
-        <div
-          className="absolute z-50 pointer-events-none px-3.5 py-2 rounded-xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-2xl text-left text-[11px] animate-in fade-in duration-100"
-          style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
-        >
-          <div className="font-bold text-[var(--text)] text-[12.5px]">{tooltip.name}</div>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="text-[var(--faint)]">{tooltip.metricLabel}:</span>
-            <span className="font-bold text-[var(--cyan)] num">{tooltip.metricVal}</span>
-          </div>
-          <div className="text-[10px] text-[var(--muted)] mt-0.5">
-            Population: <span className="num font-semibold text-[var(--text)]">{tooltip.pop}</span>
-          </div>
+      {/* Floating Zoom & Pan HUD Controls (Only if showControls is true) */}
+      {showControls && (
+        <div className="absolute top-4 right-4 z-20 flex flex-col gap-1 bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] rounded-xl p-1 shadow-lg">
+          <button
+            onClick={handleZoomIn}
+            aria-label="Zoom in"
+            title="Zoom In"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleZoomOut}
+            aria-label="Zoom out"
+            title="Zoom Out"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleResetZoom}
+            aria-label="Reset zoom"
+            title="Reset to Full State View"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
     </div>
