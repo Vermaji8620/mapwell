@@ -1,30 +1,711 @@
 'use client';
 
-import React, { useEffect, useState, useMemo, Suspense } from 'react';
+import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
+import * as d3 from 'd3';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from '@/context/SessionContext';
 import { CensusTract, Jurisdiction, Assessment } from '@/types';
-import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG } from '@/config/metrics';
-import {
-  Sparkles,
-  ClipboardList,
-  Check,
-  X,
-  Plus,
-  ArrowRight
-} from 'lucide-react';
-import Link from 'next/link';
 import { Icon } from '@/components/Icons';
-import { useRouter, useSearchParams } from 'next/navigation';
 
-import { BarChart, BarDatum } from '@/components/BarChart';
-import { LorenzCurve } from '@/components/LorenzCurve';
-import { ZScoreMatrix } from '@/components/ZScoreMatrix';
-import { TrendLineChart, TrendSeries } from '@/components/TrendLineChart';
-import { ScatterPlot, ScatterPoint } from '@/components/ScatterPlot';
-
-const DISPARITY_INDICATORS = ['diabetes', 'hypertension', 'asthma', 'obesity', 'uninsured', 'lifeExp'];
+/* =====================================================================
+   PROTOTYPE METRICS & CONSTANTS
+   ===================================================================== */
+const INDS = ['diabetes', 'hypertension', 'asthma', 'obesity', 'uninsured', 'lifeExp'];
 const REGIONS = ['Northeast', 'Midwest', 'South', 'West'];
+const TIER_COLOR = ['#9FE3E7', '#5CCAD2', '#66B6F5', '#2584EB', '#163E8C'];
+const TIER_LABEL = ['Very low', 'Low', 'Moderate', 'High', 'Very high'];
+const YEARS = d3.range(2016, 2026).map(String);
 
+interface MetricConfig {
+  label: string;
+  short: string;
+  f: (v: number) => string;
+  bad: 'high' | 'low';
+  unit?: string;
+}
+
+const METRICS: Record<string, MetricConfig> = {
+  diabetes: { label: 'Diagnosed diabetes prevalence', short: 'Diabetes', f: v => v.toFixed(1) + '%', bad: 'high' },
+  hypertension: { label: 'High blood pressure prevalence', short: 'Hypertension', f: v => v.toFixed(1) + '%', bad: 'high' },
+  asthma: { label: 'Current asthma prevalence', short: 'Asthma', f: v => v.toFixed(1) + '%', bad: 'high' },
+  obesity: { label: 'Adult obesity prevalence', short: 'Obesity', f: v => v.toFixed(1) + '%', bad: 'high' },
+  uninsured: { label: 'Adults without health insurance', short: 'Uninsured', f: v => v.toFixed(1) + '%', bad: 'high' },
+  lifeExp: { label: 'Life expectancy at birth', short: 'Life expectancy', f: v => v.toFixed(1) + ' yrs', bad: 'low' },
+  svi: { label: 'Social vulnerability index', short: 'Vulnerability', f: v => v.toFixed(2), bad: 'high', unit: '' },
+  poverty: { label: 'Population below poverty line', short: 'Poverty', f: v => v.toFixed(1) + '%', bad: 'high' },
+  access: { label: 'Healthcare access score', short: 'Access score', f: v => v.toFixed(0), bad: 'low', unit: '/100' }
+};
+
+/* =====================================================================
+   MATHEMATICAL & FORMATTING HELPERS
+   ===================================================================== */
+function esc(s: any): string {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c);
+}
+
+function clamp(val: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, val));
+}
+
+function getV(rec: any, key: string): number {
+  if (!rec) return 0;
+  if (key.startsWith('prog.')) {
+    const pk = key.slice(5);
+    return Number(rec.prog?.[pk] ?? rec.indicators?.programs?.[pk] ?? 0);
+  }
+  const val = rec[key] ?? rec.indicators?.[key];
+  const num = Number(val);
+  return isNaN(num) ? 0 : num;
+}
+
+function countyLabel(c: any): string {
+  if (!c) return '';
+  const name = c.name || '';
+  const st = c.stateAbbr || c.st || c.state?.abbr || '';
+  const clean = name.replace(/\s+County$/i, '');
+  return `${clean} County, ${st}`;
+}
+
+const wmean = (arr: any[], k: string): number => {
+  const totPop = d3.sum(arr, u => (u.pop || u.population || 4000));
+  return totPop > 0 ? d3.sum(arr, u => getV(u, k) * (u.pop || u.population || 4000)) / totPop : 0;
+};
+
+function quintiles(units: any[], key = 'svi'): any[][] {
+  const s = units.slice().sort((a, b) => (a[key] ?? 0) - (b[key] ?? 0));
+  const n = s.length;
+  return [0, 1, 2, 3, 4].map(i => s.slice(Math.floor((i * n) / 5), Math.floor(((i + 1) * n) / 5)));
+}
+
+function hash(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1e6) / 1e6;
+}
+
+function rng(seed: number): () => number {
+  let s = Math.floor(seed * 2147483646) + 1;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+function gauss(r: () => number): number {
+  return Math.sqrt(-2 * Math.log(r() + 1e-9)) * Math.cos(2 * Math.PI * r());
+}
+
+function trendFor(seed: string, end: number, n = 10, slope = 0.015): number[] {
+  const r = rng(hash(seed));
+  const out: number[] = [];
+  let v = end * (1 + slope * n * (r() > 0.3 ? 1 : -0.5));
+  for (let i = 0; i < n; i++) {
+    v = v + (end - v) / (n - i) + gauss(r) * end * 0.012;
+    out.push(v);
+  }
+  out[n - 1] = end;
+  return out;
+}
+
+function cvar(n: string): string {
+  if (typeof window !== 'undefined') {
+    const val = getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    if (val) return val;
+  }
+  if (n === '--cyan') return '#2584EB';
+  if (n === '--violet') return '#66B6F5';
+  if (n === '--teal') return '#37C8CF';
+  if (n === '--rose') return '#F06A75';
+  if (n === '--amber') return '#F2B33D';
+  if (n === '--surface-2') return '#EEF6FD';
+  return '#2584EB';
+}
+
+/* =====================================================================
+   TOOLTIP HELPERS MATCHING PROTOTYPE
+   ===================================================================== */
+function showTip(html: string, e: any) {
+  if (typeof document === 'undefined') return;
+  const t = document.getElementById('tooltip');
+  if (!t) return;
+  t.innerHTML = html;
+  t.classList.add('on');
+  moveTip(e);
+}
+
+function moveTip(e: any) {
+  if (typeof document === 'undefined') return;
+  const t = document.getElementById('tooltip');
+  if (!t || !e) return;
+  const w = t.offsetWidth,
+    h = t.offsetHeight;
+  let x = e.clientX + 16,
+    y = e.clientY + 14;
+  if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
+  if (y + h > window.innerHeight - 8) y = e.clientY - h - 14;
+  t.style.left = x + 'px';
+  t.style.top = y + 'px';
+}
+
+function hideTip() {
+  if (typeof document === 'undefined') return;
+  const t = document.getElementById('tooltip');
+  if (t) t.classList.remove('on');
+}
+
+const tipRows = (rows: [string, string | number][]) =>
+  rows.map(([a, b]) => `<div class="tv"><span>${a}</span><span>${b}</span></div>`).join('');
+
+let _gid = 0;
+function svgIn(el: HTMLElement, w: number, h: number) {
+  return d3.select(el).append('svg').attr('viewBox', `0 0 ${w} ${h}`).attr('width', w).attr('height', h);
+}
+
+/* =====================================================================
+   EXACT D3 CHART DRAWING FUNCTIONS FROM entire_website.html
+   ===================================================================== */
+function barChart(el: HTMLElement, data: any[], o: any = {}) {
+  const W = Math.max(200, el.clientWidth);
+  el.classList.add('chart');
+  el.innerHTML = '';
+  const f = o.fmt || ((v: number) => v.toFixed(1));
+  const horiz = o.horizontal;
+
+  if (horiz) {
+    const rowH = o.rowH || 30;
+    const lw = Math.min(o.labelW || 150, W * 0.42);
+    const H = data.length * rowH + 6;
+    const svg = svgIn(el, W, H);
+    const maxVal = o.max || (d3.max(data, d => d.value) || 10) * 1.08;
+    const x = d3.scaleLinear().domain([0, maxVal]).range([0, W - lw - 64]);
+    const fill = cvar('--cyan');
+    const row = svg
+      .selectAll('g.r')
+      .data(data)
+      .join('g')
+      .attr('transform', (_d, i) => `translate(0,${i * rowH})`);
+
+    row
+      .append('text')
+      .attr('class', 'lbl')
+      .attr('x', 0)
+      .attr('y', rowH / 2 + 4)
+      .text(d => (d.label.length > 24 ? d.label.slice(0, 23) + '…' : d.label));
+
+    row
+      .append('rect')
+      .attr('x', lw)
+      .attr('y', rowH / 2 - 3)
+      .attr('height', 6)
+      .attr('rx', 1)
+      .attr('fill', 'var(--surface-2)')
+      .attr('width', Math.max(0, W - lw - 64));
+
+    row
+      .append('rect')
+      .attr('x', lw)
+      .attr('y', rowH / 2 - 3)
+      .attr('height', 6)
+      .attr('rx', 1)
+      .attr('fill', d => d.color || fill)
+      .attr('width', d => Math.max(0, x(d.value)));
+
+    row
+      .append('text')
+      .attr('class', 'val')
+      .attr('x', W)
+      .attr('text-anchor', 'end')
+      .attr('y', rowH / 2 + 4)
+      .text(d => f(d.value));
+
+    if (o.onClick) {
+      row.style('cursor', 'pointer').on('click', (_e, d) => o.onClick(d));
+    }
+    return;
+  }
+
+  const H = o.h || 220;
+  const m = { t: 16, r: 8, b: 30, l: 40 };
+  const svg = svgIn(el, W, H);
+  const x = d3
+    .scaleBand()
+    .domain(data.map(d => d.label))
+    .range([m.l, W - m.r])
+    .padding(0.32);
+  const maxVal = o.max || (d3.max(data, d => d.value) || 10) * 1.15;
+  const y = d3.scaleLinear().domain([0, maxVal]).nice().range([H - m.b, m.t]);
+
+  svg
+    .append('g')
+    .attr('class', 'gridl')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickSize(-(W - m.l - m.r))
+        .tickFormat(() => '')
+    );
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickFormat(o.axisFmt || f)
+        .tickSize(0)
+    )
+    .call(g => g.select('.domain').remove());
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(0,${H - m.b})`)
+    .call(d3.axisBottom(x).tickSize(0).tickPadding(8))
+    .call(g => g.select('.domain').remove());
+
+  const fill = cvar('--cyan');
+  const b = svg
+    .selectAll('rect.b')
+    .data(data)
+    .join('rect')
+    .attr('class', 'b')
+    .attr('x', d => x(d.label) || 0)
+    .attr('width', x.bandwidth())
+    .attr('rx', Math.min(2, x.bandwidth() / 3))
+    .attr('fill', d => d.color || fill)
+    .attr('y', d => y(d.value))
+    .attr('height', d => Math.max(0, y(0) - y(d.value)));
+
+  svg
+    .selectAll('text.v')
+    .data(data)
+    .join('text')
+    .attr('class', 'val')
+    .attr('text-anchor', 'middle')
+    .attr('x', d => (x(d.label) || 0) + x.bandwidth() / 2)
+    .attr('y', d => y(d.value) - 6)
+    .text(d => f(d.value));
+
+  b.on('pointerenter', (e, d: any) =>
+    showTip(`<b>${esc(d.label)}</b>${tipRows([[o.name || 'Value', f(d.value)]])}`, e)
+  )
+    .on('pointermove', moveTip)
+    .on('pointerleave', hideTip);
+}
+
+function lorenz(el: HTMLElement, pairs: [number, number][], o: any = {}) {
+  const W = Math.max(200, el.clientWidth);
+  el.classList.add('chart');
+  el.innerHTML = '';
+  const H = o.h || 240;
+  const m = { t: 12, r: 12, b: 30, l: 40 };
+  const svg = svgIn(el, W, H);
+  const x = d3.scaleLinear().domain([0, 1]).range([m.l, W - m.r]);
+  const y = d3.scaleLinear().domain([0, 1]).range([H - m.b, m.t]);
+
+  svg
+    .append('g')
+    .attr('class', 'gridl')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickSize(-(W - m.l - m.r))
+        .tickFormat(() => '')
+    );
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickFormat((d: any) => d3.format('.0%')(d))
+        .tickSize(0)
+    )
+    .call(g => g.select('.domain').remove());
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(0,${H - m.b})`)
+    .call(
+      d3
+        .axisBottom(x)
+        .ticks(5)
+        .tickFormat((d: any) => d3.format('.0%')(d))
+        .tickSize(0)
+        .tickPadding(8)
+    )
+    .call(g => g.select('.domain').remove());
+
+  svg
+    .append('line')
+    .attr('x1', x(0))
+    .attr('y1', y(0))
+    .attr('x2', x(1))
+    .attr('y2', y(1))
+    .attr('stroke', 'var(--line-strong)')
+    .attr('stroke-dasharray', '4 4');
+
+  const gid = 'l' + ++_gid;
+  const gr = svg.append('defs').append('linearGradient').attr('id', gid).attr('x1', 0).attr('x2', 1);
+  gr.append('stop').attr('offset', 0).attr('stop-color', cvar('--rose')).attr('stop-opacity', 0.35);
+  gr.append('stop').attr('offset', 1).attr('stop-color', cvar('--violet')).attr('stop-opacity', 0.1);
+
+  const ar = d3
+    .area<[number, number]>()
+    .x(d => x(d[0]))
+    .y0(d => y(d[0]))
+    .y1(d => y(d[1]))
+    .curve(d3.curveMonotoneX);
+
+  svg.append('path').attr('d', ar(pairs) || '').attr('fill', `url(#${gid})`);
+
+  svg
+    .append('path')
+    .attr(
+      'd',
+      d3
+        .line<[number, number]>()
+        .x(d => x(d[0]))
+        .y(d => y(d[1]))
+        .curve(d3.curveMonotoneX)(pairs) || ''
+    )
+    .attr('fill', 'none')
+    .attr('stroke', cvar('--rose'))
+    .attr('stroke-width', 2.6);
+
+  if (o.xl) {
+    svg
+      .append('text')
+      .attr('class', 'lbl')
+      .attr('x', W - m.r)
+      .attr('y', H - 2)
+      .attr('text-anchor', 'end')
+      .text(o.xl);
+  }
+}
+
+function matrix(el: HTMLElement, rows: string[], cols: string[], Z: number[][], o: any = {}) {
+  const W = Math.max(200, el.clientWidth);
+  el.classList.add('chart');
+  el.innerHTML = '';
+  const lw = Math.min(150, W * 0.3);
+  const cw = (W - lw) / cols.length;
+  const ch = o.ch || 30;
+  const H = rows.length * ch + 34;
+  const svg = svgIn(el, W, H);
+  const f = o.fmt || ((v: number) => (v > 0 ? '+' : '') + v.toFixed(2));
+  const c2 = (v: number) => {
+    const t = clamp((v + 1.6) / 3.2, 0, 1);
+    return d3.piecewise(d3.interpolateRgb, [cvar('--teal'), cvar('--surface-2') || '#223', cvar('--rose')])(t);
+  };
+
+  cols.forEach((c, j) =>
+    svg
+      .append('text')
+      .attr('class', 'lbl')
+      .attr('x', lw + j * cw + cw / 2)
+      .attr('y', 14)
+      .attr('text-anchor', 'middle')
+      .text(c.length > 12 && cw < 90 ? c.slice(0, 10) + '…' : c)
+  );
+
+  rows.forEach((r, i) => {
+    svg
+      .append('text')
+      .attr('class', 'lbl')
+      .attr('x', 0)
+      .attr('y', 34 + i * ch + ch / 2 + 2)
+      .text(r);
+
+    cols.forEach((c, j) => {
+      const v = Z[i]?.[j] ?? 0;
+      const rc = svg
+        .append('rect')
+        .attr('x', lw + j * cw + 2)
+        .attr('y', 26 + i * ch + 2)
+        .attr('width', Math.max(0, cw - 4))
+        .attr('height', Math.max(0, ch - 4))
+        .attr('rx', 2)
+        .attr('fill', c2(v));
+
+      rc.on('pointerenter', e => showTip(`<b>${esc(r)}</b>${tipRows([[c, f(v) + ' SD vs national']])}`, e))
+        .on('pointermove', moveTip)
+        .on('pointerleave', hideTip);
+
+      if (cw > 46) {
+        svg
+          .append('text')
+          .attr('class', 'val')
+          .attr('x', lw + j * cw + cw / 2)
+          .attr('y', 26 + i * ch + ch / 2 + 4)
+          .attr('text-anchor', 'middle')
+          .style('font-size', '11px')
+          .text(f(v))
+          .style('pointer-events', 'none');
+      }
+    });
+  });
+}
+
+function lineChart(el: HTMLElement, xs: string[], series: any[], o: any = {}) {
+  const W = Math.max(200, el.clientWidth);
+  el.classList.add('chart');
+  el.innerHTML = '';
+  const H = o.h || 230;
+  const m = { t: 14, r: 14, b: 28, l: 44 };
+  const f = o.fmt || ((v: number) => v.toFixed(1));
+  const svg = svgIn(el, W, H);
+  const x = d3.scalePoint().domain(xs).range([m.l, W - m.r]);
+  const all = series.flatMap(s => s.values);
+  const minVal = d3.min(all) || 0;
+  const maxVal = d3.max(all) || 10;
+  const y = d3
+    .scaleLinear()
+    .domain(o.domain || [minVal * 0.92, maxVal * 1.06])
+    .nice()
+    .range([H - m.b, m.t]);
+
+  svg
+    .append('g')
+    .attr('class', 'gridl')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickSize(-(W - m.l - m.r))
+        .tickFormat(() => '')
+    );
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(d3.axisLeft(y).ticks(4).tickFormat(f).tickSize(0))
+    .call(g => g.select('.domain').remove());
+
+  const every = Math.ceil(xs.length / Math.max(3, Math.floor(W / 70)));
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(0,${H - m.b})`)
+    .call(
+      d3
+        .axisBottom(x)
+        .tickSize(0)
+        .tickPadding(8)
+        .tickValues(xs.filter((_d, i) => i % every === 0))
+    )
+    .call(g => g.select('.domain').remove());
+
+  const line = d3
+    .line<number>()
+    .x((_d, i) => x(xs[i]) || 0)
+    .y(d => y(d))
+    .curve(d3.curveMonotoneX);
+
+  const area = d3
+    .area<number>()
+    .x((_d, i) => x(xs[i]) || 0)
+    .y0(H - m.b)
+    .y1(d => y(d))
+    .curve(d3.curveMonotoneX);
+
+  series.forEach((s, si) => {
+    if (o.area !== false && si === 0) {
+      const gid = 'a' + ++_gid;
+      const gr = svg.append('defs').append('linearGradient').attr('id', gid).attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1);
+      gr.append('stop').attr('offset', 0).attr('stop-color', s.color).attr('stop-opacity', 0.3);
+      gr.append('stop').attr('offset', 1).attr('stop-color', s.color).attr('stop-opacity', 0);
+      svg.append('path').attr('d', area(s.values) || '').attr('fill', `url(#${gid})`);
+    }
+
+    svg
+      .append('path')
+      .attr('d', line(s.values) || '')
+      .attr('fill', 'none')
+      .attr('stroke', s.color)
+      .attr('stroke-width', s.width || 2.4)
+      .attr('stroke-dasharray', s.dash || null)
+      .attr('stroke-linecap', 'round');
+  });
+
+  // hover crosshair
+  const hl = svg.append('line').attr('y1', m.t).attr('y2', H - m.b).attr('stroke', 'var(--line-strong)').attr('opacity', 0);
+  const dots = series.map(s =>
+    svg
+      .append('circle')
+      .attr('r', 4.5)
+      .attr('fill', s.color)
+      .attr('stroke', 'var(--surface-solid)')
+      .attr('stroke-width', 2)
+      .attr('opacity', 0)
+  );
+
+  svg
+    .append('rect')
+    .attr('x', m.l)
+    .attr('y', m.t)
+    .attr('width', Math.max(0, W - m.l - m.r))
+    .attr('height', Math.max(0, H - m.t - m.b))
+    .attr('fill', 'transparent')
+    .on('pointermove', e => {
+      const [mx] = d3.pointer(e);
+      const step = x.step();
+      const i = clamp(Math.round((mx - m.l) / step), 0, xs.length - 1);
+      const xPos = x(xs[i]) || 0;
+      hl.attr('x1', xPos).attr('x2', xPos).attr('opacity', 1);
+      dots.forEach((d, si) => d.attr('cx', xPos).attr('cy', y(series[si].values[i])).attr('opacity', 1));
+      showTip(`<b>${esc(xs[i])}</b>${tipRows(series.map(s => [s.name, f(s.values[i])]))}`, e);
+    })
+    .on('pointerleave', () => {
+      hl.attr('opacity', 0);
+      dots.forEach(d => d.attr('opacity', 0));
+      hideTip();
+    });
+}
+
+function scatter(el: HTMLElement, pts: any[], o: any = {}) {
+  const W = Math.max(200, el.clientWidth);
+  el.classList.add('chart');
+  el.innerHTML = '';
+  const H = o.h || 260;
+  const m = { t: 12, r: 14, b: 34, l: 46 };
+  const svg = svgIn(el, W, H);
+  const xExt = d3.extent(pts, (d: any) => d.x) as [number, number];
+  const yExt = d3.extent(pts, (d: any) => d.y) as [number, number];
+  const x = d3.scaleLinear().domain([xExt[0] ?? 0, xExt[1] ?? 1]).nice().range([m.l, W - m.r]);
+  const y = d3.scaleLinear().domain([yExt[0] ?? 0, yExt[1] ?? 10]).nice().range([H - m.b, m.t]);
+
+  svg
+    .append('g')
+    .attr('class', 'gridl')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickSize(-(W - m.l - m.r))
+        .tickFormat(() => '')
+    );
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(${m.l},0)`)
+    .call(
+      d3
+        .axisLeft(y)
+        .ticks(4)
+        .tickFormat(o.fy || ((v: any) => v))
+        .tickSize(0)
+    )
+    .call(g => g.select('.domain').remove());
+
+  svg
+    .append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(0,${H - m.b})`)
+    .call(
+      d3
+        .axisBottom(x)
+        .ticks(5)
+        .tickFormat(o.fx || ((v: any) => v))
+        .tickSize(0)
+        .tickPadding(8)
+    )
+    .call(g => g.select('.domain').remove());
+
+  if (o.xl) {
+    svg
+      .append('text')
+      .attr('class', 'lbl')
+      .attr('x', W - m.r)
+      .attr('y', H - 2)
+      .attr('text-anchor', 'end')
+      .text(o.xl);
+  }
+  if (o.yl) {
+    svg
+      .append('text')
+      .attr('class', 'lbl')
+      .attr('x', m.l + 4)
+      .attr('y', m.t + 2)
+      .text(o.yl);
+  }
+
+  // Regression line
+  const n = pts.length;
+  const mx = d3.mean(pts, d => d.x) || 0;
+  const my = d3.mean(pts, d => d.y) || 0;
+  const den = d3.sum(pts, d => (d.x - mx) ** 2) || 1;
+  const b = d3.sum(pts, d => (d.x - mx) * (d.y - my)) / den;
+  const a = my - b * mx;
+  const [xa, xb] = x.domain();
+
+  svg
+    .append('line')
+    .attr('x1', x(xa))
+    .attr('y1', y(a + b * xa))
+    .attr('x2', x(xb))
+    .attr('y2', y(a + b * xb))
+    .attr('stroke', cvar('--cyan'))
+    .attr('stroke-width', 1.6)
+    .attr('stroke-dasharray', '5 5')
+    .attr('opacity', 0.8);
+
+  const c = svg
+    .selectAll('circle')
+    .data(pts)
+    .join('circle')
+    .attr('cx', d => x(d.x))
+    .attr('cy', d => y(d.y))
+    .attr('fill', d => d.c || cvar('--violet'))
+    .attr('fill-opacity', 0.75)
+    .attr('stroke', d => (d.hl ? cvar('--text') : 'none'))
+    .attr('stroke-width', 1.5)
+    .attr('r', d => d.r || 3.2);
+
+  c.on('pointerenter', (e, d: any) =>
+    showTip(
+      `<b>${esc(d.label || '')}</b>${tipRows([
+        [o.xn || 'x', (o.fx || ((v: any) => v.toFixed(1)))(d.x)],
+        [o.yn || 'y', (o.fy || ((v: any) => v.toFixed(1)))(d.y)]
+      ])}`,
+      e
+    )
+  )
+    .on('pointermove', moveTip)
+    .on('pointerleave', hideTip)
+    .on('click', (_e, d) => o.onClick && o.onClick(d));
+
+  const sx = Math.sqrt(d3.sum(pts, d => (d.x - mx) ** 2));
+  const sy = Math.sqrt(d3.sum(pts, d => (d.y - my) ** 2));
+  const r2 = sx * sy > 0 ? (d3.sum(pts, d => (d.x - mx) * (d.y - my)) / (sx * sy)) ** 2 : 0;
+
+  svg
+    .append('text')
+    .attr('class', 'lbl')
+    .attr('x', W - m.r)
+    .attr('y', m.t + 4)
+    .attr('text-anchor', 'end')
+    .text('r² = ' + r2.toFixed(2) + (n ? '' : ''));
+}
+
+/* =====================================================================
+   MAIN COMPONENT CONTENT
+   ===================================================================== */
 function HealthDisparitiesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -35,15 +716,23 @@ function HealthDisparitiesContent() {
   const [activeMetric, setActiveMetric] = useState<string>(urlMetric || 'diabetes');
   const [geoScope, setGeoScope] = useState<'nation' | 'state' | 'tracts'>('state');
   const [tracts, setTracts] = useState<CensusTract[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  // Finding Modal state
+  // Add Finding Modal state matching prototype
   const [findingModalOpen, setFindingModalOpen] = useState(false);
+  const [findingTract, setFindingTract] = useState<any>(null);
   const [findingNote, setFindingNote] = useState('');
   const [assessmentsList, setAssessmentsList] = useState<Assessment[]>([]);
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string>('');
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Chart DOM container refs
+  const chartQRef = useRef<HTMLDivElement>(null);
+  const chartLRef = useRef<HTMLDivElement>(null);
+  const chartMRef = useRef<HTMLDivElement>(null);
+  const chartTRef = useRef<HTMLDivElement>(null);
+  const chartRRef = useRef<HTMLDivElement>(null);
+  const chartSRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     markWorkflowMilestone('layer');
@@ -52,21 +741,19 @@ function HealthDisparitiesContent() {
   // Load tracts for active county from MongoDB
   useEffect(() => {
     if (!activeCounty) return;
-    setLoading(true);
     fetch(`/api/tracts?county=${activeCounty._id}`)
-      .then(r => r.ok ? r.json() : { data: [] })
+      .then(r => (r.ok ? r.json() : { data: [] }))
       .then(res => {
         setTracts(res.data || []);
       })
-      .catch(err => console.error(err))
-      .finally(() => setLoading(false));
+      .catch(err => console.error(err));
   }, [activeCounty]);
 
   // Load assessments for Finding modal
   useEffect(() => {
     if (!activeCounty) return;
     fetch(`/api/assessments?jurisdiction=${activeCounty._id}`)
-      .then(r => r.ok ? r.json() : [])
+      .then(r => (r.ok ? r.json() : []))
       .then(res => {
         setAssessmentsList(res || []);
         if (res && res.length > 0) {
@@ -85,275 +772,251 @@ function HealthDisparitiesContent() {
     return () => clearTimeout(t);
   }, [toastMessage]);
 
-  const metricMeta = METRICS_CONFIG[activeMetric] || METRICS_CONFIG.diabetes;
-  const isBadLow = metricMeta.bad === 'low';
-
-  // Analysis Units pool based on selected geoScope
-  const analysisUnits = useMemo(() => {
+  // Active units for current geography scope matching prototype unitsFor(geo)
+  const units: any[] = useMemo(() => {
     if (geoScope === 'tracts') {
-      return tracts.map(t => ({
-        id: t._id,
-        name: t.name,
-        pop: t.population || 4000,
-        svi: t.svi,
-        tier: t.tier,
-        val: (t.indicators as any)?.[activeMetric] ?? (t as any)[activeMetric] ?? 10
-      }));
+      return tracts.length > 0 ? tracts : [];
     }
-
     if (geoScope === 'state') {
-      // Counties in the active county's state
-      const stateCounties = jurisdictions.filter(j => j.stateFips === activeCounty?.stateFips);
-      const pool = stateCounties.length > 0 ? stateCounties : jurisdictions;
-      return pool.map(c => ({
-        id: c._id,
-        name: `${c.name}, ${c.stateAbbr}`,
-        pop: c.population || 500000,
-        svi: c.svi,
-        tier: Math.max(0, Math.min(4, Math.floor(c.svi * 5))),
-        val: (c.indicators as any)?.[activeMetric] ?? (c as any)[activeMetric] ?? 10
-      }));
+      const stateCounties = jurisdictions.filter(
+        c => c.stateFips === activeCounty?.stateFips || c.stateAbbr === activeCounty?.stateAbbr
+      );
+      return stateCounties.length > 0 ? stateCounties : jurisdictions;
     }
+    return jurisdictions;
+  }, [geoScope, tracts, jurisdictions, activeCounty]);
 
-    // All jurisdictions (Nation benchmark)
-    return jurisdictions.map(c => ({
-      id: c._id,
-      name: `${c.name}, ${c.stateAbbr}`,
-      pop: c.population || 500000,
-      svi: c.svi,
-      tier: Math.max(0, Math.min(4, Math.floor(c.svi * 5))),
-      val: (c.indicators as any)?.[activeMetric] ?? (c as any)[activeMetric] ?? 10
-    }));
-  }, [geoScope, tracts, jurisdictions, activeCounty, activeMetric]);
+  // Current metric config
+  const m = METRICS[activeMetric] || METRICS.diabetes;
 
-  // Statistical calculations: Quintiles, Disparity Ratio, Lorenz Curve, Gini
+  // Statistical calculations matching prototype draw()
   const stats = useMemo(() => {
-    if (analysisUnits.length === 0) {
+    if (!units.length || !activeCounty) {
       return {
-        quintileAverages: [0, 0, 0, 0, 0],
-        disparityRatio: 1.0,
-        lorenzPairs: [[0, 0], [1, 1]] as [number, number][],
-        concentrationIndex: 0.2,
-        top20BurdenShare: 20.0,
-        worstQuartileCount: 0,
+        ratio: 1.0,
+        top20: 0.2,
+        ci: 0.0,
         gapNow: 0,
         gapThen: 0,
-        gapChange: 0,
-        widening: false
+        above: 0
       };
     }
 
-    // Sort by SVI ascending for quintiles
-    const sortedBySviAsc = [...analysisUnits].sort((a, b) => a.svi - b.svi);
-    const n = sortedBySviAsc.length;
-    const quintiles = [0, 1, 2, 3, 4].map(i =>
-      sortedBySviAsc.slice(Math.floor((i * n) / 5), Math.floor(((i + 1) * n) / 5))
-    );
+    const Q = quintiles(units);
+    const qv = Q.map(q => wmean(q, activeMetric));
+    const ratio = m.bad === 'low' ? (qv[4] > 0 ? qv[0] / qv[4] : 1) : (qv[0] > 0 ? qv[4] / qv[0] : 1);
 
-    // Population-weighted mean for each quintile
-    const quintileAverages = quintiles.map(q => {
-      if (q.length === 0) return 0;
-      const sumVal = q.reduce((acc, u) => acc + u.val * u.pop, 0);
-      const sumPop = q.reduce((acc, u) => acc + u.pop, 0);
-      return sumPop > 0 ? sumVal / sumPop : 0;
+    // Concentration curve: sort by SVI desc, cumulative pop vs cumulative burden
+    const s: any[] = units.slice().sort((a, b) => (b.svi || 0) - (a.svi || 0));
+    const totP = d3.sum(s, (u: any) => (u.pop || u.population || 4000));
+    const burden = (u: any) => (m.bad === 'low' ? 90 - getV(u, activeMetric) : getV(u, activeMetric));
+    const totB = d3.sum(s, (u: any) => (u.pop || u.population || 4000) * burden(u));
+    let cp = 0,
+      cb = 0;
+    const pairs: [number, number][] = [[0, 0]];
+    s.forEach((u: any) => {
+      const pop = u.pop || u.population || 4000;
+      cp += pop;
+      cb += pop * burden(u);
+      pairs.push([totP > 0 ? cp / totP : 0, totB > 0 ? cb / totB : 0]);
     });
 
-    const q1 = Math.max(0.001, quintileAverages[0]);
-    const q5 = Math.max(0.001, quintileAverages[4]);
-    const disparityRatio = isBadLow ? q1 / q5 : q5 / q1;
+    const step = Math.max(1, Math.floor(pairs.length / 120));
+    const pp = pairs.filter((_p, i) => i % step === 0 || i === pairs.length - 1);
+    const ci = 2 * d3.sum(pp.slice(1).map((p, i) => (p[0] - pp[i][0]) * ((p[1] + pp[i][1]) / 2))) - 1;
 
-    // Concentration (Lorenz) Curve: sort by SVI descending (most vulnerable first)
-    const sortedBySviDesc = [...analysisUnits].sort((a, b) => b.svi - a.svi);
-    const totalPop = sortedBySviDesc.reduce((acc, u) => acc + u.pop, 0) || 1;
-    const burdenFn = (u: any) => isBadLow ? Math.max(0, 90 - u.val) : u.val;
-    const totalBurden = sortedBySviDesc.reduce((acc, u) => acc + u.pop * burdenFn(u), 0) || 1;
+    const top20 = (() => {
+      const i = pairs.findIndex(p => p[0] >= 0.2);
+      if (i <= 0) return pairs[Math.max(0, i)] ? pairs[Math.max(0, i)][1] : 0.2;
+      const [a, b] = [pairs[i - 1], pairs[i]];
+      return a[1] + ((b[1] - a[1]) * (0.2 - a[0])) / Math.max(0.0001, b[0] - a[0]);
+    })();
 
-    let cumPop = 0;
-    let cumBurden = 0;
-    const lorenzPairs: [number, number][] = [[0, 0]];
+    // Trends: Q1 and Q5 over 10 years
+    const t5 = trendFor('q5' + activeMetric + geoScope, qv[4], 10, m.bad === 'low' ? -0.004 : -0.02);
+    const t1 = trendFor('q1' + activeMetric + geoScope, qv[0], 10, m.bad === 'low' ? -0.01 : 0.004);
+    const gapNow = Math.abs(qv[4] - qv[0]);
+    const gapThen = Math.abs(t5[0] - t1[0]);
 
-    sortedBySviDesc.forEach(u => {
-      cumPop += u.pop;
-      cumBurden += u.pop * burdenFn(u);
-      lorenzPairs.push([cumPop / totalPop, cumBurden / totalBurden]);
-    });
-
-    // Concentration Index = 2 * Area under curve - 1
-    let areaUnder = 0;
-    for (let i = 1; i < lorenzPairs.length; i++) {
-      const p1 = lorenzPairs[i - 1];
-      const p2 = lorenzPairs[i];
-      areaUnder += (p2[0] - p1[0]) * ((p1[1] + p2[1]) / 2);
-    }
-    const concentrationIndex = Math.max(0.01, Math.min(0.99, 2 * areaUnder - 1));
-
-    // Share of burden held by top 20%
-    let top20BurdenShare = 20;
-    const pair20Idx = lorenzPairs.findIndex(p => p[0] >= 0.2);
-    if (pair20Idx > 0) {
-      const pA = lorenzPairs[pair20Idx - 1];
-      const pB = lorenzPairs[pair20Idx];
-      const interpShare = pA[1] + (pB[1] - pA[1]) * ((0.2 - pA[0]) / Math.max(0.001, pB[0] - pA[0]));
-      top20BurdenShare = interpShare * 100;
-    }
-
-    // 10-year Quintile Gap change
-    const gapNow = Math.abs(q5 - q1);
-    const baselineFactor = isBadLow ? 0.88 : 0.82;
-    const gapThen = gapNow * baselineFactor;
-    const gapChange = gapNow - gapThen;
-    const widening = gapNow >= gapThen;
-
-    // Worst national quartile units count
-    const allVals = analysisUnits.map(u => u.val).sort((a, b) => a - b);
-    const q75Threshold = allVals[Math.floor(allVals.length * 0.75)] || 0;
-    const q25Threshold = allVals[Math.floor(allVals.length * 0.25)] || 0;
-    const worstQuartileCount = analysisUnits.filter(u =>
-      isBadLow ? u.val < q25Threshold : u.val > q75Threshold
+    // Worst quartile cutoff against national counties
+    const allCounties: any[] = jurisdictions.length > 0 ? jurisdictions : units;
+    const allCountyVals = allCounties.map(c => getV(c, activeMetric)).sort(d3.ascending);
+    const cutoff = m.bad === 'low' ? d3.quantile(allCountyVals, 0.25) : d3.quantile(allCountyVals, 0.75);
+    const above = units.filter((u: any) =>
+      m.bad === 'low' ? getV(u, activeMetric) < (cutoff ?? 0) : getV(u, activeMetric) > (cutoff ?? 0)
     ).length;
 
     return {
-      quintileAverages,
-      disparityRatio,
-      lorenzPairs,
-      concentrationIndex,
-      top20BurdenShare,
-      worstQuartileCount,
+      ratio,
+      top20,
+      ci,
       gapNow,
       gapThen,
-      gapChange,
-      widening
+      above
     };
-  }, [analysisUnits, isBadLow]);
+  }, [units, activeMetric, geoScope, jurisdictions, activeCounty, m]);
 
-  // Quintile Bar Chart Data (Q1 through Q5)
-  const quintileBarData: BarDatum[] = useMemo(() => {
-    return [0, 1, 2, 3, 4].map(idx => ({
-      label: `Quintile ${idx + 1}`,
-      value: stats.quintileAverages[idx] || 0,
-      color: TIER_COLORS[idx]
-    }));
-  }, [stats]);
+  // Regional ranking for analytical insights
+  const { worstReg, worstRegMean } = useMemo(() => {
+    if (!jurisdictions.length) return { worstReg: 'South', worstRegMean: 0 };
+    const sorted = REGIONS.slice().sort(
+      (a, b) =>
+        (wmean(jurisdictions.filter(c => c.region === b || (c as any).state?.region === b), activeMetric) -
+          wmean(jurisdictions.filter(c => c.region === a || (c as any).state?.region === a), activeMetric)) *
+        (m.bad === 'low' ? -1 : 1)
+    );
+    const worst = sorted[0] || 'South';
+    const mean = wmean(jurisdictions.filter(c => c.region === worst || (c as any).state?.region === worst), activeMetric);
+    return { worstReg: worst, worstRegMean: mean };
+  }, [jurisdictions, activeMetric, m]);
 
-  // 10-Year Trend Series: Q5 vs Q1
-  const years10 = ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'];
-  const trendSeries: TrendSeries[] = useMemo(() => {
-    const q5Now = stats.quintileAverages[4] || 15;
-    const q1Now = stats.quintileAverages[0] || 7;
+  // Render all 6 charts matching prototype draw()
+  useEffect(() => {
+    if (!units.length || !activeCounty) return;
 
-    const q5History = years10.map((_, i) => {
-      const step = (10 - i) * (isBadLow ? 0.15 : -0.22);
-      return Math.max(1, q5Now + step);
+    const Q = quintiles(units);
+    const qv = Q.map(q => wmean(q, activeMetric));
+
+    // Concentration curve pairs
+    const s: any[] = units.slice().sort((a, b) => (b.svi || 0) - (a.svi || 0));
+    const totP = d3.sum(s, (u: any) => (u.pop || u.population || 4000));
+    const burden = (u: any) => (m.bad === 'low' ? 90 - getV(u, activeMetric) : getV(u, activeMetric));
+    const totB = d3.sum(s, (u: any) => (u.pop || u.population || 4000) * burden(u));
+    let cp = 0,
+      cb = 0;
+    const pairs: [number, number][] = [[0, 0]];
+    s.forEach((u: any) => {
+      const pop = u.pop || u.population || 4000;
+      cp += pop;
+      cb += pop * burden(u);
+      pairs.push([totP > 0 ? cp / totP : 0, totB > 0 ? cb / totB : 0]);
     });
+    const step = Math.max(1, Math.floor(pairs.length / 120));
+    const pp = pairs.filter((_p, i) => i % step === 0 || i === pairs.length - 1);
 
-    const q1History = years10.map((_, i) => {
-      const step = (10 - i) * (isBadLow ? 0.08 : -0.06);
-      return Math.max(1, q1Now + step);
-    });
+    // Trend series
+    const t5 = trendFor('q5' + activeMetric + geoScope, qv[4], 10, m.bad === 'low' ? -0.004 : -0.02);
+    const t1 = trendFor('q1' + activeMetric + geoScope, qv[0], 10, m.bad === 'low' ? -0.01 : 0.004);
 
-    return [
-      { name: 'Quintile 5 (Most Vulnerable)', color: '#F43F5E', values: q5History },
-      { name: 'Quintile 1 (Least Vulnerable)', color: '#37C8CF', values: q1History }
-    ];
-  }, [stats, isBadLow]);
+    // Chart 1: Bar chart quintiles
+    if (chartQRef.current) {
+      barChart(
+        chartQRef.current,
+        qv.map((x, i) => ({ label: 'Quintile ' + (i + 1), value: x, color: TIER_COLOR[i] })),
+        { h: 240, fmt: m.f, name: m.short, max: (d3.max(qv) || 10) * 1.15 }
+      );
+    }
 
-  // Regional Comparison Data
-  const regionalData: BarDatum[] = useMemo(() => {
-    const regionMeans = REGIONS.map(reg => {
-      const pool = jurisdictions.filter(j => j.region === reg);
-      const val = pool.length > 0
-        ? pool.reduce((acc, c) => acc + ((c.indicators as any)?.[activeMetric] || 10), 0) / pool.length
-        : 10;
-      return { label: reg, value: val, color: 'var(--cyan)' };
-    });
+    // Chart 2: Lorenz concentration curve
+    if (chartLRef.current) {
+      lorenz(chartLRef.current, pp, { h: 240, xl: 'Cumulative population share' });
+    }
 
-    // Add state average
-    const statePool = jurisdictions.filter(j => j.stateFips === activeCounty?.stateFips);
-    const stateMean = statePool.length > 0
-      ? statePool.reduce((acc, c) => acc + ((c.indicators as any)?.[activeMetric] || 10), 0) / statePool.length
-      : 11;
-
-    return [...regionMeans, { label: `${activeCounty?.stateName || 'State'} Avg`, value: stateMean, color: '#8B5CF6' }];
-  }, [jurisdictions, activeCounty, activeMetric]);
-
-  // Z-Score Matrix Data across regions, state, county
-  const matrixRows = useMemo(() => {
-    return [...REGIONS, activeCounty?.stateName || 'Washington', activeCounty?.name || 'King County'];
-  }, [activeCounty]);
-
-  const matrixCols = useMemo(() => {
-    return DISPARITY_INDICATORS.map(k => METRICS_CONFIG[k]?.short || k);
-  }, []);
-
-  const zScoreMatrixData = useMemo(() => {
-    return matrixRows.map((rowName, rIdx) => {
-      return DISPARITY_INDICATORS.map(indKey => {
-        let pool: Jurisdiction[] = [];
-        if (rIdx < 4) {
-          pool = jurisdictions.filter(j => j.region === rowName);
-        } else if (rIdx === 4) {
-          pool = jurisdictions.filter(j => j.stateFips === activeCounty?.stateFips);
-        } else {
-          pool = activeCounty ? [activeCounty] : [];
-        }
-
-        const avg = pool.length > 0
-          ? pool.reduce((acc, c) => acc + ((c.indicators as any)?.[indKey] || 10), 0) / pool.length
-          : 10;
-
-        const allIndVals = jurisdictions.map(j => (j.indicators as any)?.[indKey] || 10);
-        const natMean = allIndVals.reduce((a, b) => a + b, 0) / Math.max(1, allIndVals.length);
-        const natSd = Math.sqrt(allIndVals.reduce((acc, v) => acc + (v - natMean) ** 2, 0) / Math.max(1, allIndVals.length)) || 1;
-
-        const z = (avg - natMean) / natSd;
-        const meta = METRICS_CONFIG[indKey];
-        return meta?.bad === 'low' ? -z : z;
+    // Chart 3: Z-score matrix heatmap
+    if (chartMRef.current) {
+      const stateName = activeCounty.stateName || 'State';
+      const stateCounties = jurisdictions.filter(
+        c => c.stateFips === activeCounty.stateFips || c.stateAbbr === activeCounty.stateAbbr
+      );
+      const regRows = [...REGIONS, stateName, countyLabel(activeCounty)];
+      const mu: Record<string, number> = {},
+        sd: Record<string, number> = {};
+      INDS.forEach(x => {
+        const a = jurisdictions.map(c => getV(c, x));
+        mu[x] = d3.mean(a) || 0;
+        sd[x] = d3.deviation(a) || 1;
       });
-    });
-  }, [matrixRows, jurisdictions, activeCounty]);
+      const Z = regRows.map((r, i) =>
+        INDS.map(x => {
+          const pool =
+            i < 4
+              ? jurisdictions.filter(c => c.region === r || (c as any).state?.region === r)
+              : i === 4
+              ? stateCounties.length > 0
+                ? stateCounties
+                : jurisdictions
+              : [activeCounty];
+          const z = (wmean(pool, x) - mu[x]) / (sd[x] || 1);
+          return METRICS[x].bad === 'low' ? -z : z;
+        })
+      );
+      matrix(chartMRef.current, regRows, INDS.map(x => METRICS[x].short), Z, { ch: 34 });
+    }
 
-  // Scatter Plot Points
-  const scatterPoints: ScatterPoint[] = useMemo(() => {
-    return analysisUnits.map(u => ({
-      id: u.id,
-      x: u.svi,
-      y: u.val,
-      label: u.name,
-      color: TIER_COLORS[u.tier] || '#8B5CF6',
-      highlight: u.id === activeCounty?._id,
-      radius: geoScope === 'nation' ? 2.8 : 4.0
-    }));
-  }, [analysisUnits, activeCounty, geoScope]);
+    // Chart 4: Trend analysis
+    if (chartTRef.current) {
+      lineChart(
+        chartTRef.current,
+        YEARS,
+        [
+          { name: 'Quintile 5', color: cvar('--rose'), values: t5 },
+          { name: 'Quintile 1', color: cvar('--teal'), values: t1 }
+        ],
+        { h: 230, fmt: m.f }
+      );
+    }
 
-  const activeGeo = geoScope;
-  const setActiveGeo = setGeoScope;
-  const targetAssessmentId = selectedAssessmentId;
-  const setTargetAssessmentId = setSelectedAssessmentId;
+    // Chart 5: Regional comparison
+    if (chartRRef.current) {
+      const stateName = activeCounty.stateName || 'State';
+      const stateCounties = jurisdictions.filter(
+        c => c.stateFips === activeCounty.stateFips || c.stateAbbr === activeCounty.stateAbbr
+      );
+      const regData: Array<{ label: string; value: number; color?: string }> = REGIONS.map(r => ({
+        label: r,
+        value: wmean(
+          jurisdictions.filter(c => c.region === r || (c as any).state?.region === r),
+          activeMetric
+        )
+      }));
+      regData.push({
+        label: stateName,
+        value: wmean(stateCounties.length > 0 ? stateCounties : jurisdictions, activeMetric),
+        color: cvar('--violet')
+      });
+      barChart(chartRRef.current, regData, { horizontal: true, fmt: m.f, labelW: 120 });
+    }
 
-  const scatterR2 = useMemo(() => {
-    if (scatterPoints.length < 2) return 0.64;
-    const xs = scatterPoints.map(p => p.x);
-    const ys = scatterPoints.map(p => p.y);
-    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
-    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
-    const num = scatterPoints.reduce((acc, p) => acc + (p.x - mx) * (p.y - my), 0);
-    const denX = Math.sqrt(xs.reduce((acc, x) => acc + (x - mx) ** 2, 0)) || 1;
-    const denY = Math.sqrt(ys.reduce((acc, y) => acc + (y - my) ** 2, 0)) || 1;
-    const r = num / (denX * denY);
-    return Math.min(0.99, Math.max(0.01, r * r));
-  }, [scatterPoints]);
+    // Chart 6: Vulnerability against metric scatter
+    if (chartSRef.current) {
+      const pts = units.map(u => ({
+        x: u.svi ?? 0,
+        y: getV(u, activeMetric),
+        c: TIER_COLOR[clamp(Math.floor((u.svi ?? 0) * 5), 0, 4)],
+        label: u.name ? (u.county ? u.name : countyLabel(u)) : '',
+        id: u._id || u.id || '',
+        r: geoScope === 'nation' ? 2.2 : 3.6,
+        hl: (u._id || u.id) === activeCounty._id
+      }));
+      scatter(chartSRef.current, geoScope === 'nation' ? pts.filter((_p, i) => i % 2 === 0) : pts, {
+        h: 280,
+        xl: 'Social vulnerability index',
+        yl: m.short,
+        xn: 'Vulnerability',
+        yn: m.short,
+        fx: (xVal: any) => (+xVal).toFixed(1),
+        fy: (yVal: any) => m.f(+yVal),
+        onClick: (d: any) => router.push(d.id.length === 5 ? `/health-map?county=${d.id}` : `/health-map?tract=${d.id}`)
+      });
+    }
+  }, [units, activeMetric, geoScope, jurisdictions, activeCounty, m, router]);
 
-  // Open modal with pre-filled analytical insight
+  // Handle opening insight modal matching prototype line 2216
   const handleOpenInsightModal = () => {
-    const worstUnit = [...analysisUnits].sort((a, b) => b.svi - a.svi)[0];
-    const text = `Disparity Observation: ${metricMeta.short} is ${stats.disparityRatio.toFixed(2)}× higher in the most vulnerable quintile (${geoScope === 'tracts' ? 'tracts in ' + activeCounty?.name : activeCounty?.stateName + ' counties'}). ${worstUnit?.name || 'High-need tract'} exhibits severe compounding disadvantage.`;
-    setFindingNote(text);
+    const worst = (geoScope === 'tracts' ? units : tracts).slice().sort((a, b) => (b.svi || 0) - (a.svi || 0))[0] || units[0];
+    const stateName = activeCounty?.stateName || 'State';
+    const preset = `Disparity analysis: ${m.short} is ${stats.ratio.toFixed(2)}× higher in the most vulnerable quintile (${
+      geoScope === 'tracts' ? 'tracts in ' + (activeCounty?.name || 'County') : stateName + ' counties'
+    }). ${(worst?.name || 'High-vulnerability unit')} is the most vulnerable tract.`;
+
+    setFindingTract(worst);
+    setFindingNote(preset);
     setFindingModalOpen(true);
   };
 
   // Submit finding to assessment
   const handleSubmitFinding = async () => {
-    if (!findingNote.trim()) return;
+    if (!findingTract || !findingNote.trim()) return;
     setSubmittingFinding(true);
 
     try {
@@ -363,15 +1026,17 @@ function HealthDisparitiesContent() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            title: `Disparity Assessment: ${activeCounty?.name}`,
+            title: `Needs assessment: ${countyLabel(activeCounty)}`,
             jurisdictionId: activeCounty?._id || '53033',
-            template: 'custom',
-            indicators: [activeMetric, 'svi', 'poverty', 'uninsured']
+            status: 'Draft',
+            step: 1,
+            indicators: ['svi', 'poverty', 'uninsured', 'diabetes'],
+            tracts: [findingTract._id || (findingTract as any).id]
           })
         });
         if (createRes.ok) {
           const newA = await createRes.json();
-          finalAssessmentId = newA._id;
+          finalAssessmentId = newA._id || newA.id;
         } else {
           throw new Error('Failed to create assessment');
         }
@@ -382,337 +1047,371 @@ function HealthDisparitiesContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           assessmentId: finalAssessmentId,
-          tractId: tracts[0]?._id || `${activeCounty?._id}010100`,
+          tractId: findingTract._id || (findingTract as any).id,
           note: findingNote
         })
       });
 
       if (res.ok) {
         await markWorkflowMilestone('finding');
-        setToastMessage(`Analytical finding linked to Assessment ${finalAssessmentId}`);
+        setToastMessage(`Finding added to ${finalAssessmentId}`);
         setFindingModalOpen(false);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Failed to record finding');
       }
     } catch (e) {
       console.error(e);
-      alert('Error recording finding');
+      alert('Error creating finding');
     } finally {
       setSubmittingFinding(false);
     }
   };
 
+  const stateName = activeCounty?.stateName || 'State';
+  const countyName = activeCounty?.name || 'County';
+
   return (
     <>
-      {/* Toast Notification */}
+      {/* Toast Notification in #toasts */}
       {toastMessage && (
-        <div className="toast" role="status" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 200 }}>
-          <span className="ic"><Icon name="check" size={15} /></span>
-          <span>{toastMessage}</span>
+        <div id="toasts">
+          <div className="toast" role="status">
+            <span className="ic">
+              <Icon name="check" />
+            </span>
+            <span>{toastMessage}</span>
+          </div>
         </div>
       )}
 
-      {/* Page Header */}
+      {/* Page Header matching prototype line 2166 */}
       <div className="page-head">
         <div>
           <h1>Health disparity analysis</h1>
-          <p>Compare outcomes across vulnerability quintiles, regions and time to prioritize targeted interventions.</p>
+          <p>Compare outcomes across vulnerability quintiles, regions and time to see where inequities concentrate.</p>
         </div>
         <div className="head-actions">
-          <span className="pill demo">
-            <span className="dot"></span>Demo environment
+          <span
+            className="pill demo"
+            title="Synthetic values generated for this demo. Not real surveillance or Census data."
+          >
+            <span className="dot"></span>Synthetic demo data
           </span>
-          <button className="btn" onClick={() => setFindingModalOpen(true)}>
-            <Icon name="clipboard" size={14} />
-            <span>Add finding to assessment</span>
-          </button>
         </div>
       </div>
 
-      {/* Toolbar: Indicator & Geography selection */}
-      <div className="toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Health indicator</span>
-            <div className="chips">
-              {[
-                { k: 'diabetes', label: 'Diabetes' },
-                { k: 'hypertension', label: 'Hypertension' },
-                { k: 'asthma', label: 'Asthma' },
-                { k: 'obesity', label: 'Obesity' },
-                { k: 'uninsured', label: 'Uninsured' },
-                { k: 'lifeExp', label: 'Life Expectancy' }
-              ].map((ind) => (
+      {/* Toolbar matching prototype lines 2167-2168 */}
+      <div className="toolbar">
+        <div className="row between">
+          <div className="field">
+            <span>Health indicator</span>
+            <div className="chips" id="hd-k">
+              {INDS.map(x => (
                 <button
-                  key={ind.k}
-                  className={`chip ${activeMetric === ind.k ? 'on' : ''}`}
-                  onClick={() => setActiveMetric(ind.k)}
+                  key={x}
+                  className={`chip ${x === activeMetric ? 'on' : ''}`}
+                  data-k={x}
+                  onClick={() => setActiveMetric(x)}
                 >
-                  {ind.label}
+                  {METRICS[x].short}
                 </button>
               ))}
             </div>
           </div>
-
-          <div className="field" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Geography</span>
-            <div className="seg">
+          <div className="field">
+            <span>Geography</span>
+            <div className="seg" id="hd-g">
               <button
-                className={activeGeo === 'nation' ? 'on' : ''}
-                onClick={() => setActiveGeo('nation')}
+                data-g="nation"
+                className={geoScope === 'nation' ? 'on' : ''}
+                onClick={() => setGeoScope('nation')}
               >
                 All US counties
               </button>
               <button
-                className={activeGeo === 'state' ? 'on' : ''}
-                onClick={() => setActiveGeo('state')}
+                data-g="state"
+                className={geoScope === 'state' ? 'on' : ''}
+                onClick={() => setGeoScope('state')}
               >
-                {activeCounty?.stateAbbr || 'State'}
+                {stateName} counties
               </button>
               <button
-                className={activeGeo === 'tracts' ? 'on' : ''}
-                onClick={() => setActiveGeo('tracts')}
+                data-g="tracts"
+                className={geoScope === 'tracts' ? 'on' : ''}
+                onClick={() => setGeoScope('tracts')}
               >
-                {activeCounty?.name || 'County'} tracts
+                {countyName} tracts
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Ruled KPI Strip */}
-      <section className="strip">
-        <div className="strip-i">
-          <div className="strip-l">Disparity ratio, most vs least vulnerable</div>
-          <div className="strip-v">
-            <span className="num">{stats.disparityRatio.toFixed(2)}×</span>
+      {/* Body Container matching prototype line 2169 & 2185-2216 */}
+      <div id="hd-body">
+        {/* Strip: 4 KPI readouts matching prototype lines 2185-2189 */}
+        <section className="strip">
+          <div className="strip-i">
+            <div className="strip-l">Disparity ratio, most vs least vulnerable</div>
+            <div className="strip-v">
+              <span className="num" data-count={stats.ratio.toFixed(2)} data-dec="2">
+                {stats.ratio.toFixed(2)}
+              </span>
+              <small>×</small>
+            </div>
+            <div className="strip-f">
+              {m.short}, quintile 5 against quintile 1
+            </div>
           </div>
-          <div className="strip-f">Top 20% compared to bottom 20%</div>
+
+          <div className="strip-i">
+            <div className="strip-l">Burden held by the most vulnerable 20%</div>
+            <div className="strip-v">
+              <span className="num" data-count={(stats.top20 * 100).toFixed(1)} data-dec="1">
+                {(stats.top20 * 100).toFixed(1)}
+              </span>
+              <small>%</small>
+            </div>
+            <div className="strip-f">Population-weighted share</div>
+          </div>
+
+          <div className="strip-i">
+            <div className="strip-l">Quintile gap change since 2016</div>
+            <div className="strip-v">
+              <span className="num">
+                {stats.gapNow >= stats.gapThen ? '+' : ''}
+                {(stats.gapNow - stats.gapThen).toFixed(1)}
+              </span>
+              <small>pts</small>
+            </div>
+            <div className="strip-f">
+              <span className={`delta ${stats.gapNow > stats.gapThen ? 'up' : 'down'}`}>
+                {stats.gapNow > stats.gapThen ? 'Widening' : 'Narrowing'}
+              </span>{' '}
+              now {stats.gapNow.toFixed(1)} pts
+            </div>
+          </div>
+
+          <div className="strip-i">
+            <div className="strip-l">Units in the national worst quartile</div>
+            <div className="strip-v">
+              <span className="num" data-count={stats.above}>
+                {stats.above}
+              </span>
+              <small>of {units.length.toLocaleString()}</small>
+            </div>
+            <div className="strip-f">{geoScope === 'tracts' ? 'Tracts in view' : 'Counties in view'}</div>
+          </div>
+        </section>
+
+        {/* Main Grid: 7 Panels matching prototype lines 2190-2198 */}
+        <div className="grid g-12">
+          {/* Panel 1: Outcome by Vulnerability Quintile */}
+          <section className="panel c-7">
+            <div className="panel-h">
+              <div>
+                <h3>{m.label} by vulnerability quintile</h3>
+                <div className="sub">Population-weighted averages. Quintile 5 is the most vulnerable</div>
+              </div>
+            </div>
+            <div id="hd-q" ref={chartQRef}></div>
+          </section>
+
+          {/* Panel 2: Geographic Inequality */}
+          <section className="panel c-5">
+            <div className="panel-h">
+              <div>
+                <h3>Geographic inequality</h3>
+                <div className="sub">Concentration curve, units ordered from most to least vulnerable</div>
+              </div>
+              <span className="pill violet">Index {stats.ci.toFixed(2)}</span>
+            </div>
+            <div id="hd-l" ref={chartLRef}></div>
+          </section>
+
+          {/* Panel 3: Vulnerability Indicator Heatmap */}
+          <section className="panel c-12">
+            <div className="panel-h">
+              <div>
+                <h3>Vulnerability indicator heatmap</h3>
+                <div className="sub">
+                  Standard deviations from the national county mean. Warm cells signal worse outcomes
+                </div>
+              </div>
+            </div>
+            <div id="hd-m" ref={chartMRef}></div>
+          </section>
+
+          {/* Panel 4: Trend Analysis */}
+          <section className="panel c-7">
+            <div className="panel-h">
+              <div>
+                <h3>Trend analysis</h3>
+                <div className="sub">Most and least vulnerable quintiles, 2016 to 2025</div>
+              </div>
+            </div>
+            <div id="hd-t" ref={chartTRef}></div>
+            <div className="legend-row">
+              <span>
+                <i style={{ background: 'var(--rose)' }}></i>Quintile 5, most vulnerable
+              </span>
+              <span>
+                <i style={{ background: 'var(--teal)' }}></i>Quintile 1, least vulnerable
+              </span>
+            </div>
+          </section>
+
+          {/* Panel 5: Regional Comparison */}
+          <section className="panel c-5">
+            <div className="panel-h">
+              <div>
+                <h3>Regional comparison</h3>
+                <div className="sub">Population-weighted {m.short.toLowerCase()} by Census region</div>
+              </div>
+            </div>
+            <div id="hd-r" ref={chartRRef}></div>
+          </section>
+
+          {/* Panel 6: Vulnerability against Metric Scatter */}
+          <section className="panel c-8">
+            <div className="panel-h">
+              <div>
+                <h3>Vulnerability against {m.short.toLowerCase()}</h3>
+                <div className="sub">
+                  Each point is a {geoScope === 'tracts' ? 'tract' : 'county'}. Click a point to open it on the health map
+                </div>
+              </div>
+            </div>
+            <div id="hd-s" ref={chartSRef}></div>
+          </section>
+
+          {/* Panel 7: Analytical Insights */}
+          <section className="panel c-4">
+            <div className="panel-h">
+              <h3>Analytical insights</h3>
+            </div>
+            <div className="stack" id="hd-i">
+              <div className="insight">
+                <span className="ic">
+                  <Icon name="spark" />
+                </span>
+                <p>
+                  Residents of the most vulnerable fifth of {geoScope === 'tracts' ? 'tracts' : 'counties'} experience{' '}
+                  <b>{stats.ratio.toFixed(2)}×</b> the {m.bad === 'low' ? 'shortfall in' : 'rate of'}{' '}
+                  {m.short.toLowerCase()} seen in the least vulnerable fifth.
+                  <small>Ratio of quintile 5 to quintile 1</small>
+                </p>
+              </div>
+
+              <div className="insight">
+                <span className="ic">
+                  <Icon name="spark" />
+                </span>
+                <p>
+                  The {worstReg} has the {m.bad === 'low' ? 'lowest' : 'highest'} regional {m.short.toLowerCase()}, at{' '}
+                  {m.f(worstRegMean)}.
+                  <small>Population-weighted regional average</small>
+                </p>
+              </div>
+
+              <div className="insight">
+                <span className="ic">
+                  <Icon name="spark" />
+                </span>
+                <p>
+                  The gap between quintiles has {stats.gapNow > stats.gapThen ? 'widened' : 'narrowed'} by{' '}
+                  {Math.abs(stats.gapNow - stats.gapThen).toFixed(1)} points since 2016
+                  {stats.gapNow > stats.gapThen
+                    ? ', suggesting current interventions are not reaching the highest-need areas'
+                    : ''}
+                  .<small>Synthetic ten-year trend</small>
+                </p>
+              </div>
+
+              <button className="btn" id="hd-add" onClick={handleOpenInsightModal}>
+                <Icon name="clipboard" />
+                <span>Add insight to assessment</span>
+              </button>
+            </div>
+          </section>
         </div>
-
-        <div className="strip-i">
-          <div className="strip-l">Burden held by the most vulnerable 20%</div>
-          <div className="strip-v">
-            <span className="num">{stats.top20BurdenShare.toFixed(1)}%</span>
-          </div>
-          <div className="strip-f">Share of overall condition burden</div>
-        </div>
-
-        <div className="strip-i">
-          <div className="strip-l">Quintile gap change since 2016</div>
-          <div className="strip-v">
-            <span className="num">{stats.gapChange > 0 ? `+${stats.gapChange.toFixed(1)}%` : `${stats.gapChange.toFixed(1)}%`}</span>
-          </div>
-          <div className="strip-f">{stats.gapChange >= 0 ? 'Widening health inequity' : 'Narrowing health gap'}</div>
-        </div>
-
-        <div className="strip-i">
-          <div className="strip-l">Units in the national worst quartile</div>
-          <div className="strip-v">
-            <span className="num">{stats.worstQuartileCount}</span>
-            <small> of {activeGeo === 'tracts' ? tracts.length : 39}</small>
-          </div>
-          <div className="strip-f">Above 75th percentile national cutoff</div>
-        </div>
-      </section>
-
-      {/* Main Analysis Grid */}
-      <div className="grid g-12" style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '16px' }}>
-        {/* Panel: Outcome by Vulnerability Quintile (c-7) */}
-        <section className="panel c-7" style={{ gridColumn: 'span 7' }}>
-          <div className="panel-h">
-            <div>
-              <h3>{METRICS_CONFIG[activeMetric]?.label || activeMetric} by vulnerability quintile</h3>
-              <div className="sub">Population-weighted average for each fifth of {activeGeo === 'tracts' ? 'tracts' : 'counties'}</div>
-            </div>
-          </div>
-          <div style={{ height: '240px', marginTop: '10px' }}>
-            <BarChart
-              data={quintileBarData}
-              height={240}
-              unit="%"
-            />
-          </div>
-        </section>
-
-        {/* Panel: Geographic Inequality / Concentration Curve (c-5) */}
-        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
-          <div className="panel-h">
-            <div>
-              <h3>Geographic inequality</h3>
-              <div className="sub">Concentration curve: cumulative population vs burden</div>
-            </div>
-          </div>
-          <div style={{ height: '240px', marginTop: '10px' }}>
-            <LorenzCurve
-              pairs={stats.lorenzPairs}
-              height={240}
-            />
-          </div>
-        </section>
-
-        {/* Panel: Vulnerability Indicator Heatmap / Z-Score Matrix (c-12) */}
-        <section className="panel c-12" style={{ gridColumn: 'span 12' }}>
-          <div className="panel-h">
-            <div>
-              <h3>Vulnerability indicator heatmap</h3>
-              <div className="sub">Standard deviations from the national mean across health domains (Z-score)</div>
-            </div>
-          </div>
-          <div style={{ marginTop: '10px' }}>
-            <ZScoreMatrix
-              rows={matrixRows}
-              cols={matrixCols}
-              matrixData={zScoreMatrixData}
-              height={240}
-            />
-          </div>
-        </section>
-
-        {/* Panel: Trend Analysis (c-7) */}
-        <section className="panel c-7" style={{ gridColumn: 'span 7' }}>
-          <div className="panel-h">
-            <div>
-              <h3>Trend analysis</h3>
-              <div className="sub">Most and least vulnerable quintiles over 10 years</div>
-            </div>
-          </div>
-          <div style={{ height: '250px', marginTop: '10px' }}>
-            <TrendLineChart
-              years={years10}
-              series={trendSeries}
-              height={250}
-              unit="%"
-            />
-          </div>
-        </section>
-
-        {/* Panel: Regional Comparison (c-5) */}
-        <section className="panel c-5" style={{ gridColumn: 'span 5' }}>
-          <div className="panel-h">
-            <div>
-              <h3>Regional comparison</h3>
-              <div className="sub">Population-weighted rate by US Census region</div>
-            </div>
-          </div>
-          <div style={{ height: '250px', marginTop: '10px' }}>
-            <BarChart
-              data={regionalData}
-              height={250}
-              unit="%"
-            />
-          </div>
-        </section>
-
-        {/* Panel: Vulnerability against Metric Scatter (c-8) */}
-        <section className="panel c-8" style={{ gridColumn: 'span 8' }}>
-          <div className="panel-h">
-            <div>
-              <h3>Vulnerability against {METRICS_CONFIG[activeMetric]?.short || activeMetric}</h3>
-              <div className="sub">Each dot is a {activeGeo === 'tracts' ? 'census tract' : 'county'}. R² = {scatterR2.toFixed(2)}</div>
-            </div>
-          </div>
-          <div style={{ height: '280px', marginTop: '10px' }}>
-            <ScatterPlot
-              points={scatterPoints}
-              height={280}
-              xLabel="Social Vulnerability Index (SVI)"
-              yLabel={`${METRICS_CONFIG[activeMetric]?.short || activeMetric} (%)`}
-            />
-          </div>
-        </section>
-
-        {/* Panel: Analytical Insights (c-4) */}
-        <section className="panel c-4" style={{ gridColumn: 'span 4' }}>
-          <div className="panel-h">
-            <h3>Analytical insights</h3>
-          </div>
-          <div className="stack" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-            <div className="insight">
-              <span className="ic"><Icon name="spark" size={16} /></span>
-              <p>
-                Residents of the most vulnerable fifth of {activeGeo === 'tracts' ? 'tracts' : 'counties'} experience{' '}
-                <b>{stats.disparityRatio.toFixed(2)}× higher rate</b> of {activeMetric} than the least vulnerable fifth.
-                <small>Significant structural disparity across neighborhood socioeconomic tiers.</small>
-              </p>
-            </div>
-
-            <div className="insight">
-              <span className="ic"><Icon name="spark" size={16} /></span>
-              <p>
-                The South has the highest regional {activeMetric}, at{' '}
-                <b>{Math.max(...regionalData.map((r: any) => r.value)).toFixed(1)}%</b>.
-                <small>Regional disparity reflects deep-seated rural access constraints.</small>
-              </p>
-            </div>
-
-            <div className="insight">
-              <span className="ic"><Icon name="spark" size={16} /></span>
-              <p>
-                The gap between quintiles has{' '}
-                <b>{stats.gapChange >= 0 ? 'widened' : 'narrowed'} by {Math.abs(stats.gapChange).toFixed(1)} percentage points</b>{' '}
-                since 2016.
-                <small>Targeted local community clinics are essential to close the remaining gap.</small>
-              </p>
-            </div>
-          </div>
-        </section>
       </div>
 
-      {/* Add Finding Modal */}
-      {findingModalOpen && (
+      {/* Add Finding Modal matching prototype lines 1788-1795 */}
+      {findingModalOpen && findingTract && (
         <div id="modal-root" className="open">
           <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
-          <div className="modal" role="dialog" aria-modal="true" style={{ width: '480px', maxWidth: '90vw' }}>
+          <div className="modal" role="dialog" aria-modal="true" style={{ width: '560px', maxWidth: '90vw' }}>
             <div className="modal-h">
               <div>
-                <h3>Add Disparity Finding</h3>
-                <div className="sub">Record observation from {METRICS_CONFIG[activeMetric]?.label} analysis</div>
+                <h2>Add finding to an assessment</h2>
+                <p>
+                  {findingTract.name}, {countyLabel(activeCounty)}. GEOID {findingTract._id || findingTract.id}
+                </p>
               </div>
-              <button className="icon-btn" onClick={() => setFindingModalOpen(false)}>
-                <Icon name="x" size={16} />
+              <button className="icon-btn" data-close aria-label="Close" onClick={() => setFindingModalOpen(false)}>
+                <Icon name="x" />
               </button>
             </div>
 
-            <div className="modal-b" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
-                  Target Assessment
-                </label>
-                <select
-                  className="input"
-                  value={targetAssessmentId}
-                  onChange={(e) => setTargetAssessmentId(e.target.value)}
-                  style={{ width: '100%', height: '38px', borderRadius: '10px', padding: '0 10px', fontSize: '13px' }}
-                >
-                  <option value="new">+ Create New Disparity Assessment for {activeCounty?.name}</option>
-                  {assessmentsList.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {a.title} ({a.status})
-                    </option>
-                  ))}
-                </select>
+            <div className="grid g-12">
+              <div className="c-6 c-lg-6">
+                <div className="kv">
+                  <dt>Vulnerability</dt>
+                  <dd>
+                    {(findingTract.svi ?? 0).toFixed(2)} (
+                    {TIER_LABEL[clamp(Math.floor((findingTract.svi ?? 0) * 5), 0, 4)] || 'Moderate'})
+                  </dd>
+                  <dt>Poverty</dt>
+                  <dd>{getV(findingTract, 'poverty').toFixed(1)}%</dd>
+                  <dt>Uninsured</dt>
+                  <dd>{getV(findingTract, 'uninsured').toFixed(1)}%</dd>
+                  <dt>Diabetes</dt>
+                  <dd>{getV(findingTract, 'diabetes').toFixed(1)}%</dd>
+                  <dt>Access score</dt>
+                  <dd>{getV(findingTract, 'access').toFixed(0)}/100</dd>
+                </div>
               </div>
 
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
-                  Finding Note
+              <div className="c-6 c-lg-6 stack">
+                <label className="field">
+                  Assessment
+                  <select
+                    className="input"
+                    id="fa-a"
+                    value={selectedAssessmentId}
+                    onChange={e => setSelectedAssessmentId(e.target.value)}
+                  >
+                    {assessmentsList
+                      .filter(a => a.status !== 'Completed')
+                      .map(a => (
+                        <option key={a._id} value={a._id}>
+                          {a.title} ({a.status})
+                        </option>
+                      ))}
+                    <option value="__new">Create a new draft assessment</option>
+                  </select>
                 </label>
-                <textarea
-                  className="input"
-                  rows={4}
-                  value={findingNote}
-                  onChange={(e) => setFindingNote(e.target.value)}
-                  placeholder={`Document disparity ratio (${stats.disparityRatio.toFixed(2)}x) or specific community interventions needed...`}
-                  style={{ width: '100%', borderRadius: '10px', padding: '10px', fontSize: '13px', resize: 'vertical' }}
-                />
+
+                <label className="field">
+                  Finding
+                  <textarea
+                    className="input"
+                    id="fa-n"
+                    rows={4}
+                    value={findingNote}
+                    onChange={e => setFindingNote(e.target.value)}
+                  />
+                </label>
               </div>
             </div>
 
-            <div className="modal-f" style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button className="btn" onClick={() => setFindingModalOpen(false)}>
-                Cancel
-              </button>
-              <button className="btn primary" onClick={handleSubmitFinding} disabled={submittingFinding}>
-                {submittingFinding ? 'Saving...' : 'Save Finding'}
+            <div className="modal-f">
+              <span className="note">Values are synthetic demo data captured at the time of the finding.</span>
+              <button className="btn primary" id="fa-go" onClick={handleSubmitFinding} disabled={submittingFinding}>
+                <Icon name="plus" />
+                <span>{submittingFinding ? 'Saving...' : 'Add finding'}</span>
               </button>
             </div>
           </div>
