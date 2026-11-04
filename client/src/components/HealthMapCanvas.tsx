@@ -246,6 +246,7 @@ export interface HealthMapCanvasProps {
   jurisdictionCountyId?: string;
   onTractSelect?: (tract: any) => void;
   onCountySelect?: (county: CountyRecord) => void;
+  onLayerSelect?: () => void;
   onAddFinding?: (tract: any) => void;
   onToggleCompare?: (tractId: string) => void;
   onToggleFlag?: (tractId: string) => void;
@@ -259,6 +260,7 @@ export function HealthMapCanvas({
   jurisdictionCountyId,
   onTractSelect,
   onCountySelect,
+  onLayerSelect,
   onAddFinding,
   onToggleCompare,
   onToggleFlag,
@@ -291,6 +293,13 @@ export function HealthMapCanvas({
     c: null,
     t: null
   });
+
+  const curLayerIdRef = useRef(curLayerId);
+  curLayerIdRef.current = curLayerId;
+  const curMetricRef = useRef(curMetric);
+  curMetricRef.current = curMetric;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   const [heat, setHeat] = useState<boolean>(false);
   const [markers, setMarkers] = useState<boolean>(true);
@@ -440,7 +449,7 @@ export function HealthMapCanvas({
         .attr('r', 0)
         .attr('fill', 'url(#hm-heat)')
         .transition()
-        .duration(800)
+        .duration(900)
         .delay((_, i) => i * 1.2)
         .attr('r', (d: any) => Math.max(6, Math.sqrt(d.area || 30) * 1.6));
     }
@@ -519,9 +528,11 @@ export function HealthMapCanvas({
     const lyr = LAYERS.find(l => l.id === lId) || LAYERS[0];
     const mMeta = METRICS[mKey] || { bad: 'high', label: mKey };
 
-    // Domain & color scale
+    // Domain & color scale matching prototype colorScale() line 1094-1104
     const values = allCounties.map(c => getV(c, mKey));
-    const low = '#101B45';
+    const low = typeof window !== 'undefined'
+      ? (getComputedStyle(document.documentElement).getPropertyValue('--map-low').trim() || '#101B45')
+      : '#101B45';
     const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
       d3.interpolateRgb(low, lyr.ramp[0])(0.6),
       ...lyr.ramp
@@ -536,11 +547,11 @@ export function HealthMapCanvas({
     const bins = d3.range(7).map(i => interp(tOf(i)));
     const extent = d3.extent(values) as [number, number];
 
-    // Colorize counties
+    // Colorize counties matching prototype line 1320-1321
     const countyPaths = countiesGroup.selectAll<SVGPathElement, CountyRecord>('path.county');
     if (animate) {
       countyPaths
-        .transition('recolor-counties')
+        .transition('fill')
         .duration(520)
         .delay((d: any) => (d.cx / 975) * 650)
         .attr('fill', d => getColor(getV(d, mKey)));
@@ -548,7 +559,7 @@ export function HealthMapCanvas({
       countyPaths.attr('fill', d => getColor(getV(d, mKey)));
     }
 
-    // If county selected, color tracts
+    // If county selected, color tracts matching prototype line 1341-1345
     let tractScaleBins: string[] | null = null;
     let tractExt: [number, number] | null = null;
 
@@ -561,10 +572,17 @@ export function HealthMapCanvas({
       tractScaleBins = d3.range(7).map(i => interp(tOf(i)));
       tractExt = d3.extent(tValues) as [number, number];
 
-      tractsGroup?.selectAll<SVGPathElement, any>('path.tract')
-        .transition('recolor-tracts')
-        .duration(380)
-        .attr('fill', t => getTractColor(getV(t, mKey)));
+      const sel = tractsGroup?.selectAll<SVGPathElement, any>('path.tract');
+      if (sel) {
+        if (animate) {
+          sel.transition('fill')
+            .duration(500)
+            .delay((_, i) => i * 6)
+            .attr('fill', t => getTractColor(getV(t, mKey)));
+        } else {
+          sel.attr('fill', t => getTractColor(getV(t, mKey)));
+        }
+      }
 
       drawHeatmap(heat, mKey, cRecord);
       drawMarkers(markers, mKey, cRecord, d3.zoomTransform(svgRef.current?.node()!).k);
@@ -710,9 +728,29 @@ export function HealthMapCanvas({
       const gM = g.append('g').style('pointer-events', 'none');
       markersGroupRef.current = gM;
 
-      // State and nation borders
-      gB.append('path').attr('class', 'state-b').attr('d', pathGen(statesMesh as any));
-      gB.append('path').attr('class', 'nation-b').attr('d', pathGen(nationFeature as any));
+      // State and nation borders matching prototype line 1286
+      const sb = gB.append('path').attr('class', 'state-b').attr('d', pathGen(statesMesh as any));
+      const nb = gB.append('path').attr('class', 'nation-b').attr('d', pathGen(nationFeature as any));
+      const borders: [d3.Selection<SVGPathElement, unknown, null, undefined>, number, number][] = [
+        [nb, 0, 1700],
+        [sb, 500, 1600]
+      ];
+      borders.forEach(([p, delay, dur]) => {
+        const node = p.node() as SVGGeometryElement | null;
+        const L = node && node.getTotalLength ? node.getTotalLength() : 0;
+        if (L > 0) {
+          p.attr('stroke-dasharray', `${L} ${L}`)
+            .attr('stroke-dashoffset', L)
+            .transition('draw')
+            .delay(delay)
+            .duration(dur)
+            .ease(d3.easeCubicInOut)
+            .attr('stroke-dashoffset', 0)
+            .on('end', function () {
+              d3.select(this).attr('stroke-dasharray', null);
+            });
+        }
+      });
 
       // Zoom Behavior
       let currentK = 1;
@@ -805,11 +843,16 @@ export function HealthMapCanvas({
     };
   }, []); // Run once on mount
 
-  // Recolor Counties and Tracts whenever metric or layer or scope changes
+  // Theme change observer to smoothly recolor counties when theme toggles
   useEffect(() => {
-    if (!countiesGroupRef.current || !countiesRef.current.length) return;
-    colorize(curMetric, curLayerId, scope, false);
-  }, [curLayerId, curMetric, scope.c, heat, markers, colorize]);
+    const observer = new MutationObserver(() => {
+      if (countiesGroupRef.current && countiesRef.current.length) {
+        colorize(curMetricRef.current, curLayerIdRef.current, scopeRef.current, true);
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    return () => observer.disconnect();
+  }, [colorize]);
 
   // Update selection / comparison outline styles on tracts whenever compareSet or scope.t changes
   useEffect(() => {
@@ -820,15 +863,19 @@ export function HealthMapCanvas({
       .classed('sel', d => d.id === scope.t);
   }, [compareSet, scope.t]);
 
-  // Action handlers
+  // Action handlers matching prototype line 1984
   const handleSelectLayer = (lyrId: string) => {
     const lyr = LAYERS.find(l => l.id === lyrId) || LAYERS[0];
+    const newMetric = lyr.metrics[0];
     setCurLayerId(lyr.id);
-    setCurMetric(lyr.metrics[0]);
+    setCurMetric(newMetric);
+    onLayerSelect?.();
+    colorize(newMetric, lyr.id, scopeRef.current, true);
   };
 
   const handleSelectMetric = (mKey: string) => {
     setCurMetric(mKey);
+    colorize(mKey, curLayerId, scopeRef.current, true);
   };
 
   const handleZoomToState = (st: string) => {
@@ -897,6 +944,25 @@ export function HealthMapCanvas({
       .delay((_: any, i: number) => 350 + i * 12)
       .duration(450)
       .attr('opacity', 1);
+
+    // Boundary draw sweep matching prototype line 1353
+    p?.each(function () {
+      const node = this as SVGGeometryElement;
+      const L = node && node.getTotalLength ? node.getTotalLength() : 0;
+      if (L > 0) {
+        d3.select(this)
+          .attr('stroke-dasharray', `${L} ${L}`)
+          .attr('stroke-dashoffset', L);
+      }
+    })
+      .transition('tdraw')
+      .delay((_: any, i: number) => 300 + i * 12)
+      .duration(900)
+      .ease(d3.easeCubicOut)
+      .attr('stroke-dashoffset', 0)
+      .on('end', function () {
+        d3.select(this).attr('stroke-dasharray', null);
+      });
 
     p?.on('pointerenter', (e: MouseEvent, d: any) => {
       const m = METRICS[curMetric] || { short: curMetric, f: (v: number) => String(v) };

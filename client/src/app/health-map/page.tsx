@@ -51,6 +51,9 @@ function HealthMapContent() {
         onTractSelect={() => {
           markWorkflowMilestone('tract');
         }}
+        onLayerSelect={() => {
+          markWorkflowMilestone('layer');
+        }}
         compareTractIds={session?.compareTracts || []}
         flaggedTractIds={session?.flaggedTracts || []}
         onToggleCompare={(tid) => toggleCompareTract(tid)}
