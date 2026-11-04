@@ -130,6 +130,7 @@ function InnerShell({ children }: { children: React.ReactNode }) {
       <div id="main">
         <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
         <div id="view-wrap">
+          <div id="scanline" />
           <main
             id="view"
             key={`${pathname}-${navCount}`}

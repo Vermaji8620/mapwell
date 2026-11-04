@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
 import * as d3 from 'd3';
+import gsap from 'gsap';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from '@/context/SessionContext';
 import { CensusTract, Jurisdiction, Assessment } from '@/types';
@@ -123,6 +124,62 @@ function cvar(n: string): string {
 }
 
 /* =====================================================================
+   GSAP ANIMATIONS MATCHING PROTOTYPE enter() AND countUp()
+   ===================================================================== */
+function enterView(view: HTMLElement | null) {
+  if (!view || typeof window === 'undefined') return;
+  const scanline = document.getElementById('scanline');
+  const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
+
+  if (scanline) {
+    tl.fromTo(scanline, { opacity: 0.9, top: 0 }, { top: '100%', duration: 0.9, ease: 'power2.inOut' }, 0).to(
+      scanline,
+      { opacity: 0, duration: 0.25 },
+      0.7
+    );
+  }
+
+  const blocks = view.querySelectorAll<HTMLElement>(
+    ':scope > .page-head, :scope > .panel, :scope > .toolbar, :scope > #hd-body > .strip > *, :scope > #hd-body > .grid > *'
+  );
+  if (blocks.length) {
+    tl.fromTo(
+      blocks,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.7, stagger: 0.04, ease: 'power3.out', clearProps: 'opacity,transform' },
+      0.04
+    );
+  }
+}
+
+function countUp(root: HTMLElement | null) {
+  if (!root || typeof window === 'undefined') return;
+  const els = root.querySelectorAll<HTMLElement>('[data-count]');
+  els.forEach(el => {
+    const to = +el.dataset.count!;
+    if (isNaN(to)) return;
+    const dec = +(el.dataset.dec || 0);
+    const pre = el.dataset.pre || '';
+    const suf = el.dataset.suf || '';
+    const out = (v: number) => pre + (dec ? v.toFixed(dec) : Math.round(v).toLocaleString('en-US')) + suf;
+
+    const prev = (el as any)._currVal;
+    const fromVal = typeof prev === 'number' && !isNaN(prev) ? prev : 0;
+    (el as any)._currVal = to;
+
+    const obj = { v: fromVal };
+    gsap.to(obj, {
+      v: to,
+      duration: 1.6,
+      ease: 'power3.out',
+      onUpdate: () => {
+        el.textContent = out(obj.v);
+      }
+    });
+  });
+}
+
+/* =====================================================================
    TOOLTIP HELPERS MATCHING PROTOTYPE
    ===================================================================== */
 function showTip(html: string, e: any) {
@@ -163,7 +220,7 @@ function svgIn(el: HTMLElement, w: number, h: number) {
 }
 
 /* =====================================================================
-   EXACT D3 CHART DRAWING FUNCTIONS FROM entire_website.html
+   EXACT D3 CHART DRAWING FUNCTIONS WITH SMOOTH ANIMATIONS
    ===================================================================== */
 function barChart(el: HTMLElement, data: any[], o: any = {}) {
   const W = Math.max(200, el.clientWidth);
@@ -202,13 +259,19 @@ function barChart(el: HTMLElement, data: any[], o: any = {}) {
       .attr('fill', 'var(--surface-2)')
       .attr('width', Math.max(0, W - lw - 64));
 
-    row
+    const b = row
       .append('rect')
       .attr('x', lw)
       .attr('y', rowH / 2 - 3)
       .attr('height', 6)
       .attr('rx', 1)
       .attr('fill', d => d.color || fill)
+      .attr('width', 0);
+
+    b.transition()
+      .duration(900)
+      .delay((_d, i) => i * 60)
+      .ease(d3.easeCubicOut)
       .attr('width', d => Math.max(0, x(d.value)));
 
     row
@@ -278,6 +341,13 @@ function barChart(el: HTMLElement, data: any[], o: any = {}) {
     .attr('width', x.bandwidth())
     .attr('rx', Math.min(2, x.bandwidth() / 3))
     .attr('fill', d => d.color || fill)
+    .attr('y', y(0))
+    .attr('height', 0);
+
+  b.transition()
+    .duration(900)
+    .delay((_d, i) => i * 70)
+    .ease(d3.easeCubicOut)
     .attr('y', d => y(d.value))
     .attr('height', d => Math.max(0, y(0) - y(d.value)));
 
@@ -289,7 +359,11 @@ function barChart(el: HTMLElement, data: any[], o: any = {}) {
     .attr('text-anchor', 'middle')
     .attr('x', d => (x(d.label) || 0) + x.bandwidth() / 2)
     .attr('y', d => y(d.value) - 6)
-    .text(d => f(d.value));
+    .text(d => f(d.value))
+    .attr('opacity', 0)
+    .transition()
+    .delay(700)
+    .attr('opacity', 1);
 
   b.on('pointerenter', (e, d: any) =>
     showTip(`<b>${esc(d.label)}</b>${tipRows([[o.name || 'Value', f(d.value)]])}`, e)
@@ -368,9 +442,17 @@ function lorenz(el: HTMLElement, pairs: [number, number][], o: any = {}) {
     .y1(d => y(d[1]))
     .curve(d3.curveMonotoneX);
 
-  svg.append('path').attr('d', ar(pairs) || '').attr('fill', `url(#${gid})`);
-
   svg
+    .append('path')
+    .attr('d', ar(pairs) || '')
+    .attr('fill', `url(#${gid})`)
+    .attr('opacity', 0)
+    .transition()
+    .delay(600)
+    .duration(700)
+    .attr('opacity', 1);
+
+  const p = svg
     .append('path')
     .attr(
       'd',
@@ -383,6 +465,16 @@ function lorenz(el: HTMLElement, pairs: [number, number][], o: any = {}) {
     .attr('fill', 'none')
     .attr('stroke', cvar('--rose'))
     .attr('stroke-width', 2.6);
+
+  const L = (p.node() as SVGPathElement)?.getTotalLength?.() || 0;
+  if (L > 0) {
+    p.attr('stroke-dasharray', `${L} ${L}`)
+      .attr('stroke-dashoffset', L)
+      .transition()
+      .duration(1300)
+      .ease(d3.easeCubicInOut)
+      .attr('stroke-dashoffset', 0);
+  }
 
   if (o.xl) {
     svg
@@ -437,7 +529,13 @@ function matrix(el: HTMLElement, rows: string[], cols: string[], Z: number[][], 
         .attr('width', Math.max(0, cw - 4))
         .attr('height', Math.max(0, ch - 4))
         .attr('rx', 2)
-        .attr('fill', c2(v));
+        .attr('fill', c2(v))
+        .attr('opacity', 0);
+
+      rc.transition()
+        .duration(500)
+        .delay(i * 50 + j * 30)
+        .attr('opacity', 1);
 
       rc.on('pointerenter', e => showTip(`<b>${esc(r)}</b>${tipRows([[c, f(v) + ' SD vs national']])}`, e))
         .on('pointermove', moveTip)
@@ -452,7 +550,11 @@ function matrix(el: HTMLElement, rows: string[], cols: string[], Z: number[][], 
           .attr('text-anchor', 'middle')
           .style('font-size', '11px')
           .text(f(v))
-          .style('pointer-events', 'none');
+          .style('pointer-events', 'none')
+          .attr('opacity', 0)
+          .transition()
+          .delay(i * 50 + j * 30 + 200)
+          .attr('opacity', 1);
       }
     });
   });
@@ -528,10 +630,18 @@ function lineChart(el: HTMLElement, xs: string[], series: any[], o: any = {}) {
       const gr = svg.append('defs').append('linearGradient').attr('id', gid).attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1);
       gr.append('stop').attr('offset', 0).attr('stop-color', s.color).attr('stop-opacity', 0.3);
       gr.append('stop').attr('offset', 1).attr('stop-color', s.color).attr('stop-opacity', 0);
-      svg.append('path').attr('d', area(s.values) || '').attr('fill', `url(#${gid})`);
+      svg
+        .append('path')
+        .attr('d', area(s.values) || '')
+        .attr('fill', `url(#${gid})`)
+        .attr('opacity', 0)
+        .transition()
+        .duration(900)
+        .delay(500)
+        .attr('opacity', 1);
     }
 
-    svg
+    const p = svg
       .append('path')
       .attr('d', line(s.values) || '')
       .attr('fill', 'none')
@@ -539,6 +649,17 @@ function lineChart(el: HTMLElement, xs: string[], series: any[], o: any = {}) {
       .attr('stroke-width', s.width || 2.4)
       .attr('stroke-dasharray', s.dash || null)
       .attr('stroke-linecap', 'round');
+
+    const L = (p.node() as SVGPathElement)?.getTotalLength?.() || 0;
+    if (L > 0 && !s.dash) {
+      p.attr('stroke-dasharray', `${L} ${L}`)
+        .attr('stroke-dashoffset', L)
+        .transition()
+        .duration(1300)
+        .delay(si * 160)
+        .ease(d3.easeCubicInOut)
+        .attr('stroke-dashoffset', 0);
+    }
   });
 
   // hover crosshair
@@ -675,6 +796,12 @@ function scatter(el: HTMLElement, pts: any[], o: any = {}) {
     .attr('fill-opacity', 0.75)
     .attr('stroke', d => (d.hl ? cvar('--text') : 'none'))
     .attr('stroke-width', 1.5)
+    .attr('r', 0);
+
+  c.transition()
+    .duration(600)
+    .delay((_d, i) => Math.min(900, i * 2))
+    .ease(d3.easeCubicOut)
     .attr('r', d => d.r || 3.2);
 
   c.on('pointerenter', (e, d: any) =>
@@ -725,6 +852,10 @@ function HealthDisparitiesContent() {
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string>('');
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Overall page container ref for enter and countUp animations
+  const pageRef = useRef<HTMLDivElement>(null);
+  const hasEnteredRef = useRef<boolean>(false);
 
   // Chart DOM container refs
   const chartQRef = useRef<HTMLDivElement>(null);
@@ -870,7 +1001,20 @@ function HealthDisparitiesContent() {
     return { worstReg: worst, worstRegMean: mean };
   }, [jurisdictions, activeMetric, m]);
 
-  // Render all 6 charts matching prototype draw()
+  // Trigger page stagger enter animation on initial load
+  useEffect(() => {
+    if (hasEnteredRef.current || !pageRef.current) return;
+    hasEnteredRef.current = true;
+    enterView(pageRef.current);
+  }, []);
+
+  // Trigger smooth countUp on data changes
+  useEffect(() => {
+    if (!pageRef.current) return;
+    countUp(pageRef.current);
+  }, [stats, activeMetric, geoScope]);
+
+  // Render all 6 charts matching prototype draw() with transitions
   useEffect(() => {
     if (!units.length || !activeCounty) return;
 
@@ -979,7 +1123,7 @@ function HealthDisparitiesContent() {
 
     // Chart 6: Vulnerability against metric scatter
     if (chartSRef.current) {
-      const pts = units.map(u => ({
+      const pts = units.map((u: any) => ({
         x: u.svi ?? 0,
         y: getV(u, activeMetric),
         c: TIER_COLOR[clamp(Math.floor((u.svi ?? 0) * 5), 0, 4)],
@@ -988,7 +1132,7 @@ function HealthDisparitiesContent() {
         r: geoScope === 'nation' ? 2.2 : 3.6,
         hl: (u._id || u.id) === activeCounty._id
       }));
-      scatter(chartSRef.current, geoScope === 'nation' ? pts.filter((_p, i) => i % 2 === 0) : pts, {
+      scatter(chartSRef.current, geoScope === 'nation' ? pts.filter((_p: any, i: number) => i % 2 === 0) : pts, {
         h: 280,
         xl: 'Social vulnerability index',
         yl: m.short,
@@ -1072,7 +1216,7 @@ function HealthDisparitiesContent() {
   const countyName = activeCounty?.name || 'County';
 
   return (
-    <>
+    <div ref={pageRef} style={{ width: '100%' }}>
       {/* Toast Notification in #toasts */}
       {toastMessage && (
         <div id="toasts">
@@ -1417,7 +1561,7 @@ function HealthDisparitiesContent() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
