@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useSession } from '@/context/SessionContext';
 import { HealthMapCanvas } from '@/components/HealthMapCanvas';
@@ -11,6 +11,7 @@ function HealthMapContent() {
   const urlTract = searchParams.get('tract');
 
   const {
+    activeCounty,
     setActiveJurisdiction,
     session,
     toggleFlagTract,
@@ -18,11 +19,31 @@ function HealthMapContent() {
     markWorkflowMilestone
   } = useSession();
 
+  // Workflow milestone 'map' matching prototype line 1939: wf('map');
+  useEffect(() => {
+    markWorkflowMilestone('map');
+  }, [markWorkflowMilestone]);
+
+  // Auto-collapse sidebar on mount if screen > 860px, restore on leave (prototype lines 1940-1941, 2059)
+  useEffect(() => {
+    const app = document.getElementById('app');
+    const wasCollapsed = app?.classList.contains('collapsed');
+    if (window.innerWidth > 860 && !wasCollapsed) {
+      app?.classList.add('collapsed');
+    }
+    return () => {
+      if (!wasCollapsed) {
+        app?.classList.remove('collapsed');
+      }
+    };
+  }, []);
+
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
       <HealthMapCanvas
         initialCountyId={urlCounty || undefined}
         initialTractId={urlTract || undefined}
+        jurisdictionCountyId={activeCounty?._id || undefined}
         onCountySelect={(county) => {
           setActiveJurisdiction(county.id);
           markWorkflowMilestone('region');

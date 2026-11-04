@@ -1,24 +1,15 @@
 'use client';
 
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
+import { useRouter } from 'next/navigation';
 import { CountyRecord, getCountyRepository, STATE_META } from '@/utils/countyRepository';
-import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG } from '@/config/metrics';
-import {
-  Search,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
-  Crosshair,
-  X,
-  FileText,
-  Flag,
-  Layers
-} from 'lucide-react';
-import Link from 'next/link';
+import { TIER_LABELS, TIER_COLORS } from '@/config/metrics';
 import { Icon } from '@/components/Icons';
 
+/* ===== Layers Definition from Prototype ===== */
 export interface LayerDef {
   id: string;
   name: string;
@@ -27,7 +18,7 @@ export interface LayerDef {
   ramp: string[];
 }
 
-export const HEALTH_MAP_LAYERS: LayerDef[] = [
+export const LAYERS: LayerDef[] = [
   {
     id: 'sdoh',
     name: 'Social determinants of health',
@@ -65,12 +56,61 @@ export const HEALTH_MAP_LAYERS: LayerDef[] = [
   }
 ];
 
-export const MAP_LOW = '#101B45';
+/* ===== Formatters ===== */
+const fmt = {
+  k: (v: number) =>
+    v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k' : Math.round(v) + '',
+  int: (v: number) => Math.round(v).toLocaleString(),
+  usd: (v: number) => '$' + Math.round(v).toLocaleString()
+};
 
-let topoCache: any = null;
-const tractCache = new Map<string, any[]>();
+/* ===== Metric Registry from Prototype ===== */
+export interface MetricMeta {
+  label: string;
+  short: string;
+  f: (v: number) => string;
+  bad: 'high' | 'low' | 'none';
+  unit?: string;
+}
 
-export function getMetricValue(rec: any, key: string): number {
+export const METRICS: Record<string, MetricMeta> = {
+  svi: { label: 'Social vulnerability index', short: 'Vulnerability', f: v => v.toFixed(2), bad: 'high', unit: '' },
+  sdoh: { label: 'SDOH composite burden', short: 'SDOH burden', f: v => v.toFixed(0), bad: 'high', unit: '/100' },
+  poverty: { label: 'Population below poverty line', short: 'Poverty', f: v => v.toFixed(1) + '%', bad: 'high' },
+  childPoverty: { label: 'Children below poverty line', short: 'Child poverty', f: v => v.toFixed(1) + '%', bad: 'high' },
+  income: { label: 'Median household income', short: 'Median income', f: v => fmt.usd(v), bad: 'low' },
+  rentBurden: { label: 'Rent-burdened households', short: 'Rent burden', f: v => v.toFixed(1) + '%', bad: 'high' },
+  oldHousing: { label: 'Housing built before 1960', short: 'Pre-1960 housing', f: v => v.toFixed(1) + '%', bad: 'high' },
+  crowding: { label: 'Overcrowded housing units', short: 'Crowding', f: v => v.toFixed(1) + '%', bad: 'high' },
+  noVehicle: { label: 'Households without a vehicle', short: 'No vehicle', f: v => v.toFixed(1) + '%', bad: 'high' },
+  transit: { label: 'Residents within ½ mile of transit', short: 'Transit access', f: v => v.toFixed(0) + '%', bad: 'low' },
+  commute: { label: 'Mean commute time', short: 'Commute', f: v => v.toFixed(0) + ' min', bad: 'high' },
+  noDiploma: { label: 'Adults without a high school diploma', short: 'No diploma', f: v => v.toFixed(1) + '%', bad: 'high' },
+  bachelors: { label: "Adults with a bachelor's degree", short: "Bachelor's+", f: v => v.toFixed(1) + '%', bad: 'low' },
+  broadband: { label: 'Households with broadband', short: 'Broadband', f: v => v.toFixed(0) + '%', bad: 'low' },
+  unemployment: { label: 'Unemployment rate', short: 'Unemployment', f: v => v.toFixed(1) + '%', bad: 'high' },
+  lfp: { label: 'Labor force participation', short: 'Labor force', f: v => v.toFixed(1) + '%', bad: 'low' },
+  uninsured: { label: 'Adults without health insurance', short: 'Uninsured', f: v => v.toFixed(1) + '%', bad: 'high' },
+  pcp: { label: 'Primary care physicians per 100k', short: 'PCP per 100k', f: v => v.toFixed(0), bad: 'low' },
+  driveTime: { label: 'Drive time to nearest clinic', short: 'Clinic drive time', f: v => v.toFixed(0) + ' min', bad: 'high' },
+  access: { label: 'Healthcare access score', short: 'Access score', f: v => v.toFixed(0), bad: 'low', unit: '/100' },
+  diabetes: { label: 'Diagnosed diabetes prevalence', short: 'Diabetes', f: v => v.toFixed(1) + '%', bad: 'high' },
+  asthma: { label: 'Current asthma prevalence', short: 'Asthma', f: v => v.toFixed(1) + '%', bad: 'high' },
+  hypertension: { label: 'High blood pressure prevalence', short: 'Hypertension', f: v => v.toFixed(1) + '%', bad: 'high' },
+  obesity: { label: 'Adult obesity prevalence', short: 'Obesity', f: v => v.toFixed(1) + '%', bad: 'high' },
+  copd: { label: 'COPD prevalence', short: 'COPD', f: v => v.toFixed(1) + '%', bad: 'high' },
+  incidence: { label: 'Chronic disease burden index', short: 'Disease burden', f: v => v.toFixed(0), bad: 'high', unit: '/100' },
+  utilization: { label: 'Average program utilization', short: 'Utilization', f: v => v.toFixed(0) + '%', bad: 'low' },
+  lifeExp: { label: 'Life expectancy at birth', short: 'Life expectancy', f: v => v.toFixed(1) + ' yrs', bad: 'low' },
+  pop: { label: 'Population', short: 'Population', f: v => fmt.k(v), bad: 'none' },
+  'prog.wic': { label: 'WIC nutrition utilization', short: 'WIC nutrition', f: v => v.toFixed(0) + '%', bad: 'low' },
+  'prog.imm': { label: 'Childhood immunization utilization', short: 'Childhood immunization', f: v => v.toFixed(0) + '%', bad: 'low' },
+  'prog.dpp': { label: 'Diabetes prevention utilization', short: 'Diabetes prevention', f: v => v.toFixed(0) + '%', bad: 'low' },
+  'prog.tob': { label: 'Tobacco cessation utilization', short: 'Tobacco cessation', f: v => v.toFixed(0) + '%', bad: 'low' },
+  'prog.mhv': { label: 'Maternal home visiting utilization', short: 'Maternal home visiting', f: v => v.toFixed(0) + '%', bad: 'low' }
+};
+
+export function getV(rec: any, key: string): number {
   if (!rec) return 0;
   if (key.startsWith('prog.')) {
     const pk = key.slice(5);
@@ -82,17 +122,128 @@ export function getMetricValue(rec: any, key: string): number {
   if (rec[key] !== undefined) {
     return typeof rec[key] === 'number' ? rec[key] : 0;
   }
-  const svi = rec.svi ?? (rec.indicators?.svi ?? 0.5);
-  const mMeta = METRICS_CONFIG[key];
-  if (mMeta?.bad === 'low') {
-    return Math.max(50, 95 - svi * 35);
-  }
-  return Math.max(3, 12 + svi * 45);
+  return 0;
 }
+
+export function countyLabel(c: any): string {
+  if (!c) return '';
+  const st = c.st || c.state?.id;
+  const kind = ['22'].includes(st) ? 'Parish' : ['02'].includes(st) ? 'Borough' : 'County';
+  const abbr = c.stateAbbr || c.state?.abbr || (STATE_META[st] ? STATE_META[st][0] : '');
+  return `${c.name} ${kind}, ${abbr}`;
+}
+
+function pctRank(arr: number[], v: number): number {
+  let count = 0;
+  for (const x of arr) if (x < v) count++;
+  return arr.length ? count / arr.length : 0.5;
+}
+
+function hash(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1e6) / 1e6;
+}
+
+function rng(seed: number): () => number {
+  let s = Math.floor(seed * 2147483646) + 1;
+  return () => ((s = (s * 16807) % 2147483647) / 2147483647);
+}
+
+function gauss(r: () => number): number {
+  return Math.sqrt(-2 * Math.log(r() + 1e-9)) * Math.cos(2 * Math.PI * r());
+}
+
+function trendFor(seed: string, end: number, n: number = 10, slope: number = 0.015): number[] {
+  const r = rng(hash(seed));
+  const out: number[] = [];
+  let v = end * (1 + slope * n * (r() > 0.3 ? 1 : -0.5));
+  for (let i = 0; i < n; i++) {
+    v = v + (end - v) / (n - i) + gauss(r) * end * 0.012;
+    out.push(v);
+  }
+  out[n - 1] = end;
+  return out;
+}
+
+function SparkSVG({ vals, w = 290, h = 46, color = 'var(--cyan)' }: { vals: number[]; w?: number; h?: number; color?: string }) {
+  if (!vals || vals.length < 2) return null;
+  const x = d3.scaleLinear().domain([0, vals.length - 1]).range([2, w - 2]);
+  const extent = d3.extent(vals) as [number, number];
+  const y = d3.scaleLinear().domain(extent[0] === extent[1] ? [extent[0] - 1, extent[1] + 1] : extent).range([h - 3, 3]);
+  const lineGen = d3.line<number>().x((_, i) => x(i)).y(v => y(v)).curve(d3.curveMonotoneX);
+  const pathData = lineGen(vals) || '';
+  const lastX = x(vals.length - 1);
+  const lastY = y(vals[vals.length - 1]);
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', overflow: 'visible' }}>
+      <path d={pathData} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <circle cx={lastX} cy={lastY} r="3" fill={color} />
+    </svg>
+  );
+}
+
+/* ===== Toast helper matching prototype ===== */
+function showToast(msg: string, action?: { label: string; fn: () => void }) {
+  const container = document.getElementById('toasts');
+  if (!container) return;
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.setAttribute('role', 'status');
+  t.innerHTML = `<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span>${msg}</span>${action ? `<button class="btn sm">${action.label}</button>` : ''}`;
+  if (action) {
+    t.querySelector('button')?.addEventListener('click', () => {
+      action.fn();
+      t.remove();
+    });
+  }
+  container.appendChild(t);
+  setTimeout(() => {
+    t.style.opacity = '0';
+    t.style.transform = 'translateX(30px)';
+    t.style.transition = 'opacity 0.3s, transform 0.3s';
+    setTimeout(() => t.remove(), 320);
+  }, 4200);
+}
+
+/* ===== Tooltip helpers matching prototype ===== */
+function showTip(html: string, e: MouseEvent | React.MouseEvent) {
+  const t = document.getElementById('tooltip');
+  if (!t) return;
+  t.innerHTML = html;
+  t.classList.add('on');
+  moveTip(e);
+}
+
+function moveTip(e: MouseEvent | React.MouseEvent) {
+  const t = document.getElementById('tooltip');
+  if (!t || !e) return;
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let x = e.clientX + 16, y = e.clientY + 14;
+  if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
+  if (y + h > window.innerHeight - 8) y = e.clientY - h - 14;
+  t.style.left = x + 'px';
+  t.style.top = y + 'px';
+}
+
+function hideTip() {
+  const t = document.getElementById('tooltip');
+  if (t) t.classList.remove('on');
+}
+
+const tipRows = (rows: [string, string | number][]) =>
+  rows.map(([a, b]) => `<div class="tv"><span>${a}</span><span>${b}</span></div>`).join('');
+
+let topoCache: any = null;
+const tractCache = new Map<string, any[]>();
 
 export interface HealthMapCanvasProps {
   initialCountyId?: string;
   initialTractId?: string;
+  jurisdictionCountyId?: string;
   onTractSelect?: (tract: any) => void;
   onCountySelect?: (county: CountyRecord) => void;
   onAddFinding?: (tract: any) => void;
@@ -105,6 +256,7 @@ export interface HealthMapCanvasProps {
 export function HealthMapCanvas({
   initialCountyId,
   initialTractId,
+  jurisdictionCountyId,
   onTractSelect,
   onCountySelect,
   onAddFinding,
@@ -113,1427 +265,1329 @@ export function HealthMapCanvas({
   compareTractIds = [],
   flaggedTractIds = []
 }: HealthMapCanvasProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const mapContainerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
-  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const rootGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const cachedRepoRef = useRef<any>(null);
+  const countiesGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const tractsGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const selGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const heatGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const markersGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const clipPathRef = useRef<d3.Selection<SVGPathElement, unknown, null, undefined> | null>(null);
+  const homeTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
+  const pathGenRef = useRef<d3.GeoPath>(d3.geoPath());
 
-  // Active Map Scope State
-  const [activeLayerId, setActiveLayerId] = useState<string>('sdoh');
-  const [activeMetricKey, setActiveMetricKey] = useState<string>('sdoh');
-  const [selectedState, setSelectedState] = useState<{ abbr: string; name: string; fips: string } | null>(null);
-  const [selectedCounty, setSelectedCounty] = useState<CountyRecord | null>(null);
-  const [selectedTract, setSelectedTract] = useState<any | null>(null);
-  const [countyTracts, setCountyTracts] = useState<any[]>([]);
+  const repoRef = useRef<any>(null);
+  const stateByRef = useRef<Record<string, any>>({});
+  const countiesRef = useRef<CountyRecord[]>([]);
 
-  // Toggles
-  const [heatmapEnabled, setHeatmapEnabled] = useState(false);
-  const [markersEnabled, setMarkersEnabled] = useState(true);
+  // Map state
+  const [curLayerId, setCurLayerId] = useState<string>('sdoh');
+  const [curMetric, setCurMetric] = useState<string>('sdoh');
+  const [scope, setScope] = useState<{ st: string | null; c: string | null; t: string | null }>({
+    st: null,
+    c: null,
+    t: null
+  });
 
-  // UI state
-  const [mobileLayersOpen, setMobileLayersOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [recolorPerf, setRecolorPerf] = useState<{ n: number; ms: number }>({ n: 3142, ms: 10 });
-  const [legendInfo, setLegendInfo] = useState<{
+  const [heat, setHeat] = useState<boolean>(false);
+  const [markers, setMarkers] = useState<boolean>(true);
+  const [mobileLayersOpen, setMobileLayersOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  const [perfInfo, setPerfInfo] = useState<{ n: number; ms: number } | null>(null);
+  const [legend, setLegend] = useState<{
     title: string;
+    bins: string[];
     lo: string;
     hi: string;
     note: string;
-    bins: string[];
-  }>({
-    title: 'SDOH composite burden',
-    lo: '12%',
-    hi: '68%',
-    note: 'National quantiles',
-    bins: ['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D']
-  });
+  } | null>(null);
 
-  // Tooltip
-  const [tooltip, setTooltip] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    title: string;
-    lines: { label: string; val: string }[];
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    title: '',
-    lines: []
-  });
+  // Finding modal state
+  const [findingModalTract, setFindingModalTract] = useState<any | null>(null);
+  const [findingNote, setFindingNote] = useState<string>('');
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState<string>('__new');
+  const [assessments, setAssessments] = useState<any[]>([]);
 
-  const activeLayer = HEALTH_MAP_LAYERS.find(l => l.id === activeLayerId) || HEALTH_MAP_LAYERS[0];
-  const activeMetricMeta = METRICS_CONFIG[activeMetricKey] || {
-    label: activeMetricKey,
-    short: activeMetricKey,
-    unit: '%',
-    bad: 'high'
-  };
+  // Tracts for currently selected county
+  const [countyTracts, setCountyTracts] = useState<any[]>([]);
 
   const compareSet = useMemo(() => new Set(compareTractIds), [compareTractIds]);
   const flaggedSet = useMemo(() => new Set(flaggedTractIds), [flaggedTractIds]);
 
-  // References for map callbacks
-  const selectCountyFnRef = useRef<((cid: string, animate?: boolean) => void) | null>(null);
-  const selectTractFnRef = useRef<((tid: string) => void) | null>(null);
-  const zoomToStateFnRef = useRef<((st: string) => void) | null>(null);
-  const resetMapFnRef = useRef<(() => void) | null>(null);
-  const drawHeatFnRef = useRef<((heat: boolean, mKey: string, cid: string | null) => void) | null>(null);
-  const drawMarkersFnRef = useRef<((mk: boolean, mKey: string, cid: string | null) => void) | null>(null);
+  const activeLayerDef = useMemo(
+    () => LAYERS.find(l => l.id === curLayerId) || LAYERS[0],
+    [curLayerId]
+  );
+  const curMetricObj = useMemo(
+    () => METRICS[curMetric] || { label: curMetric, short: curMetric, f: (v: number) => String(v), bad: 'high' as const },
+    [curMetric]
+  );
 
-  // Initialize Map and Render Counties
+  // Helper to compute tracts with realistic Voronoi cells clipped to county
+  const getTractsForCounty = useCallback((cRecord: CountyRecord): any[] => {
+    if (tractCache.has(cRecord.id)) {
+      return tractCache.get(cRecord.id)!;
+    }
+    const pathGen = pathGenRef.current;
+    const [[bx0, by0], [bx1, by1]] = pathGen.bounds(cRecord.feature);
+    const bw = Math.max(bx1 - bx0, 10);
+    const bh = Math.max(by1 - by0, 10);
+    const n = Math.min(140, Math.max(6, Math.round(Math.sqrt(cRecord.pop) / 11)));
+    const r = rng(hash('t' + cRecord.id));
+    const pts: [number, number][] = [];
+    const core = [bx0 + bw * (0.3 + r() * 0.4), by0 + bh * (0.3 + r() * 0.4)];
+    let guard = 0;
+    while (pts.length < n && guard++ < n * 80) {
+      let x = bx0 + r() * bw, y = by0 + r() * bh;
+      if (r() < cRecord.urban * 0.7) {
+        x = core[0] + gauss(r) * bw * 0.16;
+        y = core[1] + gauss(r) * bh * 0.16;
+      }
+      pts.push([x, y]);
+    }
+    if (pts.length < 3) {
+      pts.push([bx0 + bw * 0.5, by0 + bh * 0.5], [bx0 + 1, by0 + 1], [bx0 + bw - 1, by0 + bh - 1]);
+    }
+    const delaunay = d3.Delaunay.from(pts);
+    const voronoi = delaunay.voronoi([bx0 - 1, by0 - 1, bx1 + 1, by1 + 1]);
+
+    const out = pts.map((p, i) => {
+      const rr = rng(hash(cRecord.id + ':' + i));
+      const ln = () => gauss(rr);
+      const k = ln() * 0.12;
+      const tnum = 100 + i * 2 + Math.floor(rr() * 2);
+      const suffix = rr() < 0.35 ? '.0' + (1 + Math.floor(rr() * 2)) : '';
+      const geoid = cRecord.id + String(tnum).padStart(4, '0') + (suffix ? suffix.slice(1).padStart(2, '0') : '00');
+      const svi = Math.min(0.99, Math.max(0.01, cRecord.svi + k * 1.1 + ln() * 0.05));
+      const tier = Math.min(4, Math.max(0, Math.floor(svi * 5)));
+      const t: any = {
+        id: geoid,
+        name: 'Census Tract ' + tnum + suffix,
+        county: cRecord,
+        cx: p[0],
+        cy: p[1],
+        d: voronoi.renderCell(i) || '',
+        pop: Math.round(Math.min(8200, Math.max(1200, 2400 + rr() * 4800))),
+        svi: Math.round(svi * 100) / 100,
+        tier,
+        poverty: Math.round(Math.min(58, Math.max(1.5, cRecord.indicators.poverty * (1 + k * 2.2) + ln() * 2)) * 10) / 10,
+        uninsured: Math.round(Math.min(40, Math.max(1, cRecord.indicators.uninsured * (1 + k * 2) + ln() * 1.5)) * 10) / 10,
+        diabetes: Math.round(Math.min(24, Math.max(3.5, cRecord.indicators.diabetes * (1 + k * 1.2) + ln() * 0.6)) * 10) / 10,
+        asthma: Math.round(Math.min(17, Math.max(5.5, cRecord.indicators.asthma * (1 + k * 0.7) + ln() * 0.4)) * 10) / 10,
+        hypertension: Math.round(Math.min(55, Math.max(18, cRecord.indicators.hypertension * (1 + k * 0.8) + ln() * 1.4)) * 10) / 10,
+        noVehicle: Math.round(Math.min(44, Math.max(0.3, cRecord.indicators.noVehicle * (1 + k * 2) + ln() * 1.5)) * 10) / 10,
+        noDiploma: Math.round(Math.min(45, Math.max(1, cRecord.indicators.noDiploma * (1 + k * 1.8) + ln() * 1.5)) * 10) / 10,
+        unemployment: Math.round(Math.min(22, Math.max(1, cRecord.indicators.unemployment * (1 + k * 1.7) + ln() * 0.6)) * 10) / 10,
+        utilization: Math.round(Math.min(95, Math.max(4, cRecord.indicators.utilization * (1 - k * 1.4) + ln() * 4))),
+        access: Math.round(Math.min(98, Math.max(4, cRecord.indicators.access * (1 - k * 1.1) + ln() * 4))),
+        lifeExp: Math.round(Math.min(87, Math.max(65, cRecord.indicators.lifeExp - k * 5 + ln() * 0.8)) * 10) / 10,
+        childPoverty: Math.round(Math.min(65, Math.max(2, cRecord.indicators.childPoverty * (1 + k * 2) + ln() * 2)) * 10) / 10,
+        rentBurden: Math.round(Math.min(68, Math.max(6, cRecord.indicators.rentBurden * (1 + k * 1.4) + ln() * 2)) * 10) / 10,
+        crowding: Math.round(Math.min(22, Math.max(0.1, cRecord.indicators.crowding * (1 + k * 2) + ln() * 0.8)) * 10) / 10,
+        pcp: Math.round(Math.min(220, Math.max(8, cRecord.indicators.pcp * (1 - k * 0.8) + ln() * 10))),
+        driveTime: Math.round(Math.min(85, Math.max(2, cRecord.indicators.driveTime * (1 + k * 0.9) + ln() * 3))),
+        sdoh: Math.round(Math.min(98, Math.max(2, cRecord.indicators.sdoh + k * 35 + ln() * 3))),
+        incidence: Math.round(Math.min(98, Math.max(2, cRecord.indicators.incidence + k * 30 + ln() * 3)))
+      };
+      t.indicators = { ...t };
+      return t;
+    });
+    tractCache.set(cRecord.id, out);
+    return out;
+  }, []);
+
+  // Need calculation helper
+  const needOf = useCallback((rec: any, metricKey: string) => {
+    const m = METRICS[metricKey] || { bad: 'high' };
+    const v = getV(rec, metricKey);
+    return m.bad === 'low' ? -v : v;
+  }, []);
+
+  // Draw Heatmap circles
+  const drawHeatmap = useCallback((isHeat: boolean, mKey: string, cRecord: CountyRecord | null) => {
+    const gHeat = heatGroupRef.current;
+    if (!gHeat) return;
+    gHeat.selectAll('*').remove();
+    if (!isHeat) return;
+
+    if (cRecord) {
+      const tracts = getTractsForCounty(cRecord);
+      const sorted = [...tracts].sort((a, b) => needOf(b, mKey) - needOf(a, mKey));
+      const top = sorted.slice(0, Math.max(3, Math.ceil(tracts.length * 0.35)));
+      gHeat.selectAll('circle')
+        .data(top)
+        .join('circle')
+        .attr('cx', (d: any) => d.cx)
+        .attr('cy', (d: any) => d.cy)
+        .attr('r', 0)
+        .attr('fill', 'url(#hm-heat)')
+        .transition()
+        .duration(700)
+        .attr('r', 18);
+    } else {
+      const allCounties = countiesRef.current;
+      const sorted = [...allCounties].sort((a, b) => needOf(b, mKey) - needOf(a, mKey));
+      const top = sorted.slice(0, Math.ceil(allCounties.length * 0.14));
+      gHeat.selectAll('circle')
+        .data(top)
+        .join('circle')
+        .attr('cx', (d: any) => d.cx || d.centroid?.[0] || 0)
+        .attr('cy', (d: any) => d.cy || d.centroid?.[1] || 0)
+        .attr('r', 0)
+        .attr('fill', 'url(#hm-heat)')
+        .transition()
+        .duration(800)
+        .delay((_, i) => i * 1.2)
+        .attr('r', (d: any) => Math.max(6, Math.sqrt(d.area || 30) * 1.6));
+    }
+  }, [getTractsForCounty, needOf]);
+
+  // Draw Pulse Markers
+  const drawMarkers = useCallback((isMarkers: boolean, mKey: string, cRecord: CountyRecord | null, zoomK: number) => {
+    const gM = markersGroupRef.current;
+    if (!gM) return;
+    gM.selectAll('*').remove();
+    if (!isMarkers) return;
+
+    let pts: { x: number; y: number }[] = [];
+    if (cRecord) {
+      const tracts = getTractsForCounty(cRecord);
+      pts = [...tracts].sort((a, b) => needOf(b, mKey) - needOf(a, mKey)).slice(0, 3).map((t: any) => ({ x: t.cx, y: t.cy }));
+    } else {
+      const allCounties = countiesRef.current;
+      pts = [...allCounties].sort((a, b) => needOf(b, mKey) - needOf(a, mKey)).slice(0, 7).map((c: any) => ({ x: c.cx, y: c.cy }));
+    }
+
+    const m = gM.selectAll('g')
+      .data(pts)
+      .join('g')
+      .attr('class', 'pulse-m')
+      .attr('transform', d => `translate(${d.x},${d.y}) scale(${1 / Math.max(1, zoomK)})`);
+
+    m.append('circle').attr('class', 'ring').attr('r', 7);
+    m.append('circle').attr('class', 'ring r2').attr('r', 7);
+    m.append('circle').attr('class', 'core').attr('r', 3.5);
+  }, [getTractsForCounty, needOf]);
+
+  // Zoom bounds helper
+  const zoomToBounds = useCallback((bounds: [[number, number], [number, number]], dur = 900, pad = 0.82) => {
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    if (!svg || !zoom) return;
+    const [[x0, y0], [x1, y1]] = bounds;
+    const dx = Math.max(x1 - x0, 1);
+    const dy = Math.max(y1 - y0, 1);
+    const s = Math.min(90, pad / Math.max(dx / 975, dy / 610));
+    const t = d3.zoomIdentity
+      .translate(975 / 2, 610 / 2)
+      .scale(s)
+      .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+    svg.transition().duration(dur).ease(d3.easeCubicInOut).call(zoom.transform, t);
+  }, []);
+
+  // Fit padding helper
+  const fitPadding = useCallback((pad: { l: number; r: number; t: number; b: number }) => {
+    const el = mapContainerRef.current;
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    if (!el || !svg || !zoom) return;
+    const W = el.clientWidth;
+    const H = el.clientHeight;
+    if (!W || !H) return;
+    const mm = Math.min(W / 975, H / 610);
+    const ox = (W - 975 * mm) / 2;
+    const oy = (H - 610 * mm) / 2;
+    const r = [(pad.l - ox) / mm, (pad.t - oy) / mm, (W - pad.r - ox) / mm, (H - pad.b - oy) / mm];
+    const s = Math.min((r[2] - r[0]) / 975, (r[3] - r[1]) / 610) * 0.97;
+    const home = d3.zoomIdentity.translate((r[0] + r[2]) / 2 - s * 487.5, (r[1] + r[3]) / 2 - s * 305).scale(s);
+    homeTransformRef.current = home;
+    svg.call(zoom.transform, home);
+  }, []);
+
+  // Colorize Counties and Tracts helper matching prototype line 1315-1327
+  const colorize = useCallback((mKey: string, lId: string, currentScope: { st: string | null; c: string | null; t: string | null }, animate = true) => {
+    const countiesGroup = countiesGroupRef.current;
+    const tractsGroup = tractsGroupRef.current;
+    const allCounties = countiesRef.current;
+    if (!countiesGroup || !allCounties.length) return;
+
+    const t0 = performance.now();
+    const lyr = LAYERS.find(l => l.id === lId) || LAYERS[0];
+    const mMeta = METRICS[mKey] || { bad: 'high', label: mKey };
+
+    // Domain & color scale
+    const values = allCounties.map(c => getV(c, mKey));
+    const low = '#101B45';
+    const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
+      d3.interpolateRgb(low, lyr.ramp[0])(0.6),
+      ...lyr.ramp
+    ]);
+    const qScale = d3.scaleQuantile().domain(values).range(d3.range(7));
+    const flip = mMeta.bad === 'low';
+    const tOf = (i: number) => {
+      const t = (i + 0.5) / 7;
+      return flip ? 1 - t : t;
+    };
+    const getColor = (v: number) => interp(tOf(qScale(v)));
+    const bins = d3.range(7).map(i => interp(tOf(i)));
+    const extent = d3.extent(values) as [number, number];
+
+    // Colorize counties
+    const countyPaths = countiesGroup.selectAll<SVGPathElement, CountyRecord>('path.county');
+    if (animate) {
+      countyPaths
+        .transition('recolor-counties')
+        .duration(520)
+        .delay((d: any) => (d.cx / 975) * 650)
+        .attr('fill', d => getColor(getV(d, mKey)));
+    } else {
+      countyPaths.attr('fill', d => getColor(getV(d, mKey)));
+    }
+
+    // If county selected, color tracts
+    let tractScaleBins: string[] | null = null;
+    let tractExt: [number, number] | null = null;
+
+    if (currentScope.c && repoRef.current?.countyById.has(currentScope.c)) {
+      const cRecord = repoRef.current.countyById.get(currentScope.c)!;
+      const tracts = getTractsForCounty(cRecord);
+      const tValues = tracts.map(t => getV(t, mKey));
+      const tQScale = d3.scaleQuantile().domain(tValues).range(d3.range(7));
+      const getTractColor = (v: number) => interp(tOf(tQScale(v)));
+      tractScaleBins = d3.range(7).map(i => interp(tOf(i)));
+      tractExt = d3.extent(tValues) as [number, number];
+
+      tractsGroup?.selectAll<SVGPathElement, any>('path.tract')
+        .transition('recolor-tracts')
+        .duration(380)
+        .attr('fill', t => getTractColor(getV(t, mKey)));
+
+      drawHeatmap(heat, mKey, cRecord);
+      drawMarkers(markers, mKey, cRecord, d3.zoomTransform(svgRef.current?.node()!).k);
+    } else {
+      drawHeatmap(heat, mKey, null);
+      drawMarkers(markers, mKey, null, d3.zoomTransform(svgRef.current?.node()!).k);
+    }
+
+    const ms = Math.round(performance.now() - t0);
+    setPerfInfo({ n: allCounties.length, ms: Math.max(8, ms) });
+
+    // Update legend
+    if (currentScope.c && tractScaleBins && tractExt) {
+      setLegend({
+        title: mMeta.label || lyr.name,
+        bins: tractScaleBins,
+        lo: mMeta.f ? mMeta.f(tractExt[0]) : `${tractExt[0].toFixed(1)}%`,
+        hi: mMeta.f ? mMeta.f(tractExt[1]) : `${tractExt[1].toFixed(1)}%`,
+        note: 'Tracts in county'
+      });
+    } else {
+      setLegend({
+        title: mMeta.label || lyr.name,
+        bins,
+        lo: mMeta.f ? mMeta.f(extent[0]) : `${extent[0].toFixed(1)}%`,
+        hi: mMeta.f ? mMeta.f(extent[1]) : `${extent[1].toFixed(1)}%`,
+        note: 'Quantile bins'
+      });
+    }
+  }, [drawHeatmap, drawMarkers, getTractsForCounty, heat, markers]);
+
+  // Initialize Map
   useEffect(() => {
-    let isCancelled = false;
+    let cancelled = false;
 
-    async function initHealthMap() {
-      if (!containerRef.current) return;
-      const container = containerRef.current;
-      container.innerHTML = '';
+    async function init() {
+      if (!mapContainerRef.current) return;
+      const el = mapContainerRef.current;
+      el.innerHTML = '';
+      el.classList.add('map-shell');
+
+      // Map skeleton loader matching prototype line 1243
+      const skel = document.createElement('div');
+      skel.className = 'map-skel skeleton';
+      el.appendChild(skel);
+      setTimeout(() => {
+        skel.classList.add('done');
+        setTimeout(() => skel.remove(), 700);
+      }, 450);
 
       const repo = await getCountyRepository();
-      if (isCancelled || !containerRef.current) return;
-      cachedRepoRef.current = repo;
+      if (cancelled || !mapContainerRef.current) return;
+      repoRef.current = repo;
 
       if (!topoCache) {
         try {
           const res = await fetch('/us-counties.json');
-          if (!res.ok) throw new Error('Failed to load map geometry');
+          if (!res.ok) throw new Error('Failed to load topology');
           topoCache = await res.json();
         } catch (e) {
           console.error(e);
           return;
         }
       }
+      if (cancelled || !topoCache) return;
 
-      if (isCancelled || !topoCache) return;
+      const pathGen = d3.geoPath();
+      pathGenRef.current = pathGen;
 
+      // Extract features
       const statesMesh = topojson.mesh(topoCache, topoCache.objects.states, (a: any, b: any) => a !== b);
       const nationFeature = topojson.feature(topoCache, topoCache.objects.nation);
-      const pathGen = d3.geoPath();
+      const stateFeatures = (topojson.feature(topoCache, topoCache.objects.states) as any).features || [];
 
-      const svg = d3.select(container)
+      const stateBy: Record<string, any> = {};
+      stateFeatures.forEach((f: any) => {
+        const m = STATE_META[f.id];
+        if (m) {
+          stateBy[f.id] = { id: f.id, abbr: m[0], name: m[1], region: m[2], feature: f, d: pathGen(f), counties: [] };
+        }
+      });
+      stateByRef.current = stateBy;
+
+      // Attach centroid, area, d to counties
+      repo.counties.forEach((c: any) => {
+        const f = c.feature;
+        const centroid = pathGen.centroid(f);
+        const area = pathGen.area(f);
+        c.cx = centroid[0];
+        c.cy = centroid[1];
+        c.area = area;
+        c.d = pathGen(f);
+        if (stateBy[c.st]) {
+          stateBy[c.st].counties.push(c);
+        }
+      });
+      countiesRef.current = repo.counties;
+
+      // SVG
+      const svg = d3.select(el)
         .append('svg')
+        .attr('class', 'map-svg')
         .attr('viewBox', '0 0 975 610')
         .attr('preserveAspectRatio', 'xMidYMid meet')
-        .attr('class', 'w-full h-full block select-none map-svg')
-        .style('background', '#07111F');
+        .attr('role', 'img')
+        .attr('aria-label', 'Interactive county map of the United States')
+        .style('position', 'absolute')
+        .style('inset', '0')
+        .style('width', '100%')
+        .style('height', '100%');
 
       svgRef.current = svg;
 
       const defs = svg.append('defs');
 
-      // Pulse Marker Animations
-      const pulseStyle = defs.append('style');
-      pulseStyle.text(`
-        @keyframes mapPulse {
-          0% { r: 3.5px; opacity: 0.95; }
-          50% { r: 9px; opacity: 0.2; }
-          100% { r: 3.5px; opacity: 0.95; }
-        }
-        .pulse-marker-ring {
-          animation: mapPulse 2.2s ease-in-out infinite;
-          transform-origin: center;
-        }
-        svg.dim-others path.county:not(.sel) {
-          opacity: 0.45;
-        }
-        svg.dim-others path.county.sel {
-          opacity: 1;
-        }
-      `);
-
-      // Gentle, softened Radial Heatmap Gradient (not overly bright/blinding)
-      const heatGrad = defs.append('radialGradient')
-        .attr('id', 'hm-heat-glow')
-        .attr('cx', '50%')
-        .attr('cy', '50%')
-        .attr('r', '50%');
-      heatGrad.append('stop').attr('offset', '0%').attr('stop-color', '#2584EB').attr('stop-opacity', 0.42);
-      heatGrad.append('stop').attr('offset', '40%').attr('stop-color', '#1E60BF').attr('stop-opacity', 0.22);
-      heatGrad.append('stop').attr('offset', '75%').attr('stop-color', '#123A7D').attr('stop-opacity', 0.08);
-      heatGrad.append('stop').attr('offset', '100%').attr('stop-color', '#07111F').attr('stop-opacity', 0);
+      // Heatmap radial gradient
+      const rg = defs.append('radialGradient').attr('id', 'hm-heat');
+      rg.append('stop').attr('offset', '0%').attr('stop-color', '#2584EB').attr('stop-opacity', 0.55);
+      rg.append('stop').attr('offset', '55%').attr('stop-color', '#66B6F5').attr('stop-opacity', 0.2);
+      rg.append('stop').attr('offset', '100%').attr('stop-color', '#66B6F5').attr('stop-opacity', 0);
 
       // County Tract Clip Path
-      const clipPath = defs.append('clipPath').attr('id', 'hm-county-clip').append('path');
+      const clip = defs.append('clipPath').attr('id', 'hm-clip').append('path');
+      clipPathRef.current = clip;
 
-      // Root zoomable group
-      const rootG = svg.append('g').attr('class', 'root-zoom-group');
-      rootGroupRef.current = rootG;
+      // Root zoom group
+      const g = svg.append('g');
+      rootGroupRef.current = g;
 
-      // Group Layers
-      const gCounties = rootG.append('g').attr('class', 'counties-layer');
-      const gBorders = rootG.append('g').attr('class', 'borders-layer').style('pointer-events', 'none');
-      const gHeat = rootG.append('g').attr('class', 'heatmap-layer').style('pointer-events', 'none');
-      const gTracts = rootG.append('g').attr('class', 'tracts-layer').attr('clip-path', 'url(#hm-county-clip)');
-      const gSelCounty = rootG.append('g').attr('class', 'sel-county-layer').style('pointer-events', 'none');
-      const gSelTract = rootG.append('g').attr('class', 'sel-tract-layer').style('pointer-events', 'none');
-      const gMarkers = rootG.append('g').attr('class', 'markers-layer').style('pointer-events', 'none');
+      const gC = g.append('g');
+      countiesGroupRef.current = gC;
 
-      // Borders
-      gBorders.append('path')
-        .datum(statesMesh)
-        .attr('class', 'state-borders')
-        .attr('d', pathGen as any)
-        .attr('fill', 'none')
-        .attr('stroke', 'rgba(255, 255, 255, 0.28)')
-        .attr('stroke-width', 0.8)
-        .attr('vector-effect', 'non-scaling-stroke');
+      const gB = g.append('g');
+      const gHeat = g.append('g').style('pointer-events', 'none').style('mix-blend-mode', 'multiply');
+      heatGroupRef.current = gHeat;
 
-      gBorders.append('path')
-        .datum(nationFeature)
-        .attr('class', 'nation-border')
-        .attr('d', pathGen as any)
-        .attr('fill', 'none')
-        .attr('stroke', 'rgba(255, 255, 255, 0.45)')
-        .attr('stroke-width', 1.2)
-        .attr('vector-effect', 'non-scaling-stroke');
+      const gT = g.append('g').attr('clip-path', 'url(#hm-clip)');
+      tractsGroupRef.current = gT;
+
+      const gSel = g.append('g');
+      selGroupRef.current = gSel;
+
+      const gM = g.append('g').style('pointer-events', 'none');
+      markersGroupRef.current = gM;
+
+      // State and nation borders
+      gB.append('path').attr('class', 'state-b').attr('d', pathGen(statesMesh as any));
+      gB.append('path').attr('class', 'nation-b').attr('d', pathGen(nationFeature as any));
 
       // Zoom Behavior
       let currentK = 1;
       const zoom = d3.zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.45, 60])
-        .translateExtent([[-600, -400], [1600, 1100]])
+        .scaleExtent([0.5, 90])
+        .translateExtent([[-200, -200], [1175, 810]])
         .on('zoom', (event) => {
-          rootG.attr('transform', event.transform);
+          g.attr('transform', event.transform);
           currentK = event.transform.k;
-          gMarkers.selectAll('g.marker-pin').attr('transform', function (this: any) {
-            const cx = d3.select(this).attr('data-cx');
-            const cy = d3.select(this).attr('data-cy');
-            return `translate(${cx}, ${cy}) scale(${1 / Math.sqrt(currentK)}) translate(${-cx}, ${-cy})`;
-          });
+          gM.selectAll('.pulse-m').attr('transform', (d: any) => `translate(${d.x},${d.y}) scale(${1 / currentK})`);
         });
 
       svg.call(zoom).on('dblclick.zoom', null);
-      zoomBehaviorRef.current = zoom;
+      zoomRef.current = zoom;
 
-      // Color Scale Builder
-      function buildColorScale(layerId: string, metricKey: string) {
-        const lyr = HEALTH_MAP_LAYERS.find(l => l.id === layerId) || HEALTH_MAP_LAYERS[0];
-        const mMeta = METRICS_CONFIG[metricKey] || { bad: 'high' };
-        const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
-          d3.interpolateRgb(MAP_LOW, lyr.ramp[0])(0.6),
-          ...lyr.ramp
-        ]);
-        const values = repo.counties.map(c => getMetricValue(c, metricKey));
-        const qScale = d3.scaleQuantile().domain(values).range(d3.range(7));
-        const flip = mMeta.bad === 'low';
-        const tOf = (i: number) => {
-          const t = (i + 0.5) / 7;
-          return flip ? 1 - t : t;
-        };
+      // Fit padding: call immediately and also after sidebar collapse animation (prototype line 1977: setTimeout(fit, 420))
+      const fit = () => {
+        const mob = window.innerWidth <= 860;
+        fitPadding(mob ? { l: 8, r: 8, t: 110, b: 70 } : { l: 330, r: window.innerWidth > 1180 ? 370 : 40, t: 60, b: 40 });
+      };
+      fit();
+      setTimeout(fit, 120);
+      setTimeout(fit, 420);
 
-        const getColor = (v: number) => interp(tOf(qScale(v)));
-        const bins = d3.range(7).map(i => interp(tOf(i)));
-        const extent = d3.extent(values) as [number, number];
-
-        return { getColor, bins, extent, qScale };
-      }
-
-      // Tract Generator for County
-      function getTractsForCounty(cRecord: CountyRecord) {
-        if (tractCache.has(cRecord.id)) {
-          return tractCache.get(cRecord.id)!;
-        }
-
-        const [[bx0, by0], [bx1, by1]] = pathGen.bounds(cRecord.feature);
-        const bw = Math.max(bx1 - bx0, 10);
-        const bh = Math.max(by1 - by0, 10);
-        const count = Math.max(8, Math.min(26, Math.round(cRecord.pop / 4500)));
-
-        let seed = 0;
-        for (let i = 0; i < cRecord.id.length; i++) seed += cRecord.id.charCodeAt(i) * (i + 1) * 31;
-        const prng = () => {
-          seed = (seed * 9301 + 49297) % 233280;
-          return seed / 233280;
-        };
-
-        const pts: [number, number][] = [];
-        for (let i = 0; i < count; i++) {
-          const r1 = prng();
-          const r2 = prng();
-          pts.push([bx0 + bw * (0.12 + r1 * 0.76), by0 + bh * (0.12 + r2 * 0.76)]);
-        }
-
-        if (pts.length < 3) {
-          pts.push([bx0 + bw * 0.5, by0 + bh * 0.5], [bx0 + 1, by0 + 1], [bx0 + bw - 1, by0 + bh - 1]);
-        }
-
-        const delaunay = d3.Delaunay.from(pts);
-        const voronoi = delaunay.voronoi([bx0 - 20, by0 - 20, bx0 + bw + 20, by0 + bh + 20]);
-
-        const out = pts.map((pt, i) => {
-          const r1 = prng();
-          const r2 = prng();
-          const svi = Math.max(0.02, Math.min(0.99, cRecord.svi + (r1 - 0.5) * 0.35));
-          const tNum = 101 + i * 2;
-          const tractId = `${cRecord.id}${String(tNum).padStart(4, '0')}00`;
-
-          const ind: Record<string, number> = {
-            sdoh: Math.round(cRecord.indicators.sdoh * (0.7 + r1 * 0.6)),
-            incidence: Math.round(cRecord.indicators.incidence * (0.75 + r2 * 0.5)),
-            utilization: Math.round(cRecord.indicators.utilization * (0.7 + prng() * 0.6)),
-            poverty: Math.round(cRecord.indicators.poverty * (0.7 + r1 * 0.6) * 10) / 10,
-            childPoverty: Math.round(cRecord.indicators.childPoverty * (0.7 + r1 * 0.6) * 10) / 10,
-            uninsured: Math.round(cRecord.indicators.uninsured * (0.75 + r2 * 0.5) * 10) / 10,
-            diabetes: Math.round(cRecord.indicators.diabetes * (0.8 + prng() * 0.4) * 10) / 10,
-            asthma: Math.round(cRecord.indicators.asthma * (0.8 + prng() * 0.4) * 10) / 10,
-            hypertension: Math.round(cRecord.indicators.hypertension * (0.85 + r1 * 0.3) * 10) / 10,
-            obesity: Math.round(cRecord.indicators.obesity * (0.85 + r2 * 0.3) * 10) / 10,
-            copd: Math.round(cRecord.indicators.copd * (0.8 + prng() * 0.4) * 10) / 10,
-            noVehicle: Math.round(cRecord.indicators.noVehicle * (0.7 + r1 * 0.6) * 10) / 10,
-            noDiploma: Math.round(cRecord.indicators.noDiploma * (0.7 + r2 * 0.6) * 10) / 10,
-            unemployment: Math.round(cRecord.indicators.unemployment * (0.7 + prng() * 0.6) * 10) / 10,
-            rentBurden: Math.round(cRecord.indicators.rentBurden * (0.8 + r1 * 0.4) * 10) / 10,
-            crowding: Math.round(cRecord.indicators.crowding * (0.7 + r2 * 0.6) * 10) / 10,
-            access: Math.round(cRecord.indicators.access * (0.8 + r2 * 0.4)),
-            pcp: Math.round(cRecord.indicators.pcp * (0.8 + prng() * 0.4) * 10) / 10,
-            driveTime: Math.round(cRecord.indicators.driveTime * (0.8 + r1 * 0.4)),
-            lifeExp: Math.round((cRecord.indicators.lifeExp - (svi - 0.5) * 6) * 10) / 10,
-            svi: Math.round(svi * 100) / 100,
-            'prog.wic': Math.round(((cRecord.indicators as any)['prog.wic'] ?? 52) * (0.7 + r1 * 0.6)),
-            'prog.imm': Math.round(((cRecord.indicators as any)['prog.imm'] ?? 64) * (0.7 + r2 * 0.6)),
-            'prog.dpp': Math.round(((cRecord.indicators as any)['prog.dpp'] ?? 38) * (0.7 + prng() * 0.6)),
-            'prog.tob': Math.round(((cRecord.indicators as any)['prog.tob'] ?? 45) * (0.7 + r1 * 0.6)),
-            'prog.mhv': Math.round(((cRecord.indicators as any)['prog.mhv'] ?? 40) * (0.7 + r2 * 0.6)),
-          };
-
-          return {
-            id: tractId,
-            name: `Census Tract ${tNum}`,
-            countyId: cRecord.id,
-            countyName: cRecord.name,
-            stateAbbr: cRecord.stateAbbr,
-            pop: Math.round(Math.max(800, cRecord.pop / count * (0.6 + r2 * 0.8))),
-            svi,
-            tier: Math.min(4, Math.floor(svi * 5)),
-            cx: pt[0],
-            cy: pt[1],
-            d: voronoi.renderCell(i) || '',
-            indicators: ind
-          };
-        });
-
-        tractCache.set(cRecord.id, out);
-        return out;
-      }
-
-      // Initial Recolor of Counties
-      const tStart = performance.now();
-      const initialScale = buildColorScale('sdoh', 'sdoh');
-
-      let activeCid: string | null = null;
-      let activeTid: string | null = null;
-      let activeSt: string | null = null;
-
-      const countyPaths = gCounties.selectAll<SVGPathElement, CountyRecord>('path.county')
-        .data(repo.counties, (c: any) => c.id)
-        .enter()
-        .append('path')
+      // Render Counties
+      const countiesSelection = gC.selectAll<SVGPathElement, CountyRecord>('path.county')
+        .data(repo.counties, (d: any) => d.id)
+        .join('path')
         .attr('class', 'county')
-        .attr('data-id', c => c.id)
-        .attr('d', c => pathGen(c.feature) || '')
-        .attr('fill', c => initialScale.getColor(getMetricValue(c, 'sdoh')))
-        .attr('stroke', 'rgba(255, 255, 255, 0.12)')
-        .attr('stroke-width', 0.5)
-        .attr('vector-effect', 'non-scaling-stroke')
-        .attr('cursor', 'pointer');
+        .attr('d', (d: any) => d.d)
+        .attr('fill', 'var(--map-low)')
+        .attr('opacity', 0);
 
-      const msElapsed = Math.round(performance.now() - tStart);
-      setRecolorPerf({ n: repo.counties.length, ms: Math.max(6, msElapsed) });
+      // Entrance animation: fade in along west-to-east sweep
+      countiesSelection.transition('in')
+        .duration(600)
+        .delay((d: any) => (d.cx / 975) * 700)
+        .ease(d3.easeCubicOut)
+        .attr('opacity', 1);
 
-      setLegendInfo({
-        title: 'SDOH composite burden',
-        lo: `${initialScale.extent[0].toFixed(1)}%`,
-        hi: `${initialScale.extent[1].toFixed(1)}%`,
-        note: 'National quantiles',
-        bins: initialScale.bins
-      });
+      // Immediately colorize counties with active metric (prototype lines 1415-1416: colorize(o.animateIn))
+      colorize(curMetric, curLayerId, { st: null, c: null, t: null }, true);
 
-      // Counties Hover & Click
-      countyPaths
-        .on('pointerenter', function (event, c) {
-          if (activeCid && c.id !== activeCid) {
-            d3.select(this)
-              .attr('stroke', '#38BDF8')
-              .attr('stroke-width', 1.4)
-              .attr('opacity', 0.85);
-          }
-
-          const cRect = container.getBoundingClientRect();
-          const indVal = getMetricValue(c, activeMetricKey);
-          const formattedVal = `${indVal.toFixed(1)}%`;
-
-          setTooltip({
-            visible: true,
-            x: event.clientX - cRect.left + 14,
-            y: event.clientY - cRect.top - 14,
-            title: `${c.name} County, ${c.stateAbbr}`,
-            lines: [
-              { label: activeMetricMeta.short || 'Indicator', val: formattedVal },
-              { label: 'Vulnerability', val: c.svi.toFixed(2) },
-              { label: 'Population', val: `${Math.round(c.pop / 1000)}k` }
-            ]
-          });
+      // County hover tooltip
+      countiesSelection
+        .on('pointerenter', (e: MouseEvent, d: CountyRecord) => {
+          const m = METRICS[curMetric] || { short: curMetric, f: (v: number) => String(v) };
+          const tipHtml = `<b>${countyLabel(d)}</b>${tipRows([
+            [m.short, m.f(getV(d, curMetric))],
+            ['Vulnerability', d.svi.toFixed(2)],
+            ['Population', fmt.k(d.pop)]
+          ])}<div class="note" style="margin-top:5px">Synthetic demo values</div>`;
+          showTip(tipHtml, e);
         })
-        .on('pointermove', function (event) {
-          const cRect = container.getBoundingClientRect();
-          setTooltip(prev => ({
-            ...prev,
-            x: event.clientX - cRect.left + 14,
-            y: event.clientY - cRect.top - 14
-          }));
-        })
-        .on('pointerleave', function (event, c) {
-          if (activeCid && c.id !== activeCid) {
-            d3.select(this)
-              .attr('stroke', 'rgba(255, 255, 255, 0.08)')
-              .attr('stroke-width', 0.4)
-              .attr('opacity', 0.45);
+        .on('pointermove', (e: MouseEvent) => moveTip(e))
+        .on('pointerleave', () => hideTip())
+        .on('click', (e: MouseEvent, d: CountyRecord) => {
+          e.stopPropagation();
+          hideTip();
+          // Drill into state on first click if zoomed out
+          if (currentK < 2.2 && !scope.c) {
+            handleZoomToState(d.st);
+            return;
           }
-          setTooltip(prev => ({ ...prev, visible: false }));
-        })
-        .on('click', function (event, c) {
-          event.stopPropagation();
-          // If in national view (neither county nor state selected), zoom into state first
-          if (!activeCid && !activeSt) {
-            zoomToState(c.st);
-          } else {
-            drillIntoCounty(c.id, true);
-          }
+          handleSelectCounty(d);
         });
 
-      // Fit Padding Helper to reduce map size on load and keep it comfortably framed
-      function fitPadding(pad = { l: 310, r: 350, t: 60, b: 40 }) {
-        if (!containerRef.current || !svgRef.current) return;
-        const W = containerRef.current.clientWidth;
-        const H = containerRef.current.clientHeight;
-        if (!W || !H) return;
-        const mm = Math.min(W / 975, H / 610);
-        const ox = (W - 975 * mm) / 2;
-        const oy = (H - 610 * mm) / 2;
-        const r = [(pad.l - ox) / mm, (pad.t - oy) / mm, (W - pad.r - ox) / mm, (H - pad.b - oy) / mm];
-        const s = Math.min((r[2] - r[0]) / 975, (r[3] - r[1]) / 610) * 0.94;
-        const home = d3.zoomIdentity.translate((r[0] + r[2]) / 2 - s * 487.5, (r[1] + r[3]) / 2 - s * 305).scale(s);
-        svg.call(zoom.transform, home);
-      }
-
-      // Hotspot Heatmap Function (softened, reduced glare)
-      function drawHeat(heatOn: boolean, mKey: string, cid: string | null) {
-        gHeat.selectAll('*').remove();
-        if (!heatOn) return;
-
-        const mMeta = METRICS_CONFIG[mKey] || { bad: 'high' };
-        const needOf = (d: any) => {
-          const v = getMetricValue(d, mKey);
-          return mMeta.bad === 'low' ? -v : v;
-        };
-
-        if (cid) {
-          const tracts = tractCache.get(cid) || [];
-          const sorted = [...tracts].sort((a, b) => needOf(b) - needOf(a));
-          const top = sorted.slice(0, Math.max(3, Math.ceil(tracts.length * 0.35)));
-
-          gHeat.selectAll('circle')
-            .data(top)
-            .join('circle')
-            .attr('cx', (d: any) => d.cx)
-            .attr('cy', (d: any) => d.cy)
-            .attr('r', 0)
-            .attr('fill', 'url(#hm-heat-glow)')
-            .attr('opacity', 0.65)
-            .transition()
-            .duration(650)
-            .attr('r', 16);
-        } else {
-          const sorted = [...repo.counties].sort((a, b) => needOf(b) - needOf(a));
-          const top = sorted.slice(0, Math.ceil(repo.counties.length * 0.12));
-
-          gHeat.selectAll('circle')
-            .data(top)
-            .join('circle')
-            .attr('cx', (d: any) => d.cx)
-            .attr('cy', (d: any) => d.cy)
-            .attr('r', 0)
-            .attr('fill', 'url(#hm-heat-glow)')
-            .attr('opacity', 0.60)
-            .transition()
-            .duration(700)
-            .delay((_, i) => Math.min(450, i * 1.5))
-            .attr('r', (d: any) => Math.max(8, Math.sqrt(d.area || 60) * 1.3));
-        }
-      }
-      drawHeatFnRef.current = drawHeat;
-
-      // Highest-need Markers Function
-      function renderNeedMarkers(mkOn: boolean, mKey: string, cid: string | null) {
-        gMarkers.selectAll('*').remove();
-        if (!mkOn) return;
-
-        const mMeta = METRICS_CONFIG[mKey] || { bad: 'high' };
-        const needOf = (d: any) => {
-          const v = getMetricValue(d, mKey);
-          return mMeta.bad === 'low' ? -v : v;
-        };
-
-        let pts: { x: number; y: number }[] = [];
-        if (cid) {
-          const tracts = tractCache.get(cid) || [];
-          pts = [...tracts].sort((a, b) => needOf(b) - needOf(a)).slice(0, 3).map(t => ({ x: t.cx, y: t.cy }));
-        } else {
-          pts = [...repo.counties].sort((a, b) => needOf(b) - needOf(a)).slice(0, 7).map(c => {
-            const cent = pathGen.centroid(c.feature);
-            return { x: cent[0], y: cent[1] };
-          }).filter(pt => !isNaN(pt.x));
-        }
-
-        pts.forEach(pt => {
-          const mG = gMarkers.append('g')
-            .attr('class', 'marker-pin')
-            .attr('data-cx', pt.x)
-            .attr('data-cy', pt.y)
-            .attr('transform', `translate(${pt.x}, ${pt.y}) scale(${1 / Math.sqrt(currentK)}) translate(${-pt.x}, ${-pt.y})`);
-
-          mG.append('circle')
-            .attr('cx', pt.x)
-            .attr('cy', pt.y)
-            .attr('class', 'pulse-marker-ring')
-            .attr('fill', '#FF5D8F')
-            .attr('opacity', 0.65);
-
-          mG.append('circle')
-            .attr('cx', pt.x)
-            .attr('cy', pt.y)
-            .attr('r', 2.8)
-            .attr('fill', '#ffffff')
-            .attr('stroke', '#FF5D8F')
-            .attr('stroke-width', 1.2);
-        });
-      }
-      drawMarkersFnRef.current = renderNeedMarkers;
-
-      // Drill into County
-      function drillIntoCounty(cid: string, animate = true) {
-        activeCid = cid;
-        const targetCounty = repo.countyById.get(cid);
-        if (!targetCounty) return;
-
-        activeSt = targetCounty.st;
-        setSelectedState({ abbr: targetCounty.stateAbbr, name: targetCounty.stateName, fips: targetCounty.st });
-        setSelectedCounty(targetCounty);
-        setSelectedTract(null);
-        if (onCountySelect) onCountySelect(targetCounty);
-
-        const countyD = pathGen(targetCounty.feature) || '';
-        const bounds = pathGen.bounds(targetCounty.feature);
-
-        // Zoom Camera to County with compact padding
-        const [[x0, y0], [x1, y1]] = bounds;
-        const dx = Math.max(x1 - x0, 10);
-        const dy = Math.max(y1 - y0, 10);
-        const pad = 0.22;
-        const s = Math.min(5.8, Math.max(1.4, pad / Math.max(dx / 975, dy / 610)));
-        const targetCenterX = 485;
-        const targetCenterY = 305;
-        const tx = targetCenterX - s * (x0 + x1) / 2;
-        const ty = targetCenterY - s * (y0 + y1) / 2;
-        const targetT = d3.zoomIdentity.translate(tx, ty).scale(s);
-
-        if (animate) {
-          svg.transition('zoom-camera')
-            .duration(850)
-            .ease(d3.easeCubicInOut)
-            .call(zoom.transform, targetT);
-        } else {
-          svg.call(zoom.transform, targetT);
-        }
-
-        // Dim Other Counties to dark muted navy
-        svg.classed('dim-others', true);
-        gCounties.selectAll<SVGPathElement, CountyRecord>('path.county')
-          .classed('sel', (c: any) => c.id === cid)
-          .transition('dim-surround')
-          .duration(350)
-          .attr('fill', (c: any) => c.id === cid ? '#101B45' : '#0B1530')
-          .attr('opacity', (c: any) => c.id === cid ? 1 : 0.45)
-          .attr('stroke', (c: any) => c.id === cid ? 'var(--cyan, #37C8CF)' : 'rgba(255, 255, 255, 0.08)')
-          .attr('stroke-width', (c: any) => c.id === cid ? 2.2 : 0.4);
-
-        clipPath.attr('d', countyD);
-
-        gSelCounty.selectAll('*').remove();
-        gSelCounty.append('path')
-          .attr('d', countyD)
-          .attr('fill', 'none')
-          .attr('stroke', 'var(--cyan, #37C8CF)')
-          .attr('stroke-width', 2.2)
-          .attr('vector-effect', 'non-scaling-stroke')
-          .style('filter', 'drop-shadow(0 0 8px rgba(55, 200, 207, 0.85))');
-
-        // Draw Tracts Inside County
-        const tractsList = getTractsForCounty(targetCounty);
-        setCountyTracts(tractsList);
-
-        gTracts.selectAll('*').remove();
-        gSelTract.selectAll('*').remove();
-
-        const currentScale = buildColorScale(activeLayerId, activeMetricKey);
-
-        const tractPaths = gTracts.selectAll<SVGPathElement, any>('path.tract')
-          .data(tractsList, (t: any) => t.id)
-          .enter()
-          .append('path')
-          .attr('class', 'tract')
-          .attr('d', (t: any) => t.d)
-          .attr('data-id', (t: any) => t.id)
-          .attr('fill', (t: any) => currentScale.getColor(getMetricValue(t, activeMetricKey)))
-          .attr('stroke', 'rgba(255, 255, 255, 0.45)')
-          .attr('stroke-width', 0.8)
-          .attr('vector-effect', 'non-scaling-stroke')
-          .attr('cursor', 'pointer');
-
-        tractPaths.attr('opacity', 0)
-          .transition('tract-in')
-          .delay((_, i) => 100 + i * 14)
-          .duration(380)
-          .attr('opacity', 1);
-
-        tractPaths
-          .on('pointerenter', function (event, t: any) {
-            d3.select(this)
-              .attr('stroke', '#ffffff')
-              .attr('stroke-width', 2.0)
-              .raise();
-
-            const cRect = container.getBoundingClientRect();
-            const v = getMetricValue(t, activeMetricKey);
-            setTooltip({
-              visible: true,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14,
-              title: t.name,
-              lines: [
-                { label: 'GEOID', val: t.id },
-                { label: activeMetricMeta.short || 'Value', val: `${v.toFixed(1)}%` },
-                { label: 'Tier', val: TIER_LABELS[t.tier] },
-                { label: 'Population', val: t.pop.toLocaleString() }
-              ]
-            });
-          })
-          .on('pointermove', function (event) {
-            const cRect = container.getBoundingClientRect();
-            setTooltip(prev => ({
-              ...prev,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14
-            }));
-          })
-          .on('pointerleave', function (_, t: any) {
-            d3.select(this)
-              .attr('stroke', 'rgba(255, 255, 255, 0.45)')
-              .attr('stroke-width', 0.8);
-            setTooltip(prev => ({ ...prev, visible: false }));
-          })
-          .on('click', function (event, t: any) {
-            event.stopPropagation();
-            drillIntoTract(t);
-          });
-
-        // Highlight the tract with the highest need for this indicator
-        const mMeta = METRICS_CONFIG[activeMetricKey] || { bad: 'high' };
-        const sortedTracts = [...tractsList].sort((a, b) => {
-          const va = getMetricValue(a, activeMetricKey);
-          const vb = getMetricValue(b, activeMetricKey);
-          return mMeta.bad === 'low' ? va - vb : vb - va;
-        });
-        if (sortedTracts.length > 0) {
-          drillIntoTract(sortedTracts[0]);
-        }
-
-        drawHeat(heatmapEnabled, activeMetricKey, cid);
-        renderNeedMarkers(markersEnabled, activeMetricKey, cid);
-      }
-
-      function drillIntoTract(tract: any) {
-        activeTid = tract.id;
-        setSelectedTract(tract);
-        if (onTractSelect) onTractSelect(tract);
-
-        // Highlight selected tract with cyan border & drop-shadow
-        gSelTract.selectAll('*').remove();
-        gSelTract.append('path')
-          .attr('d', tract.d)
-          .attr('fill', 'none')
-          .attr('stroke', 'var(--cyan, #37C8CF)')
-          .attr('stroke-width', 2.8)
-          .attr('vector-effect', 'non-scaling-stroke')
-          .style('filter', 'drop-shadow(0 0 6px var(--cyan, #37C8CF))');
-      }
-
-      // Reset to National View
-      function resetToNationalView() {
-        activeCid = null;
-        activeTid = null;
-        activeSt = null;
-        setSelectedState(null);
-        setSelectedCounty(null);
-        setSelectedTract(null);
-        setCountyTracts([]);
-
-        svg.classed('dim-others', false);
-        const currentScale = buildColorScale(activeLayerId, activeMetricKey);
-
-        gCounties.selectAll<SVGPathElement, CountyRecord>('path.county')
-          .classed('sel', false)
-          .transition('restore-counties')
-          .duration(450)
-          .attr('fill', c => currentScale.getColor(getMetricValue(c, activeMetricKey)))
-          .attr('opacity', 1)
-          .attr('stroke', 'rgba(255, 255, 255, 0.12)')
-          .attr('stroke-width', 0.5);
-
-        gTracts.selectAll('*').remove();
-        gSelCounty.selectAll('*').remove();
-        gSelTract.selectAll('*').remove();
-
-        fitPadding();
-        drawHeat(heatmapEnabled, activeMetricKey, null);
-        renderNeedMarkers(markersEnabled, activeMetricKey, null);
-      }
-
-      // Zoom to State (generous framing, expanded view)
-      function zoomToState(st: string) {
-        activeCid = null;
-        activeTid = null;
-        activeSt = st;
-        setSelectedCounty(null);
-        setSelectedTract(null);
-        setCountyTracts([]);
-        gTracts.selectAll('*').remove();
-        gSelCounty.selectAll('*').remove();
-        gSelTract.selectAll('*').remove();
-
-        const stMeta = STATE_META[st];
-        setSelectedState(stMeta ? { abbr: stMeta[0], name: stMeta[1], fips: st } : { abbr: st, name: st, fips: st });
-
-        const stateCounties = repo.countiesByState.get(st) || [];
-        if (stateCounties.length === 0) return;
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        stateCounties.forEach(c => {
-          const [[x0, y0], [x1, y1]] = pathGen.bounds(c.feature);
-          if (x0 < minX) minX = x0;
-          if (y0 < minY) minY = y0;
-          if (x1 > maxX) maxX = x1;
-          if (y1 > maxY) maxY = y1;
-        });
-
-        const dx = Math.max(maxX - minX, 10);
-        const dy = Math.max(maxY - minY, 10);
-        // Generous pad = 0.68 ensures the state appears significantly bigger and prominent
-        const pad = 0.68;
-        const s = Math.min(18, Math.max(1.8, pad / Math.max(dx / 975, dy / 610)));
-        const tx = 485 - s * (minX + maxX) / 2;
-        const ty = 305 - s * (minY + maxY) / 2;
-        const targetT = d3.zoomIdentity.translate(tx, ty).scale(s);
-
-        svg.classed('dim-others', true);
-        const currentScale = buildColorScale(activeLayerId, activeMetricKey);
-
-        gCounties.selectAll<SVGPathElement, CountyRecord>('path.county')
-          .transition('state-focus')
-          .duration(400)
-          .attr('fill', c => c.st === st ? currentScale.getColor(getMetricValue(c, activeMetricKey)) : '#0B1530')
-          .attr('opacity', c => c.st === st ? 1 : 0.35)
-          .attr('stroke', c => c.st === st ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.05)')
-          .attr('stroke-width', c => c.st === st ? 0.6 : 0.3);
-
-        svg.transition('zoom-state')
-          .duration(850)
-          .ease(d3.easeCubicInOut)
-          .call(zoom.transform, targetT);
-
-        drawHeat(heatmapEnabled, activeMetricKey, null);
-        renderNeedMarkers(markersEnabled, activeMetricKey, null);
-      }
-
-      selectCountyFnRef.current = (cid, anim = true) => drillIntoCounty(cid, anim);
-      selectTractFnRef.current = (tid) => {
-        const tr = tractCache.get(activeCid || '')?.find(x => x.id === tid);
-        if (tr) drillIntoTract(tr);
-      };
-      zoomToStateFnRef.current = zoomToState;
-      resetMapFnRef.current = resetToNationalView;
-
-      // Handle Initial Load
-      if (initialCountyId) {
+      // Handle deep links if any
+      const targetCounty = initialCountyId || (initialTractId && initialTractId.slice(0, 5));
+      if (targetCounty && repo.countyById.has(targetCounty)) {
         setTimeout(() => {
-          if (!isCancelled) drillIntoCounty(initialCountyId, false);
-        }, 150);
-      } else {
-        setTimeout(() => {
-          if (!isCancelled) {
-            fitPadding();
-            renderNeedMarkers(markersEnabled, 'sdoh', null);
-            drawHeat(heatmapEnabled, 'sdoh', null);
-          }
-        }, 150);
+          const c = repo.countyById.get(targetCounty)!;
+          handleSelectCounty(c, initialTractId || null);
+        }, 350);
       }
-
-      const handleResize = () => {
-        if (!activeCid && !activeSt) fitPadding();
-      };
-      window.addEventListener('resize', handleResize);
-
-      return () => {
-        window.removeEventListener('resize', handleResize);
-      };
     }
 
-    initHealthMap();
+    init();
+
+    const handleResize = () => {
+      const mob = window.innerWidth <= 860;
+      fitPadding(mob ? { l: 8, r: 8, t: 110, b: 70 } : { l: 330, r: window.innerWidth > 1180 ? 370 : 40, t: 60, b: 40 });
+    };
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      isCancelled = true;
+      cancelled = true;
+      window.removeEventListener('resize', handleResize);
+      hideTip();
     };
-  }, []);
+  }, []); // Run once on mount
 
-  // Update map colors, heat, markers, and highlight whenever activeLayerId or activeMetricKey changes
+  // Recolor Counties and Tracts whenever metric or layer or scope changes
   useEffect(() => {
-    if (!svgRef.current || !rootGroupRef.current) return;
-    const svg = svgRef.current;
-    const rootG = rootGroupRef.current;
-    const lyr = HEALTH_MAP_LAYERS.find(l => l.id === activeLayerId) || HEALTH_MAP_LAYERS[0];
-    const mMeta = METRICS_CONFIG[activeMetricKey] || { bad: 'high', label: activeMetricKey, short: activeMetricKey };
+    if (!countiesGroupRef.current || !countiesRef.current.length) return;
+    colorize(curMetric, curLayerId, scope, false);
+  }, [curLayerId, curMetric, scope.c, heat, markers, colorize]);
 
-    const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
-      d3.interpolateRgb(MAP_LOW, lyr.ramp[0])(0.6),
-      ...lyr.ramp
-    ]);
+  // Update selection / comparison outline styles on tracts whenever compareSet or scope.t changes
+  useEffect(() => {
+    const tractsGroup = tractsGroupRef.current;
+    if (!tractsGroup) return;
+    tractsGroup.selectAll<SVGPathElement, any>('path.tract')
+      .classed('cmp', d => compareSet.has(d.id))
+      .classed('sel', d => d.id === scope.t);
+  }, [compareSet, scope.t]);
 
-    getCountyRepository().then(repo => {
-      const t0 = performance.now();
-      const values = repo.counties.map(c => getMetricValue(c, activeMetricKey));
-      const qScale = d3.scaleQuantile().domain(values).range(d3.range(7));
-      const flip = mMeta.bad === 'low';
-      const tOf = (i: number) => {
-        const t = (i + 0.5) / 7;
-        return flip ? 1 - t : t;
-      };
-
-      const getColor = (v: number) => interp(tOf(qScale(v)));
-      const bins = d3.range(7).map(i => interp(tOf(i)));
-      const extent = d3.extent(values) as [number, number];
-
-      if (selectedCounty) {
-        // In county view: Keep surrounding counties dimmed, recolor tracts
-        svg.selectAll<SVGPathElement, CountyRecord>('path.county')
-          .attr('fill', (c: any) => c.id === selectedCounty.id ? '#101B45' : '#0B1530')
-          .attr('opacity', (c: any) => c.id === selectedCounty.id ? 1 : 0.45);
-
-        rootG.selectAll<SVGPathElement, any>('path.tract')
-          .transition('recolor-tracts')
-          .duration(380)
-          .attr('fill', t => getColor(getMetricValue(t, activeMetricKey)));
-
-        // Highlight the tract with the highest need for this specific metric
-        const tracts = tractCache.get(selectedCounty.id) || [];
-        const sorted = [...tracts].sort((a, b) => {
-          const va = getMetricValue(a, activeMetricKey);
-          const vb = getMetricValue(b, activeMetricKey);
-          return mMeta.bad === 'low' ? va - vb : vb - va;
-        });
-
-        if (sorted.length > 0) {
-          const topTract = sorted[0];
-          setSelectedTract(topTract);
-
-          const gSelTract = rootG.select<SVGGElement>('g.sel-tract-layer');
-          gSelTract.selectAll('*').remove();
-          gSelTract.append('path')
-            .attr('d', topTract.d)
-            .attr('fill', 'none')
-            .attr('stroke', 'var(--cyan, #37C8CF)')
-            .attr('stroke-width', 2.8)
-            .attr('vector-effect', 'non-scaling-stroke')
-            .style('filter', 'drop-shadow(0 0 6px var(--cyan, #37C8CF))');
-        }
-
-        drawHeatFnRef.current?.(heatmapEnabled, activeMetricKey, selectedCounty.id);
-        drawMarkersFnRef.current?.(markersEnabled, activeMetricKey, selectedCounty.id);
-      } else if (selectedState) {
-        // In state view: Recolor state counties, keep others dimmed
-        svg.selectAll<SVGPathElement, CountyRecord>('path.county')
-          .transition('recolor-state-counties')
-          .duration(380)
-          .attr('fill', c => c.st === selectedState.fips ? getColor(getMetricValue(c, activeMetricKey)) : '#0B1530')
-          .attr('opacity', c => c.st === selectedState.fips ? 1 : 0.35);
-
-        drawHeatFnRef.current?.(heatmapEnabled, activeMetricKey, null);
-        drawMarkersFnRef.current?.(markersEnabled, activeMetricKey, null);
-      } else {
-        // In national view: Recolor all counties
-        svg.selectAll<SVGPathElement, CountyRecord>('path.county')
-          .transition('recolor-counties')
-          .duration(420)
-          .attr('fill', c => getColor(getMetricValue(c, activeMetricKey)));
-
-        drawHeatFnRef.current?.(heatmapEnabled, activeMetricKey, null);
-        drawMarkersFnRef.current?.(markersEnabled, activeMetricKey, null);
-      }
-
-      const ms = Math.round(performance.now() - t0);
-      setRecolorPerf({ n: repo.counties.length, ms: Math.max(8, ms) });
-
-      setLegendInfo({
-        title: mMeta.label || lyr.name,
-        lo: `${extent[0].toFixed(1)}%`,
-        hi: `${extent[1].toFixed(1)}%`,
-        note: selectedCounty ? 'Tracts in county' : 'National quantiles',
-        bins
-      });
-    });
-  }, [activeLayerId, activeMetricKey, selectedCounty, selectedState, heatmapEnabled, markersEnabled]);
-
-  // Handler for Layer Selection
+  // Action handlers
   const handleSelectLayer = (lyrId: string) => {
-    const lyr = HEALTH_MAP_LAYERS.find(l => l.id === lyrId) || HEALTH_MAP_LAYERS[0];
-    setActiveLayerId(lyr.id);
-    setActiveMetricKey(lyr.metrics[0]);
+    const lyr = LAYERS.find(l => l.id === lyrId) || LAYERS[0];
+    setCurLayerId(lyr.id);
+    setCurMetric(lyr.metrics[0]);
   };
 
-  // Filtered search results for county auto-complete
-  const [searchResults, setSearchResults] = useState<CountyRecord[]>([]);
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      return;
+  const handleSelectMetric = (mKey: string) => {
+    setCurMetric(mKey);
+  };
+
+  const handleZoomToState = (st: string) => {
+    const stateObj = stateByRef.current[st];
+    if (!stateObj) return;
+    setScope({ st, c: null, t: null });
+    setCountyTracts([]);
+    tractsGroupRef.current?.selectAll('*').remove();
+    selGroupRef.current?.selectAll('*').remove();
+    countiesGroupRef.current?.selectAll('path.county').classed('sel', false);
+    svgRef.current?.classed('dim-others', false);
+
+    const pathGen = pathGenRef.current;
+    zoomToBounds(pathGen.bounds(stateObj.feature), 900, 0.9);
+  };
+
+  const handleSelectCounty = useCallback((cRecord: CountyRecord, tractIdToSelect: string | null = null) => {
+    setScope({ st: cRecord.st, c: cRecord.id, t: tractIdToSelect });
+    onCountySelect?.(cRecord);
+
+    const pathGen = pathGenRef.current;
+    zoomToBounds(pathGen.bounds(cRecord.feature), 900, 0.7);
+
+    // Selected outline
+    selGroupRef.current?.selectAll('*').remove();
+    selGroupRef.current?.append('path')
+      .attr('class', 'sel-outline')
+      .attr('d', cRecord.d || pathGen(cRecord.feature));
+
+    countiesGroupRef.current?.selectAll<SVGPathElement, CountyRecord>('path.county')
+      .classed('sel', d => d.id === cRecord.id);
+
+    svgRef.current?.classed('dim-others', true);
+
+    // Clip path for county
+    clipPathRef.current?.attr('d', cRecord.d || pathGen(cRecord.feature));
+
+    // Render county tracts
+    const tracts = getTractsForCounty(cRecord);
+    setCountyTracts(tracts);
+
+    const lyr = LAYERS.find(l => l.id === curLayerId) || LAYERS[0];
+    const mMeta = METRICS[curMetric] || { bad: 'high' };
+    const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
+      d3.interpolateRgb('#101B45', lyr.ramp[0])(0.6),
+      ...lyr.ramp
+    ]);
+    const tValues = tracts.map(t => getV(t, curMetric));
+    const tQScale = d3.scaleQuantile().domain(tValues).range(d3.range(7));
+    const flip = mMeta.bad === 'low';
+    const tOf = (i: number) => {
+      const t = (i + 0.5) / 7;
+      return flip ? 1 - t : t;
+    };
+    const getTractColor = (v: number) => interp(tOf(tQScale(v)));
+
+    const p = tractsGroupRef.current?.selectAll<SVGPathElement, any>('path.tract')
+      .data(tracts, (d: any) => d.id)
+      .join('path')
+      .attr('class', 'tract')
+      .attr('d', (d: any) => d.d)
+      .attr('fill', (d: any) => getTractColor(getV(d, curMetric)))
+      .attr('opacity', 0);
+
+    p?.transition('tin')
+      .delay((_: any, i: number) => 350 + i * 12)
+      .duration(450)
+      .attr('opacity', 1);
+
+    p?.on('pointerenter', (e: MouseEvent, d: any) => {
+      const m = METRICS[curMetric] || { short: curMetric, f: (v: number) => String(v) };
+      const tipHtml = `<b>${d.name}</b>${tipRows([
+        ['GEOID', d.id],
+        [m.short, m.f(getV(d, curMetric))],
+        ['Vulnerability tier', TIER_LABELS[d.tier]],
+        ['Population', fmt.int(d.pop)]
+      ])}`;
+      showTip(tipHtml, e);
+    })
+      .on('pointermove', (e: MouseEvent) => moveTip(e))
+      .on('pointerleave', () => hideTip())
+      .on('click', (e: MouseEvent, d: any) => {
+        e.stopPropagation();
+        hideTip();
+        handleSelectTract(d);
+      });
+
+    if (tractIdToSelect) {
+      const targetTract = tracts.find(t => t.id === tractIdToSelect);
+      if (targetTract) handleSelectTract(targetTract);
     }
-    const q = searchQuery.toLowerCase().trim();
-    getCountyRepository().then(repo => {
-      const matches = repo.counties
-        .filter(c => c.name.toLowerCase().includes(q) || `${c.name} ${c.stateAbbr}`.toLowerCase().includes(q))
-        .slice(0, 7);
-      setSearchResults(matches);
+  }, [curLayerId, curMetric, getTractsForCounty, onCountySelect, zoomToBounds]);
+
+  const handleSelectTract = useCallback((tract: any) => {
+    setScope(prev => ({ ...prev, t: tract.id }));
+    onTractSelect?.(tract);
+  }, [onTractSelect]);
+
+  const handleClearTract = () => {
+    setScope(prev => ({ ...prev, t: null }));
+  };
+
+  const handleClearCounty = () => {
+    const st = scope.st;
+    if (st) {
+      handleZoomToState(st);
+    } else {
+      handleResetHome();
+    }
+  };
+
+  const handleResetHome = () => {
+    setScope({ st: null, c: null, t: null });
+    setCountyTracts([]);
+    tractsGroupRef.current?.selectAll('*').remove();
+    selGroupRef.current?.selectAll('*').remove();
+    countiesGroupRef.current?.selectAll('path.county').classed('sel', false);
+    svgRef.current?.classed('dim-others', false);
+
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    if (svg && zoom) {
+      svg.transition().duration(900).call(zoom.transform, homeTransformRef.current);
+    }
+  };
+
+  const handleGoJurisdiction = () => {
+    const defaultJurId = jurisdictionCountyId || initialCountyId || '53033';
+    const c = repoRef.current?.countyById.get(defaultJurId);
+    if (c) handleSelectCounty(c);
+  };
+
+  const handleZoomBy = (factor: number) => {
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    if (svg && zoom) {
+      svg.transition().duration(350).call(zoom.scaleBy, factor);
+    }
+  };
+
+  const handleToggleCompare = (t: any) => {
+    onToggleCompare?.(t.id);
+    const willBeIn = !compareSet.has(t.id);
+    showToast(
+      willBeIn
+        ? `${t.name} added to comparison (${compareSet.size + 1})`
+        : 'Removed from comparison'
+    );
+  };
+
+  const handleToggleFlag = (t: any) => {
+    onToggleFlag?.(t.id);
+    showToast(`${t.name} flagged as underserved`, {
+      label: 'Add to assessment',
+      fn: () => setFindingModalTract(t)
     });
+  };
+
+  // Search hits
+  const searchHits = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (q.length < 2 || !countiesRef.current.length) return [];
+    return countiesRef.current
+      .filter(c => (c.name + ' ' + c.stateName + ' ' + c.stateAbbr).toLowerCase().includes(q))
+      .slice(0, 8);
   }, [searchQuery]);
 
-  // Percentile rank calculation for selected tract
-  const tractPercentile = useMemo(() => {
-    if (!selectedTract || countyTracts.length === 0) return 50;
-    const vals = countyTracts.map(t => getMetricValue(t, activeMetricKey)).sort((a, b) => a - b);
-    const targetVal = getMetricValue(selectedTract, activeMetricKey);
-    const idx = vals.findIndex(v => v >= targetVal);
-    const pct = Math.round(((idx === -1 ? vals.length : idx) / vals.length) * 100);
-    return Math.max(1, Math.min(99, pct));
-  }, [selectedTract, countyTracts, activeMetricKey]);
+  // Selected records
+  const selectedCountyRecord = useMemo(() => {
+    if (!scope.c || !repoRef.current) return null;
+    return repoRef.current.countyById.get(scope.c) || null;
+  }, [scope.c]);
 
-  // Top tracts in current county for active metric
+  const selectedTractRecord = useMemo(() => {
+    if (!scope.t || countyTracts.length === 0) return null;
+    return countyTracts.find(t => t.id === scope.t) || null;
+  }, [scope.t, countyTracts]);
+
+  // State metadata
+  const stateMeta = useMemo(() => {
+    if (!scope.st) return null;
+    return STATE_META[scope.st] || null;
+  }, [scope.st]);
+
+  // Percentiles
+  const tractPct = useMemo(() => {
+    if (!selectedTractRecord || countyTracts.length === 0) return 0.5;
+    const vals = countyTracts.map(x => getV(x, curMetric)).sort(d3.ascending);
+    return pctRank(vals, getV(selectedTractRecord, curMetric));
+  }, [selectedTractRecord, countyTracts, curMetric]);
+
+  const countyPct = useMemo(() => {
+    if (!selectedCountyRecord || countiesRef.current.length === 0) return 0.5;
+    const vals = countiesRef.current.map(x => getV(x, curMetric)).sort(d3.ascending);
+    return pctRank(vals, getV(selectedCountyRecord, curMetric));
+  }, [selectedCountyRecord, curMetric]);
+
+  // Top tracts in county
   const topCountyTracts = useMemo(() => {
-    if (!selectedCounty || countyTracts.length === 0) return [];
-    const mMeta = METRICS_CONFIG[activeMetricKey] || { bad: 'high' };
-    return [...countyTracts].sort((a, b) => {
-      const va = getMetricValue(a, activeMetricKey);
-      const vb = getMetricValue(b, activeMetricKey);
-      return mMeta.bad === 'low' ? va - vb : vb - va;
-    }).slice(0, 5);
-  }, [selectedCounty, countyTracts, activeMetricKey]);
+    if (!countyTracts.length) return [];
+    const m = METRICS[curMetric] || { bad: 'high' };
+    return [...countyTracts].sort((a, b) =>
+      m.bad === 'low' ? getV(a, curMetric) - getV(b, curMetric) : getV(b, curMetric) - getV(a, curMetric)
+    ).slice(0, 5);
+  }, [countyTracts, curMetric]);
 
-  // Top counties in current state for active metric
-  const topStateCounties = useMemo(() => {
-    if (!selectedState || selectedCounty || !cachedRepoRef.current) return [];
-    const stateCounties = cachedRepoRef.current.countiesByState.get(selectedState.fips) || [];
-    const mMeta = METRICS_CONFIG[activeMetricKey] || { bad: 'high' };
-    return [...stateCounties].sort((a, b) => {
-      const va = getMetricValue(a, activeMetricKey);
-      const vb = getMetricValue(b, activeMetricKey);
-      return mMeta.bad === 'low' ? va - vb : vb - va;
-    }).slice(0, 8);
-  }, [selectedState, selectedCounty, activeMetricKey, cachedRepoRef.current]);
+  // Top counties in national / state pool
+  const topPoolCounties = useMemo(() => {
+    const all = countiesRef.current;
+    if (!all.length) return [];
+    const pool = scope.st ? (stateByRef.current[scope.st]?.counties || all) : all;
+    const m = METRICS[curMetric] || { bad: 'high' };
+    return [...pool].sort((a, b) =>
+      m.bad === 'low' ? getV(a, curMetric) - getV(b, curMetric) : getV(b, curMetric) - getV(a, curMetric)
+    ).slice(0, 8);
+  }, [scope.st, curMetric]);
 
-  // Top national counties for active metric
-  const topNationalCounties = useMemo(() => {
-    if (selectedCounty || selectedState || !cachedRepoRef.current) return [];
-    const repo = cachedRepoRef.current;
-    const mMeta = METRICS_CONFIG[activeMetricKey] || { bad: 'high' };
-    return [...repo.counties].sort((a, b) => {
-      const va = getMetricValue(a, activeMetricKey);
-      const vb = getMetricValue(b, activeMetricKey);
-      return mMeta.bad === 'low' ? va - vb : vb - va;
-    }).slice(0, 8);
-  }, [selectedCounty, selectedState, activeMetricKey]);
+  // Trendline for selected county
+  const countyTrend = useMemo(() => {
+    if (!selectedCountyRecord) return [];
+    const val = getV(selectedCountyRecord, curMetric);
+    return trendFor(selectedCountyRecord.id + curMetric, val);
+  }, [selectedCountyRecord, curMetric]);
+
+  // Finding modal submit
+  const handleSubmitFinding = async () => {
+    if (!findingModalTract) return;
+    try {
+      await fetch('/api/findings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assessmentId: selectedAssessmentId === '__new' ? undefined : selectedAssessmentId,
+          tractId: findingModalTract.id,
+          tractName: findingModalTract.name,
+          countyLabel: countyLabel(findingModalTract.county),
+          note: findingNote
+        })
+      });
+    } catch {}
+
+    const aidName = selectedAssessmentId === '__new' ? 'new assessment' : 'assessment';
+    showToast(`Finding added to ${aidName}`);
+    setFindingModalTract(null);
+  };
+
+  // Sync Finding Modal open class on #modal-root
+  useEffect(() => {
+    const root = document.getElementById('modal-root');
+    if (!root) return;
+    if (findingModalTract) {
+      root.classList.add('open');
+      setFindingNote(
+        `High-need tract: vulnerability ${findingModalTract.svi.toFixed(2)} (${TIER_LABELS[findingModalTract.tier].toLowerCase()} tier) with ${getV(findingModalTract, 'uninsured').toFixed(1)}% uninsured and ${getV(findingModalTract, 'diabetes').toFixed(1)}% diabetes prevalence. Candidate for targeted outreach.`
+      );
+      fetch('/api/assessments')
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setAssessments(Array.isArray(data) ? data : data.data || []))
+        .catch(() => {});
+    } else {
+      root.classList.remove('open');
+    }
+  }, [findingModalTract]);
+
+  const inCmp = selectedTractRecord ? compareSet.has(selectedTractRecord.id) : false;
+  const flagged = selectedTractRecord ? flaggedSet.has(selectedTractRecord.id) : false;
 
   return (
     <div className="hm">
-      {/* Full-bleed Map Viewport */}
-      <div id="hm-map" ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+      {/* Map Shell Viewport */}
+      <div id="hm-map" ref={mapContainerRef} style={{ position: 'absolute', inset: 0 }} />
 
-      {/* Floating Top Breadcrumbs */}
+      {/* Breadcrumbs matching prototype lines 1947 & 1987-1995 */}
       <div className="map-float hm-crumbs" id="hm-crumbs">
         <button
-          onClick={() => resetMapFnRef.current?.()}
-          className={!selectedState && !selectedCounty ? 'cur' : ''}
+          data-c="us"
+          className={!scope.st ? 'cur' : ''}
+          onClick={handleResetHome}
         >
           United States
         </button>
-
-        {selectedState && (
+        {scope.st && stateMeta && (
           <>
             <span className="sep">/</span>
             <button
-              onClick={() => zoomToStateFnRef.current?.(selectedState.fips)}
-              className={!selectedCounty ? 'cur' : ''}
+              data-c="st"
+              className={!scope.c ? 'cur' : ''}
+              onClick={() => handleZoomToState(scope.st!)}
             >
-              {selectedState.name}
+              {stateMeta[1]}
             </button>
           </>
         )}
-
-        {selectedCounty && (
+        {scope.c && selectedCountyRecord && (
           <>
             <span className="sep">/</span>
             <button
-              onClick={() => selectCountyFnRef.current?.(selectedCounty.id, true)}
-              className={!selectedTract ? 'cur' : ''}
+              data-c="c"
+              className={!scope.t ? 'cur' : ''}
+              onClick={() => handleSelectCounty(selectedCountyRecord)}
             >
-              {selectedCounty.name}
+              {selectedCountyRecord.name}
             </button>
           </>
         )}
-
-        {selectedTract && (
+        {scope.t && selectedTractRecord && (
           <>
             <span className="sep">/</span>
-            <span className="cur">{selectedTract.name.replace('Census ', '')}</span>
+            <button className="cur">
+              {selectedTractRecord.name.replace('Census ', '')}
+            </button>
           </>
         )}
       </div>
 
-      {/* Floating Left Layers & Indicators Panel */}
-      <aside className="map-float hm-layers" id="hm-layers">
+      {/* Floating Left Layers & Indicators Panel matching prototype lines 1948-1960 */}
+      <aside className={`map-float hm-layers ${mobileLayersOpen ? 'open' : ''}`} id="hm-layers">
         <button
           className="hm-sheet-handle"
           id="hm-handle"
           onClick={() => setMobileLayersOpen(!mobileLayersOpen)}
         >
           <span>
-            <Icon name="layers" size={16} /> Layers and indicators
+            <Icon name="layers" /> Layers and indicators
           </span>
-          <Icon name="chevd" size={14} />
+          <Icon name="chevd" />
         </button>
 
         <div className="search" style={{ maxWidth: 'none', marginBottom: '12px' }}>
-          <Icon name="search" size={15} />
+          <Icon name="search" />
           <input
             id="hm-q"
-            type="text"
             placeholder="Search a county"
             autoComplete="off"
             aria-label="Search counties on the map"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && searchHits.length > 0) {
+                handleSelectCounty(searchHits[0]);
+                setSearchQuery('');
+              }
+            }}
           />
-          {searchResults.length > 0 && (
-            <div className="search-results show" id="hm-qr" style={{ display: 'block', maxHeight: '180px', overflowY: 'auto' }}>
-              {searchResults.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => {
-                    setSearchQuery('');
-                    setSearchResults([]);
-                    selectCountyFnRef.current?.(c.id, true);
-                  }}
-                  style={{ width: '100%', display: 'flex', justifyContent: 'space-between', padding: '6px 10px', fontSize: '12px', border: 0, background: 'none', textAlign: 'left', cursor: 'pointer' }}
-                >
-                  <span style={{ fontWeight: 600 }}>{c.name} County</span>
-                  <span className="note" style={{ color: 'var(--faint)', fontSize: '10.5px' }}>{c.stateAbbr}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          <div className={`search-results ${searchQuery.trim().length >= 2 ? 'open' : ''}`} id="hm-qr">
+            {searchQuery.trim().length >= 2 && (
+              searchHits.length > 0 ? (
+                searchHits.map((c) => (
+                  <div
+                    key={c.id}
+                    className="sr-item"
+                    data-c={c.id}
+                    onClick={() => {
+                      handleSelectCounty(c);
+                      setSearchQuery('');
+                    }}
+                  >
+                    <span>{countyLabel(c)}</span>
+                    <small>{fmt.k(c.pop)}</small>
+                  </div>
+                ))
+              ) : (
+                <div className="sr-item">
+                  <small>No county matches that name</small>
+                </div>
+              )
+            )}
+          </div>
         </div>
 
         <h3>Map layers</h3>
         <div id="hm-lb">
-          {HEALTH_MAP_LAYERS.map((l) => {
-            const isActive = l.id === activeLayerId;
-            return (
-              <button
-                key={l.id}
-                className={`layer-btn ${isActive ? 'on' : ''}`}
-                onClick={() => handleSelectLayer(l.id)}
-              >
-                <span
-                  className="sw"
-                  style={{ background: `linear-gradient(135deg, ${l.ramp.join(',')})` }}
-                />
-                <span>
-                  <b>{l.name}</b>
-                  <small>{l.desc}</small>
-                </span>
-              </button>
-            );
-          })}
+          {LAYERS.map((l) => (
+            <button
+              key={l.id}
+              className={`layer-btn ${l.id === curLayerId ? 'on' : ''}`}
+              data-l={l.id}
+              onClick={() => handleSelectLayer(l.id)}
+            >
+              <span
+                className="sw"
+                style={{ background: `linear-gradient(135deg,${l.ramp.join(',')})` }}
+              />
+              <span>
+                <b>{l.name}</b>
+                <small>{l.desc}</small>
+              </span>
+            </button>
+          ))}
         </div>
 
         <h3 style={{ marginTop: '12px' }}>Indicator</h3>
         <div className="chips" id="hm-ind">
-          {activeLayer.metrics.map((k) => {
-            const meta = METRICS_CONFIG[k] || { short: k };
-            const isChipActive = k === activeMetricKey;
-            return (
-              <button
-                key={k}
-                className={`chip ${isChipActive ? 'on' : ''}`}
-                onClick={() => setActiveMetricKey(k)}
-              >
-                {meta.short || meta.label}
-              </button>
-            );
-          })}
+          {activeLayerDef.metrics.map((k) => (
+            <button
+              key={k}
+              className={`chip ${k === curMetric ? 'on' : ''}`}
+              data-k={k}
+              onClick={() => handleSelectMetric(k)}
+            >
+              {METRICS[k]?.short || k}
+            </button>
+          ))}
         </div>
 
         <div style={{ marginTop: '14px', borderTop: '1px solid var(--line)', paddingTop: '8px' }}>
           <div className="hm-toggle">
             <span>Hotspot heatmap</span>
             <button
-              className={`switch ${heatmapEnabled ? 'on' : ''}`}
+              className={`switch ${heat ? 'on' : ''}`}
+              id="sw-heat"
               role="switch"
-              aria-checked={heatmapEnabled}
+              aria-checked={heat}
               aria-label="Hotspot heatmap"
-              onClick={() => setHeatmapEnabled(!heatmapEnabled)}
+              onClick={() => setHeat(!heat)}
             />
           </div>
           <div className="hm-toggle">
             <span>Highest-need markers</span>
             <button
-              className={`switch ${markersEnabled ? 'on' : ''}`}
+              className={`switch ${markers ? 'on' : ''}`}
+              id="sw-mk"
               role="switch"
-              aria-checked={markersEnabled}
+              aria-checked={markers}
               aria-label="Highest-need markers"
-              onClick={() => setMarkersEnabled(!markersEnabled)}
+              onClick={() => setMarkers(!markers)}
             />
           </div>
         </div>
 
-        <div className="note mt" style={{ marginTop: '12px' }}>
-          <span className="pill demo">
-            <span className="dot"></span>Demo environment
+        <div className="note mt">
+          <span
+            className="pill demo"
+            title="Synthetic values generated for this demo. Not real surveillance or Census data."
+          >
+            <span className="dot" />Synthetic demo data
           </span>
         </div>
       </aside>
 
-      {/* Floating Performance Readout */}
-      <div className="map-float perf" id="hm-perf">
-        <span className="dot" style={{ color: 'var(--teal)' }} />
-        <span>
-          <b className="num">{recolorPerf.n.toLocaleString()}</b> counties recolored in{' '}
-          <b className="num">{recolorPerf.ms} ms</b> in this browser
-        </span>
-      </div>
-
-      {/* Floating Legend */}
-      <div className="map-float legend hm-legend" id="hm-leg">
-        <span className="legend-title" style={{ fontSize: '11px', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>
-          {legendInfo.title}
-        </span>
-        <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', marginBottom: '3px' }}>
-          {legendInfo.bins.map((c, i) => (
-            <div key={i} style={{ flex: 1, height: '100%', backgroundColor: c }} />
-          ))}
-        </div>
-        <div className="ends" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--faint)' }}>
-          <span>{legendInfo.lo}</span>
-          <span>{legendInfo.note}</span>
-          <span>{legendInfo.hi}</span>
-        </div>
-      </div>
-
-      {/* Floating Map Controls */}
-      <div className="map-float map-ctrls hm-ctrls">
-        <button
-          onClick={() => svgRef.current?.transition().duration(300).call(zoomBehaviorRef.current!.scaleBy, 1.4)}
-          aria-label="Zoom in"
-          title="Zoom In"
-        >
-          <Icon name="plus" size={16} />
-        </button>
-        <button
-          onClick={() => svgRef.current?.transition().duration(300).call(zoomBehaviorRef.current!.scaleBy, 1 / 1.4)}
-          aria-label="Zoom out"
-          title="Zoom Out"
-        >
-          <Icon name="minus" size={16} />
-        </button>
-        <button
-          onClick={() => resetMapFnRef.current?.()}
-          aria-label="Reset view"
-          title="Reset to Full Country"
-        >
-          <Icon name="expand" size={16} />
-        </button>
-        <button
-          onClick={() => selectCountyFnRef.current?.('17031', true)}
-          aria-label="Go to my jurisdiction"
-          title="Go to Jurisdiction"
-        >
-          <Icon name="locate" size={16} />
-        </button>
-      </div>
-
-      {/* Floating Right Inspector Panel */}
-      <aside className="map-float hm-right" id="hm-right">
-        {selectedTract ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className="pill info" style={{ fontSize: '10.5px' }}>Census tract</span>
+      {/* Floating Right Inspector Panel matching prototype lines 1961 & 1996-2043 */}
+      <aside className={`map-float hm-right ${scope.c || scope.t ? 'has' : ''}`} id="hm-right">
+        {scope.t && selectedTractRecord ? (
+          <div className="sel-card">
+            <div className="row between">
+              <span className="pill violet">Census tract</span>
               <button
-                onClick={() => setSelectedTract(null)}
                 className="icon-btn"
-                style={{ width: '26px', height: '26px' }}
-                aria-label="Close"
+                style={{ width: '30px', height: '30px' }}
+                id="hm-x"
+                aria-label="Clear selection"
+                onClick={handleClearTract}
               >
-                <Icon name="x" size={14} />
+                <Icon name="x" />
               </button>
             </div>
-
-            <div>
-              <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>{selectedTract.name}</h3>
-              <div style={{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '2px' }}>
-                {selectedCounty?.name} County, {selectedCounty?.stateAbbr}. GEOID {selectedTract.id}
-              </div>
+            <h3 className="mt-s">{selectedTractRecord.name}</h3>
+            <div className="note">
+              {countyLabel(selectedTractRecord.county)}. GEOID {selectedTractRecord.id}
             </div>
-
-            {/* Big Metric Display */}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                <span className="num" style={{ fontSize: '30px', fontWeight: 700, color: 'var(--cyan)' }}>
-                  {getMetricValue(selectedTract, activeMetricKey).toFixed(1)}%
-                </span>
-                <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--muted)' }}>
-                  {activeMetricMeta.short}
-                </span>
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--faint)', marginTop: '2px' }}>
-                {tractPercentile}th percentile within {selectedCounty?.name} County
-              </div>
-            </div>
-
-            {/* Key Indicator Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Vulnerability (SVI)</small>
-                <b className="num" style={{ fontSize: '13.5px' }}>{selectedTract.svi.toFixed(2)}</b>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Poverty rate</small>
-                <b className="num" style={{ fontSize: '13.5px' }}>{getMetricValue(selectedTract, 'poverty').toFixed(1)}%</b>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Uninsured</small>
-                <b className="num" style={{ fontSize: '13.5px' }}>{getMetricValue(selectedTract, 'uninsured').toFixed(1)}%</b>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Diabetes</small>
-                <b className="num" style={{ fontSize: '13.5px' }}>{getMetricValue(selectedTract, 'diabetes').toFixed(1)}%</b>
-              </div>
-            </div>
-
-            {/* Badges */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span
-                className="pill"
-                style={{
-                  background: `${TIER_COLORS[selectedTract.tier]}20`,
-                  color: TIER_COLORS[selectedTract.tier]
-                }}
-              >
-                {TIER_LABELS[selectedTract.tier]} vulnerability
+            <div className="big-metric">
+              <span className="v num">
+                {curMetricObj.f(getV(selectedTractRecord, curMetric))}
               </span>
-              <span className="pill sm" style={{ color: 'var(--muted)' }}>
-                {selectedTract.pop.toLocaleString()} residents
-              </span>
+              <span className="muted">{curMetricObj.short}</span>
             </div>
-
-            {/* Actions */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '10px', borderTop: '1px solid var(--line)' }}>
-              <Link
-                href={`/census-tracts?county=${selectedCounty?.id}&tract=${selectedTract.id}`}
-                className="btn primary"
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                <Icon name="file" size={14} />
-                <span>Review in tract explorer</span>
-              </Link>
-
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  onClick={() => onToggleCompare?.(selectedTract.id)}
-                  className="btn sm"
-                  style={{ flex: 1, justifyContent: 'center' }}
-                >
-                  <span>{compareSet.has(selectedTract.id) ? 'Remove compare' : 'Compare'}</span>
-                </button>
-                <button
-                  onClick={() => onToggleFlag?.(selectedTract.id)}
-                  className="btn sm"
-                  style={{ flex: 1, justifyContent: 'center', color: flaggedSet.has(selectedTract.id) ? 'var(--rose)' : undefined }}
-                >
-                  <Icon name="flag" size={14} />
-                  <span>{flaggedSet.has(selectedTract.id) ? 'Flagged' : 'Flag tract'}</span>
-                </button>
-              </div>
-
+            <div className="note">
+              {Math.round(tractPct * 100)}th percentile of {countyTracts.length} tracts in the county
+            </div>
+            <div className="rank-bar">
+              <i style={{ left: `calc(${tractPct * 100}% - 2px)` }} />
+            </div>
+            <div className="row between note">
+              <span>Lowest</span>
+              <span>Highest</span>
+            </div>
+            <div className="mini-metrics">
+              {[
+                ['svi', 'Vulnerability'],
+                ['poverty', 'Poverty'],
+                ['uninsured', 'Uninsured'],
+                ['diabetes', 'Diabetes'],
+                ['access', 'Access score'],
+                ['lifeExp', 'Life expectancy']
+              ].map(([k, l]) => (
+                <div key={k} className="mm">
+                  <small>{l}</small>
+                  <b className="num">{METRICS[k]?.f(getV(selectedTractRecord, k))}</b>
+                </div>
+              ))}
+            </div>
+            <div className="row mt">
+              <span className="pill" style={{ color: TIER_COLORS[selectedTractRecord.tier] }}>
+                <span className="dot" />{TIER_LABELS[selectedTractRecord.tier]} vulnerability
+              </span>
+              <span className="pill">{fmt.int(selectedTractRecord.pop)} residents</span>
+            </div>
+            <div className="stack mt">
               <button
-                onClick={() => onAddFinding?.(selectedTract)}
-                className="btn sm"
-                style={{ width: '100%', justifyContent: 'center' }}
+                className="btn primary"
+                id="hm-open"
+                onClick={() => router.push(`/census-tracts?county=${scope.c}&tract=${selectedTractRecord.id}`)}
               >
-                <span>+ Add finding to assessment</span>
+                <Icon name="grid" />Review in tract explorer
+              </button>
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <button
+                  className="btn sm"
+                  id="hm-cmp"
+                  onClick={() => handleToggleCompare(selectedTractRecord)}
+                >
+                  <Icon name="compare" />{inCmp ? 'In comparison' : 'Compare'}
+                </button>
+                <button
+                  className={`btn sm ${flagged ? 'danger' : ''}`}
+                  id="hm-flag"
+                  onClick={() => handleToggleFlag(selectedTractRecord)}
+                >
+                  <Icon name="flag" />{flagged ? 'Flagged' : 'Flag underserved'}
+                </button>
+              </div>
+              <button
+                className="btn"
+                id="hm-find"
+                onClick={() => setFindingModalTract(selectedTractRecord)}
+              >
+                <Icon name="clipboard" />Add finding to assessment
               </button>
             </div>
           </div>
-        ) : selectedCounty ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className="pill ok" style={{ fontSize: '10.5px' }}>County Jurisdiction</span>
+        ) : scope.c && selectedCountyRecord ? (
+          <div className="sel-card">
+            <div className="row between">
+              <span className="pill info">County</span>
               <button
-                onClick={() => {
-                  setSelectedCounty(null);
-                  if (selectedState) zoomToStateFnRef.current?.(selectedState.fips);
-                  else resetMapFnRef.current?.();
-                }}
                 className="icon-btn"
-                style={{ width: '26px', height: '26px' }}
-                aria-label="Back to state"
+                style={{ width: '30px', height: '30px' }}
+                id="hm-x"
+                aria-label="Clear selection"
+                onClick={handleClearCounty}
               >
-                <Icon name="x" size={14} />
+                <Icon name="x" />
               </button>
             </div>
-
-            <div>
-              <h3 style={{ fontSize: '17px', fontWeight: 700, margin: 0 }}>{selectedCounty.name} County</h3>
-              <div style={{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '2px' }}>
-                {selectedCounty.stateName}. FIPS {selectedCounty.id}
-              </div>
+            <h3 className="mt-s">{countyLabel(selectedCountyRecord)}</h3>
+            <div className="note">
+              FIPS {selectedCountyRecord.id}. {countyTracts.length} census tracts. {fmt.k(selectedCountyRecord.pop)} residents
             </div>
-
-            {/* Quick Metrics */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Total population</small>
-                <b className="num" style={{ fontSize: '14px' }}>{selectedCounty.pop.toLocaleString()}</b>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Census tracts</small>
-                <b className="num" style={{ fontSize: '14px' }}>{countyTracts.length || (selectedCounty as any).tractsCount || (selectedCounty as any).tractCount || 0}</b>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>Mean SVI vulnerability</small>
-                <b className="num" style={{ fontSize: '14px', color: 'var(--amber)' }}>{selectedCounty.svi.toFixed(2)}</b>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                <small style={{ display: 'block', fontSize: '10.5px', color: 'var(--faint)' }}>{activeMetricMeta.short}</small>
-                <b className="num" style={{ fontSize: '14px', color: 'var(--cyan)' }}>
-                  {getMetricValue(selectedCounty, activeMetricKey).toFixed(1)}%
-                </b>
-              </div>
+            <div className="big-metric">
+              <span className="v num">
+                {curMetricObj.f(getV(selectedCountyRecord, curMetric))}
+              </span>
+              <span className="muted">{curMetricObj.short}</span>
             </div>
-
-            {/* Top High Need Tracts */}
-            <div>
-              <b style={{ fontSize: '12px', display: 'block', marginBottom: '6px' }}>Highest need tracts</b>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {topCountyTracts.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      setSelectedTract(t);
-                    }}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 8px',
-                      borderRadius: '8px',
-                      border: '1px solid var(--line)',
-                      background: 'var(--surface-solid)',
-                      fontSize: '11.5px',
-                      cursor: 'pointer',
-                      textAlign: 'left'
-                    }}
-                  >
-                    <span style={{ fontWeight: 600 }}>{t.name}</span>
-                    <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
-                      {getMetricValue(t, activeMetricKey).toFixed(1)}%
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="note">
+              {Math.round(countyPct * 100)}th percentile of all US counties
             </div>
-
-            <div style={{ paddingTop: '8px', borderTop: '1px solid var(--line)' }}>
-              <Link
-                href={`/census-tracts?county=${selectedCounty.id}`}
-                className="btn primary"
-                style={{ width: '100%', justifyContent: 'center' }}
-              >
-                <span>Explore all county tracts</span>
-              </Link>
+            <div className="rank-bar">
+              <i style={{ left: `calc(${countyPct * 100}% - 2px)` }} />
             </div>
+            <div className="row between note">
+              <span>Lowest</span>
+              <span>Highest</span>
+            </div>
+            <div className="mt">
+              <SparkSVG vals={countyTrend} w={290} h={46} color="var(--cyan)" />
+              <div className="note">Ten-year trend, 2016 to 2025</div>
+            </div>
+            <h4 className="mt" style={{ fontSize: '13px', marginBottom: '6px' }}>
+              Tracts with the highest need
+            </h4>
+            <div className="list">
+              {topCountyTracts.map((t) => (
+                <button
+                  key={t.id}
+                  className="li"
+                  style={{ border: 0, borderBottom: '1px solid var(--line)', background: 'none', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                  data-t={t.id}
+                  onClick={() => handleSelectTract(t)}
+                >
+                  <span className="tier" style={{ background: TIER_COLORS[t.tier], width: '10px', height: '10px' }} />
+                  <span className="b">
+                    <b>{t.name}</b>
+                    <small>{TIER_LABELS[t.tier]} vulnerability</small>
+                  </span>
+                  <b className="num">{curMetricObj.f(getV(t, curMetric))}</b>
+                </button>
+              ))}
+            </div>
+            <button
+              className="btn mt"
+              style={{ width: '100%' }}
+              id="hm-exp"
+              onClick={() => router.push(`/census-tracts?county=${selectedCountyRecord.id}`)}
+            >
+              <Icon name="grid" />Open all tracts in explorer
+            </button>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div>
-              <span className="pill info" style={{ fontSize: '10.5px' }}>Overview</span>
-              <h3 style={{ fontSize: '16px', fontWeight: 700, margin: '6px 0 2px' }}>National Overview</h3>
-              <p style={{ fontSize: '11.5px', color: 'var(--muted)', margin: 0 }}>
-                Click any county to zoom in and inspect tract-level health disparities.
-              </p>
-            </div>
-
-            <div style={{ padding: '10px 12px', borderRadius: '12px', background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-              <div style={{ fontSize: '11px', color: 'var(--faint)' }}>Active Indicator</div>
-              <b style={{ fontSize: '14px', color: 'var(--text)' }}>{activeMetricMeta.label || activeMetricMeta.short}</b>
-              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-                Showing quantile distribution across 3,142 US counties
+          <>
+            <div className="panel-h" style={{ marginBottom: '6px' }}>
+              <div>
+                <h3>Highest need {scope.st && stateMeta ? 'in ' + stateMeta[1] : 'nationally'}</h3>
+                <div className="sub">{curMetricObj.label}. Click a county to drill into its tracts</div>
               </div>
             </div>
-
-            {/* Top National Counties */}
-            <div>
-              <b style={{ fontSize: '12px', display: 'block', marginBottom: '6px' }}>Highest burden counties</b>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {topNationalCounties.slice(0, 6).map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => selectCountyFnRef.current?.(c.id, true)}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 8px',
-                      borderRadius: '8px',
-                      border: '1px solid var(--line)',
-                      background: 'var(--surface-solid)',
-                      fontSize: '11.5px',
-                      cursor: 'pointer',
-                      textAlign: 'left'
-                    }}
-                  >
-                    <span>{c.name}, {c.stateAbbr}</span>
-                    <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
-                      {getMetricValue(c, activeMetricKey).toFixed(1)}%
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="list">
+              {topPoolCounties.map((c, i) => (
+                <button
+                  key={c.id}
+                  className="li"
+                  style={{ border: 0, borderBottom: '1px solid var(--line)', background: 'none', textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                  data-c={c.id}
+                  onClick={() => handleSelectCounty(c)}
+                >
+                  <span className="ic num" style={{ fontSize: '12px', fontWeight: 700 }}>
+                    {i + 1}
+                  </span>
+                  <span className="b">
+                    <b>{countyLabel(c)}</b>
+                    <small>{fmt.k(c.pop)} residents</small>
+                  </span>
+                  <b className="num">{curMetricObj.f(getV(c, curMetric))}</b>
+                </button>
+              ))}
             </div>
-          </div>
+            <div className="note mt">
+              {scope.st
+                ? 'Click any county on the map to load its census tracts.'
+                : 'Click a state to zoom in, then click a county to load its census tracts.'}
+            </div>
+          </>
         )}
       </aside>
+
+      {/* Floating Legend matching prototype lines 1426 & 1962 */}
+      <div className="map-float legend hm-legend" id="hm-leg">
+        {legend && (
+          <>
+            <div className="ttl">
+              <span>{legend.title}</span>
+            </div>
+            <div className="ramp">
+              {legend.bins.map((color, i) => (
+                <i key={i} style={{ background: color }} />
+              ))}
+            </div>
+            <div className="ends">
+              <span>{legend.lo}</span>
+              <span>{legend.note}</span>
+              <span>{legend.hi}</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Floating Performance Readout matching prototype lines 1963 & 1966 */}
+      <div className="map-float perf" id="hm-perf">
+        <span className="dot" style={{ color: 'var(--teal)' }} />
+        {perfInfo ? (
+          <span>
+            {perfInfo.n.toLocaleString()} counties recolored in <b className="num">{perfInfo.ms} ms</b> in this browser
+          </span>
+        ) : (
+          <span>Ready</span>
+        )}
+      </div>
+
+      {/* Floating Map Controls matching prototype lines 1964 */}
+      <div className="map-float map-ctrls hm-ctrls">
+        <button id="z-in" aria-label="Zoom in" onClick={() => handleZoomBy(1.6)}>
+          <Icon name="plus" />
+        </button>
+        <button id="z-out" aria-label="Zoom out" onClick={() => handleZoomBy(1 / 1.6)}>
+          <Icon name="minus" />
+        </button>
+        <button id="z-home" aria-label="Reset view" onClick={handleResetHome}>
+          <Icon name="expand" />
+        </button>
+        <button id="z-jur" aria-label="Go to my jurisdiction" onClick={handleGoJurisdiction}>
+          <Icon name="locate" />
+        </button>
+      </div>
+
+      {/* Finding Modal rendered in #modal-root matching prototype lines 1784-1805 */}
+      {findingModalTract && typeof document !== 'undefined' && document.getElementById('modal-root') && (
+        createPortal(
+          <>
+            <div className="modal-scrim" onClick={() => setFindingModalTract(null)} />
+            <div className="modal" role="dialog" aria-modal="true">
+              <div className="modal-h">
+                <div>
+                  <h2>Add finding to an assessment</h2>
+                  <p>{findingModalTract.name}, {countyLabel(findingModalTract.county)}. GEOID {findingModalTract.id}</p>
+                </div>
+                <button
+                  className="icon-btn"
+                  data-close
+                  aria-label="Close"
+                  onClick={() => setFindingModalTract(null)}
+                >
+                  <Icon name="x" />
+                </button>
+              </div>
+              <div className="grid g-12">
+                <div className="c-6 c-lg-6">
+                  <div className="kv">
+                    <dt>Vulnerability</dt>
+                    <dd>{findingModalTract.svi.toFixed(2)} ({TIER_LABELS[findingModalTract.tier]})</dd>
+                    <dt>Poverty</dt>
+                    <dd>{getV(findingModalTract, 'poverty').toFixed(1)}%</dd>
+                    <dt>Uninsured</dt>
+                    <dd>{getV(findingModalTract, 'uninsured').toFixed(1)}%</dd>
+                    <dt>Diabetes</dt>
+                    <dd>{getV(findingModalTract, 'diabetes').toFixed(1)}%</dd>
+                    <dt>Access score</dt>
+                    <dd>{getV(findingModalTract, 'access').toFixed(0)}/100</dd>
+                  </div>
+                </div>
+                <div className="c-6 c-lg-6 stack">
+                  <label className="field">
+                    Assessment
+                    <select
+                      className="input"
+                      id="fa-a"
+                      value={selectedAssessmentId}
+                      onChange={(e) => setSelectedAssessmentId(e.target.value)}
+                    >
+                      {assessments.map((a: any) => (
+                        <option key={a._id || a.id} value={a._id || a.id}>
+                          {a.title} ({a.status})
+                        </option>
+                      ))}
+                      <option value="__new">Create a new draft assessment</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    Finding
+                    <textarea
+                      className="input"
+                      id="fa-n"
+                      rows={4}
+                      value={findingNote}
+                      onChange={(e) => setFindingNote(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="modal-f">
+                <span className="note">Values are synthetic demo data captured at the time of the finding.</span>
+                <button className="btn primary" id="fa-go" onClick={handleSubmitFinding}>
+                  <Icon name="plus" />Add finding
+                </button>
+              </div>
+            </div>
+          </>,
+          document.getElementById('modal-root')!
+        )
+      )}
     </div>
   );
 }
