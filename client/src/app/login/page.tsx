@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import gsap from 'gsap';
 import { useAuth } from '@/context/AuthContext';
 import { useSession } from '@/context/SessionContext';
-import { Icon } from '@/components/Icons';
 import { LoginShowcaseMap } from '@/components/LoginShowcaseMap';
 
 interface RoleOption {
@@ -14,10 +14,10 @@ interface RoleOption {
   avatar: string;
 }
 
-const ROLES: RoleOption[] = [
+const LOGIN_ROLES: RoleOption[] = [
   { id: 'analyst', title: 'Public Health Analyst', org: 'County Health Department', avatar: 'PA' },
   { id: 'manager', title: 'Program Manager', org: 'City Health Department', avatar: 'PM' },
-  { id: 'admin', title: 'Data Administrator', org: 'Health Data Team', avatar: 'DA' }
+  { id: 'admin', title: 'Data Administrator', org: 'Health Data Team', avatar: 'DA' },
 ];
 
 export default function LoginPage() {
@@ -33,10 +33,13 @@ export default function LoginPage() {
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [generalError, setGeneralError] = useState('');
-  const [resetMessage, setResetMessage] = useState('');
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+
+  const cardRef = useRef<HTMLElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   // Animated count-up for census tracts analyzed HUD card
   const tractCount = 398;
@@ -47,25 +50,45 @@ export default function LoginPage() {
   const [displayedCount, setDisplayedCount] = useState(0);
 
   useEffect(() => {
-    let start = 0;
-    const duration = 1200;
-    const startTime = performance.now();
-    let frameId: number;
-
-    const animate = (time: number) => {
-      const elapsed = time - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      // easeOutCubic
-      const ease = 1 - Math.pow(1 - progress, 3);
-      setDisplayedCount(Math.round(tractCount * ease));
-      if (progress < 1) {
-        frameId = requestAnimationFrame(animate);
-      }
+    const obj = { val: 0 };
+    const tween = gsap.to(obj, {
+      val: tractCount,
+      duration: 1.5,
+      ease: 'power3.out',
+      onUpdate: () => {
+        setDisplayedCount(Math.round(obj.val));
+      },
+    });
+    return () => {
+      tween.kill();
     };
-
-    frameId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frameId);
   }, [tractCount]);
+
+  // Entrance animation for form fields
+  useEffect(() => {
+    if (!cardRef.current) return;
+
+    const ctx = gsap.context(() => {
+      gsap.from('.lg-main > *', {
+        y: 14,
+        opacity: 0,
+        duration: 0.6,
+        stagger: 0.05,
+        ease: 'power3.out',
+        clearProps: 'opacity,transform',
+      });
+    }, cardRef);
+
+    // Auto focus email input on mount
+    const timer = setTimeout(() => {
+      emailInputRef.current?.focus({ preventScroll: true });
+    }, 300);
+
+    return () => {
+      ctx.revert();
+      clearTimeout(timer);
+    };
+  }, []);
 
   // If already logged in, redirect to dashboard
   useEffect(() => {
@@ -75,13 +98,15 @@ export default function LoginPage() {
   }, [user, router]);
 
   const handleForgotPassword = () => {
-    const trimmed = email.trim();
-    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) {
+    const em = email.trim();
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) {
       setResetMessage(
-        `In a live deployment, a reset link would be emailed to ${trimmed}. This demo does not send email.`
+        `In a live deployment, a reset link would be emailed to <b>${em}</b>. This demo does not send email.`
       );
     } else {
-      setResetMessage('Enter your work email above, then choose Forgot password again. This demo does not send email.');
+      setResetMessage(
+        'Enter your work email above, then choose Forgot password again. This demo does not send email.'
+      );
     }
   };
 
@@ -96,34 +121,33 @@ export default function LoginPage() {
     setPasswordError('');
     setGeneralError('');
 
-    let hasError = false;
-    const trimmedEmail = email.trim();
+    let ok = true;
+    const em = email.trim();
 
-    if (!trimmedEmail) {
+    if (!em) {
       setEmailError('Enter your work email.');
-      hasError = true;
-    } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmedEmail)) {
+      ok = false;
+    } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) {
       setEmailError('Enter a valid email address.');
-      hasError = true;
+      ok = false;
     }
 
     if (!password) {
       setPasswordError('Enter your password.');
-      hasError = true;
+      ok = false;
     } else if (password.length < 8) {
       setPasswordError('Passwords are at least 8 characters.');
-      hasError = true;
+      ok = false;
     }
 
-    if (hasError) {
+    if (!ok) {
       triggerShake();
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const roleObj = ROLES.find((r) => r.id === selectedRole) || ROLES[0];
-      const res = await login(trimmedEmail, password, roleObj.id, rememberMe);
+      const res = await login(em, password, selectedRole, rememberMe);
       if (!res.success) {
         setGeneralError(res.error || 'Failed to sign in. Please verify your credentials.');
         triggerShake();
@@ -141,15 +165,16 @@ export default function LoginPage() {
   const handleGoogleSignIn = async () => {
     setIsGoogleSubmitting(true);
     try {
-      const roleObj = ROLES.find((r) => r.id === selectedRole) || ROLES[0];
-      const res = await loginWithGoogle({ role: roleObj.id }, roleObj.id, rememberMe);
+      const res = await loginWithGoogle({ role: selectedRole }, selectedRole, rememberMe);
       if (!res.success) {
-        setGeneralError(res.error || 'Single sign-on authentication failed. Please try standard sign in.');
+        setGeneralError('Single sign-on is not connected in this demo. Use email and password.');
+        triggerShake();
       } else {
         router.replace('/');
       }
     } catch (err: any) {
-      setGeneralError('Single sign-on authentication failed. Please try standard sign in.');
+      setGeneralError('Single sign-on is not connected in this demo. Use email and password.');
+      triggerShake();
     } finally {
       setIsGoogleSubmitting(false);
     }
@@ -158,7 +183,7 @@ export default function LoginPage() {
   return (
     <div id="login">
       {/* Left Column: Sign-in Card */}
-      <section className="lg-card">
+      <section ref={cardRef} className="lg-card">
         {/* Brand header */}
         <div className="lg-brand">
           <svg viewBox="0 0 40 40" aria-hidden="true">
@@ -195,13 +220,22 @@ export default function LoginPage() {
         </div>
 
         {/* Main form */}
-        <form className={`lg-main ${shake ? 'lg-shake' : ''}`} id="lg-form" onSubmit={handleSubmit} noValidate>
+        <form
+          className={`lg-main ${shake ? 'lg-shake' : ''}`}
+          id="lg-form"
+          onSubmit={handleSubmit}
+          noValidate
+        >
           <h1>Sign in to MapWell</h1>
           <p>Use your health department account to open your workspace.</p>
 
-          {/* Reset / General Message */}
           <div id="lg-reset">
-            {resetMessage && <div className="lg-reset">{resetMessage}</div>}
+            {resetMessage && (
+              <div
+                className="lg-reset"
+                dangerouslySetInnerHTML={{ __html: resetMessage }}
+              />
+            )}
             {generalError && (
               <div
                 className="lg-reset"
@@ -209,7 +243,7 @@ export default function LoginPage() {
                   background: '#FFF1F2',
                   borderColor: '#FECDD3',
                   color: '#BE123C',
-                  marginBottom: '14px'
+                  marginBottom: '14px',
                 }}
               >
                 {generalError}
@@ -217,12 +251,23 @@ export default function LoginPage() {
             )}
           </div>
 
-          {/* Email input */}
           <label className="lg-f">
             <span className="lbl">Work email</span>
             <span className={`lg-in ${emailError ? 'bad' : ''}`} id="lg-e-wrap">
-              <Icon name="mail" />
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="3" y="5" width="18" height="14" rx="3" />
+                <path d="m4 7 8 6 8-6" />
+              </svg>
               <input
+                ref={emailInputRef}
                 id="lg-email"
                 type="email"
                 autoComplete="username"
@@ -240,16 +285,31 @@ export default function LoginPage() {
             </span>
           </label>
 
-          {/* Password input */}
           <label className="lg-f">
             <span className="lbl">
               Password
-              <button type="button" className="lg-link" id="lg-forgot" onClick={handleForgotPassword}>
+              <button
+                type="button"
+                className="lg-link"
+                id="lg-forgot"
+                onClick={handleForgotPassword}
+              >
                 Forgot password?
               </button>
             </span>
             <span className={`lg-in ${passwordError ? 'bad' : ''}`} id="lg-p-wrap">
-              <Icon name="lock" />
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="5" y="10" width="14" height="10" rx="2.5" />
+                <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              </svg>
               <input
                 id="lg-pass"
                 type={showPassword ? 'text' : 'password'}
@@ -268,7 +328,18 @@ export default function LoginPage() {
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 onClick={() => setShowPassword(!showPassword)}
               >
-                <Icon name="eye" />
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
               </button>
             </span>
             <span className="lg-err" id="lg-p-err">
@@ -276,11 +347,10 @@ export default function LoginPage() {
             </span>
           </label>
 
-          {/* Role Radiogroup */}
           <div className="lg-f" role="radiogroup" aria-label="Sign in as">
             <span className="lbl">Sign in as</span>
             <div className="lg-roles">
-              {ROLES.map((r) => {
+              {LOGIN_ROLES.map((r) => {
                 const isOn = selectedRole === r.id;
                 return (
                   <button
@@ -300,7 +370,6 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Keep me signed in */}
           <div className="lg-row">
             <label>
               <input
@@ -313,7 +382,6 @@ export default function LoginPage() {
             </label>
           </div>
 
-          {/* Submit Button */}
           <button className="lg-btn" id="lg-go" type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
               <>
@@ -325,10 +393,8 @@ export default function LoginPage() {
             )}
           </button>
 
-          {/* Divider */}
           <div className="lg-or">or</div>
 
-          {/* SSO Button */}
           <button
             type="button"
             className="lg-sso"
@@ -338,22 +404,32 @@ export default function LoginPage() {
           >
             {isGoogleSubmitting ? (
               <>
-                <span className="lg-spin" style={{ borderColor: 'rgba(0,144,194,0.3)', borderTopColor: 'var(--cyan)' }} />
-                <span>Connecting SSO...</span>
+                <span className="lg-spin" />
+                <span>Signing in</span>
               </>
             ) : (
               <>
-                <Icon name="link" />
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+                </svg>
                 <span>Continue with single sign-on</span>
               </>
             )}
           </button>
 
-          {/* Demo Note */}
           <div className="lg-note">
             <span>●</span>
             <span>
-              Demo sign-in. Any valid email and a password of 8 or more characters will work. Nothing is sent anywhere.
+              Demo sign-in. Any valid email and a password of 8 or more characters will work.
+              Nothing is sent anywhere.
             </span>
           </div>
         </form>
