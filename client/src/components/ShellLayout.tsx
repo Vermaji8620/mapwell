@@ -24,6 +24,21 @@ function InnerShell({ children }: { children: React.ReactNode }) {
     setMobileMenuOpen(false);
   }, [pathname]);
 
+  // Global page transition / reload counter for all pages
+  const [navCount, setNavCount] = useState(0);
+
+  useEffect(() => {
+    const handleNavRefresh = () => {
+      setNavCount((prev) => prev + 1);
+    };
+    window.addEventListener('mapwell:navigate', handleNavRefresh);
+    window.addEventListener('mapwell:refresh-overview', handleNavRefresh);
+    return () => {
+      window.removeEventListener('mapwell:navigate', handleNavRefresh);
+      window.removeEventListener('mapwell:refresh-overview', handleNavRefresh);
+    };
+  }, []);
+
   // Auth redirect
   useEffect(() => {
     if (!loading && !user && !isLoginPage) {
@@ -115,8 +130,12 @@ function InnerShell({ children }: { children: React.ReactNode }) {
       <div id="main">
         <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
         <div id="view-wrap">
-          <div id="scanline" />
-          <main id="view" className={isFlush ? 'flush' : ''} tabIndex={-1}>
+          <main
+            id="view"
+            key={`${pathname}-${navCount}`}
+            className={`${isFlush ? 'flush' : ''} page-stagger-enter`}
+            tabIndex={-1}
+          >
             {children}
           </main>
         </div>

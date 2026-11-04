@@ -129,7 +129,13 @@ export function Sidebar({ collapsed, setCollapsed, onCloseMobile }: SidebarProps
                   className={`nav-item ${isActive ? 'active' : ''}`}
                   data-active={isActive}
                   title={item.label}
-                  onClick={onCloseMobile}
+                  onClick={() => {
+                    onCloseMobile();
+                    // Only dispatch reload if already on the active page
+                    if (isActive) {
+                      window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+                    }
+                  }}
                 >
                   <Icon name={item.icon} size={18} />
                   <span>{item.label}</span>

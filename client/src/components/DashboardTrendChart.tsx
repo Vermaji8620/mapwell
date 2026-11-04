@@ -18,15 +18,19 @@ interface DashboardTrendChartProps {
   formatValue?: (v: number) => string;
 }
 
+const defaultFormatValue = (v: number) => v.toFixed(1) + '%';
 let gidCounter = 0;
 
 export function DashboardTrendChart({
   years,
   series,
   height = 300,
-  formatValue = (v: number) => v.toFixed(1) + '%'
+  formatValue = defaultFormatValue
 }: DashboardTrendChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const formatValueRef = useRef(formatValue);
+  formatValueRef.current = formatValue;
+
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
@@ -40,6 +44,11 @@ export function DashboardTrendChart({
     year: '',
     items: []
   });
+
+  const yearsKey = years.join(',');
+  const seriesKey = JSON.stringify(
+    series.map((s) => ({ n: s.name, c: s.color, v: s.values, d: s.dash }))
+  );
 
   useEffect(() => {
     const el = containerRef.current;
@@ -101,7 +110,7 @@ export function DashboardTrendChart({
         d3
           .axisLeft(y)
           .ticks(4)
-          .tickFormat((d) => formatValue(d as number))
+          .tickFormat((d) => formatValueRef.current(d as number))
           .tickSize(0)
       )
       .call((g) => {
@@ -233,7 +242,7 @@ export function DashboardTrendChart({
       .attr('width', W - m.l - m.r)
       .attr('height', H - m.t - m.b)
       .attr('fill', 'transparent')
-      .style('cursor', 'crosshair')
+      .style('cursor', 'default')
       .on('pointermove', function (e) {
         const [mx] = d3.pointer(e);
         const step = x.step();
@@ -253,7 +262,7 @@ export function DashboardTrendChart({
         const tooltipItems = series.map((s) => ({
           name: s.name,
           color: s.color,
-          val: formatValue(s.values[idx] ?? 0)
+          val: formatValueRef.current(s.values[idx] ?? 0)
         }));
 
         setTooltip({
@@ -269,7 +278,7 @@ export function DashboardTrendChart({
         dots.forEach((dot) => dot.attr('opacity', 0));
         setTooltip((prev) => ({ ...prev, visible: false }));
       });
-  }, [years, series, height, formatValue]);
+  }, [yearsKey, seriesKey, height]);
 
   return (
     <div ref={containerRef} style={{ width: '100%', height: `${height}px`, position: 'relative' }}>
@@ -288,7 +297,8 @@ export function DashboardTrendChart({
             pointerEvents: 'none',
             zIndex: 40,
             color: 'var(--text)',
-            minWidth: '130px'
+            minWidth: '130px',
+            userSelect: 'none'
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: '4px' }}>{tooltip.year}</div>

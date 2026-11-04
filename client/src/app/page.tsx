@@ -170,15 +170,16 @@ const RECENT_DATA_IMPORTS = [
 export default function DashboardPage() {
   const { activeCounty, setActiveJurisdiction, session, trendYears = 10, markWorkflowMilestone } = useSession();
 
-  // Trigger scanline sweep animation on jurisdiction or trend range changes
+  const [refreshCount, setRefreshCount] = useState(0);
+
+  // Listen for Overview tab clicks to re-render and reload the page every time
   useEffect(() => {
-    const scanline = document.getElementById('scanline');
-    if (scanline) {
-      scanline.classList.remove('sweeping');
-      void scanline.offsetWidth;
-      scanline.classList.add('sweeping');
-    }
-  }, [activeCounty?._id, trendYears]);
+    const handleRefresh = () => {
+      setRefreshCount((prev) => prev + 1);
+    };
+    window.addEventListener('mapwell:refresh-overview', handleRefresh);
+    return () => window.removeEventListener('mapwell:refresh-overview', handleRefresh);
+  }, []);
 
   const [tracts, setTracts] = useState<CensusTract[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
@@ -359,8 +360,7 @@ export default function DashboardPage() {
       {
         name: `${stateName} average`,
         color: 'var(--teal)',
-        dash: '4 4',
-        width: 2.2,
+        width: 2.4,
         values: stateVals
       }
     ];
@@ -413,7 +413,8 @@ export default function DashboardPage() {
   }, [nextWorkflowIdx]);
 
   return (
-    <div key={`${activeCounty?._id || 'default'}-${trendYears}`} className="page-stagger-enter">
+    <div key={`${countyFips}-${trendYears}-${refreshCount}`}>
+
       {/* Page Header */}
       <div className="page-head">
         <div>

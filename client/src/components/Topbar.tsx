@@ -4,8 +4,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { useAuth } from '@/context/AuthContext';
 import { Icon } from './Icons';
-import { useRouter } from 'next/navigation';
-import { STATE_META } from '@/utils/countyRepository';
+import { useRouter, usePathname } from 'next/navigation';
+import { getCountyRepository, STATE_META } from '@/utils/countyRepository';
 
 interface TopbarProps {
   onOpenMobileMenu: () => void;
@@ -17,8 +17,91 @@ const RANGES: Record<number, string> = {
   10: '2016 – 2025'
 };
 
+const NOTIFICATIONS = [
+  {
+    icon: (
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-1 8.5z" />
+      </svg>
+    ),
+    title: 'ACS 5-year tract estimates synchronized',
+    sub: 'Census Bureau API, today 06:12',
+    route: 'data-management'
+  },
+  {
+    icon: (
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3 2 20h20z" />
+        <path d="M12 10v4M12 17.5v.5" />
+      </svg>
+    ),
+    title: 'Program enrollment extract failed',
+    sub: 'Credentials expired for the state registry',
+    route: 'data-management'
+  },
+  {
+    icon: (
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="5" y="4" width="14" height="17" rx="2" />
+        <path d="M9 4V3h6v1M9 11h6M9 15h4" />
+      </svg>
+    ),
+    title: 'Assessment A-2041 moved to review',
+    sub: 'Community Health Team',
+    route: 'assessments'
+  },
+  {
+    icon: (
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z" />
+        <path d="M14 3v5h5M9 13h6M9 17h6" />
+      </svg>
+    ),
+    title: 'Q3 community vulnerability brief published',
+    sub: 'Reports & exports',
+    route: 'reports'
+  }
+];
+
+function countyLabel(c: any): string {
+  if (!c) return '';
+  const name = (c.name || '').replace(/\s+(County|Parish|Borough)$/i, '');
+  const st = c.st || c.stateFips || (c.id ? String(c.id).padStart(5, '0').slice(0, 2) : '');
+  const designation = st === '22' ? 'Parish' : st === '02' ? 'Borough' : 'County';
+  const abbr = c.stateAbbr || c.state?.abbr || (c.stateName ? c.stateName.slice(0, 2).toUpperCase() : '');
+  return `${name} ${designation}, ${abbr}`;
+}
+
+function fmtK(v: number): string {
+  if (!v) return '0';
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k';
+  return Math.round(v).toString();
+}
+
+function peersOf(c: any, all: any[], n = 6) {
+  if (!c || !all.length) return [];
+  const cSvi = c.svi ?? 0.5;
+  const cPop = c.pop || c.population || 80000;
+  const cSt = c.st || c.stateFips || (c.id ? String(c.id).padStart(5, '0').slice(0, 2) : '');
+  const cId = c.id || c._id;
+
+  return all
+    .filter((x: any) => (x.id || x._id) !== cId && (x.st || x.stateFips) !== cSt)
+    .map((x: any) => {
+      const xSvi = x.svi ?? 0.5;
+      const xPop = x.pop || x.population || 80000;
+      const d = Math.abs(xSvi - cSvi) * 3 + Math.abs(Math.log((xPop || 1) / (cPop || 1)));
+      return { x, d };
+    })
+    .sort((a, b) => a.d - b.d)
+    .slice(0, n)
+    .map((o) => o.x);
+}
+
 export function Topbar({ onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, logout } = useAuth();
   const {
     activeCounty,
@@ -27,7 +110,9 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     session,
     trendYears,
     setTrendYears,
-    setWorkflowDrawerOpen
+    setWorkflowDrawerOpen,
+    theme,
+    setTheme
   } = useSession();
 
   // Dropdown states
@@ -36,12 +121,27 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
   const [dateOpen, setDateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSearchIdx, setSelectedSearchIdx] = useState(0);
   const [roleOpen, setRoleOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [hasBadge, setHasBadge] = useState(true);
+  const [bellPos, setBellPos] = useState<{ top: number; left: number } | null>(null);
+  const [allCounties, setAllCounties] = useState<any[]>([]);
+
+  useEffect(() => {
+    getCountyRepository().then((repo) => {
+      if (repo && repo.counties) {
+        setAllCounties(repo.counties);
+      }
+    }).catch(() => {});
+  }, []);
 
   const jurRef = useRef<HTMLDivElement>(null);
   const dateRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const roleRef = useRef<HTMLDivElement>(null);
+  const bellButtonRef = useRef<HTMLButtonElement>(null);
+  const bellDropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Close popups on click outside
@@ -52,10 +152,52 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
       if (dateRef.current && !dateRef.current.contains(target)) setDateOpen(false);
       if (searchRef.current && !searchRef.current.contains(target)) setSearchOpen(false);
       if (roleRef.current && !roleRef.current.contains(target)) setRoleOpen(false);
+      if (
+        bellButtonRef.current &&
+        !bellButtonRef.current.contains(target) &&
+        (!bellDropdownRef.current || !bellDropdownRef.current.contains(target))
+      ) {
+        setBellOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Update bell dropdown position on resize or scroll
+  useEffect(() => {
+    const updatePos = () => {
+      if (bellOpen && bellButtonRef.current) {
+        const r = bellButtonRef.current.getBoundingClientRect();
+        const w = 320;
+        let left = r.left;
+        if (left + w > window.innerWidth - 10) {
+          left = window.innerWidth - w - 10;
+        }
+        setBellPos({ top: r.bottom + 8, left: Math.max(10, left) });
+      }
+    };
+    window.addEventListener('resize', updatePos);
+    window.addEventListener('scroll', updatePos, true);
+    return () => {
+      window.removeEventListener('resize', updatePos);
+      window.removeEventListener('scroll', updatePos, true);
+    };
+  }, [bellOpen]);
+
+  const toggleBell = () => {
+    if (!bellOpen && bellButtonRef.current) {
+      const r = bellButtonRef.current.getBoundingClientRect();
+      const w = 320;
+      let left = r.left;
+      if (left + w > window.innerWidth - 10) {
+        left = window.innerWidth - w - 10;
+      }
+      setBellPos({ top: r.bottom + 8, left: Math.max(10, left) });
+    }
+    setHasBadge(false);
+    setBellOpen((prev) => !prev);
+  };
 
   // Keyboard shortcut '/' to focus search
   useEffect(() => {
@@ -69,19 +211,25 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Filtered counties for jurisdiction selector
-  const filteredCounties = useMemo(() => {
+  // Filtered counties for jurisdiction selector (matches local prototype peersOf + search)
+  const jurHits = useMemo(() => {
     const q = jurFilter.toLowerCase().trim();
-    if (!q) return jurisdictions.slice(0, 50);
-    return jurisdictions
-      .filter((c: any) => c.name.toLowerCase().includes(q) || (c.stateAbbr && c.stateAbbr.toLowerCase().includes(q)))
-      .slice(0, 50);
-  }, [jurisdictions, jurFilter]);
+    const sourceList = allCounties.length > 0 ? allCounties : jurisdictions;
+    if (!q) {
+      if (!activeCounty) return sourceList.slice(0, 7);
+      return [activeCounty, ...peersOf(activeCounty, sourceList, 6)];
+    }
+    return sourceList
+      .filter((c: any) => {
+        const text = `${c.name} ${c.stateName || ''} ${c.stateAbbr || ''} ${c.state || ''}`.toLowerCase();
+        return text.includes(q);
+      })
+      .slice(0, 12);
+  }, [jurFilter, allCounties, jurisdictions, activeCounty]);
 
-  // Global search items (screens and counties)
+  // Global search items (screens and counties) with instant suggestions
   const searchResults = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return [];
     const results: Array<{ label: string; sub: string; type: 'screen' | 'county'; action: () => void }> = [];
 
     const screens = [
@@ -97,6 +245,43 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
       { name: 'Data Management', href: '/data-management' }
     ];
 
+    if (!q) {
+      // Immediate suggestions on focus / selection
+      screens.slice(0, 5).forEach((s) => {
+        results.push({
+          label: s.name,
+          sub: 'Screen',
+          type: 'screen',
+          action: () => {
+            setSearchOpen(false);
+            setSearchQuery('');
+            if (pathname === s.href) {
+              window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+            } else {
+              router.push(s.href);
+            }
+          }
+        });
+      });
+
+      const sourceList = allCounties.length > 0 ? allCounties : jurisdictions;
+      const suggestedCounties = sourceList.slice(0, 5);
+      suggestedCounties.forEach((c: any) => {
+        const id = c.id || c._id;
+        results.push({
+          label: `${c.name}, ${c.stateName || c.state || c.stateAbbr || ''}`,
+          sub: `${c.pop ? (c.pop >= 1e6 ? (c.pop / 1e6).toFixed(1) + 'M' : Math.round(c.pop / 1e3) + 'k') + ' residents' : (c.totalTracts || 0) + ' tracts'}`,
+          type: 'county',
+          action: () => {
+            setActiveJurisdiction(id);
+            setSearchOpen(false);
+          }
+        });
+      });
+
+      return results;
+    }
+
     screens.forEach((s) => {
       if (s.name.toLowerCase().includes(q)) {
         results.push({
@@ -104,21 +289,34 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
           sub: 'Screen',
           type: 'screen',
           action: () => {
-            router.push(s.href);
             setSearchOpen(false);
+            setSearchQuery('');
+            if (pathname === s.href) {
+              window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+            } else {
+              router.push(s.href);
+            }
           }
         });
       }
     });
 
-    jurisdictions.forEach((c: any) => {
-      if (c.name.toLowerCase().includes(q) && results.length < 10) {
+    const sourceList = allCounties.length > 0 ? allCounties : jurisdictions;
+    sourceList.forEach((c: any) => {
+      const match =
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        (c.stateName && c.stateName.toLowerCase().includes(q)) ||
+        (c.stateAbbr && c.stateAbbr.toLowerCase().includes(q)) ||
+        (c.state && c.state.toLowerCase().includes(q));
+
+      if (match && results.length < 18) {
+        const id = c.id || c._id;
         results.push({
-          label: `${c.name}, ${c.state || ''}`,
-          sub: `${c.totalTracts || 0} census tracts`,
+          label: `${c.name}, ${c.stateName || c.state || c.stateAbbr || ''}`,
+          sub: `${c.pop ? (c.pop >= 1e6 ? (c.pop / 1e6).toFixed(1) + 'M' : Math.round(c.pop / 1e3) + 'k') + ' residents' : (c.totalTracts || 0) + ' tracts'}`,
           type: 'county',
           action: () => {
-            setActiveJurisdiction(c._id);
+            setActiveJurisdiction(id);
             setSearchOpen(false);
           }
         });
@@ -126,7 +324,7 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     });
 
     return results;
-  }, [searchQuery, jurisdictions, router, setActiveJurisdiction]);
+  }, [searchQuery, allCounties, jurisdictions, router, setActiveJurisdiction]);
 
   // Completed workflow milestones count
   const wfCount = useMemo(() => {
@@ -141,17 +339,22 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
   const circumference = 2 * Math.PI * 11; // r=11 inside 28x28
   const strokeDashoffset = circumference - (wfPct / 100) * circumference;
 
-  // Toggle theme
+  // Toggle theme - reloads the entire current page in the new theme
   const toggleTheme = () => {
-    const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
+    const next = theme === 'dark' ? 'light' : 'dark';
     try {
       localStorage.setItem('mapwell-theme', next);
     } catch {}
+    document.documentElement.setAttribute('data-theme', next);
+    fetch('/api/session', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: next })
+    }).catch(() => {});
+    window.location.reload();
   };
 
-  const activeCountyName = activeCounty ? `${activeCounty.name}, ${activeCounty.stateAbbr || ''}` : 'King County, WA';
+  const activeCountyLabel = activeCounty ? countyLabel(activeCounty) : 'King County, WA';
 
   return (
     <header id="topbar">
@@ -183,7 +386,7 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
           </span>
           <span className="lbl">
             <small>Jurisdiction</small>
-            <b id="jur-name">{activeCountyName}</b>
+            <b id="jur-name">{activeCountyLabel}</b>
           </span>
           <svg
             viewBox="0 0 24 24"
@@ -207,14 +410,14 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
               left: '0',
               zIndex: 100,
               width: '320px',
-              padding: '12px',
+              padding: '8px',
               borderRadius: '16px',
               background: 'var(--surface-solid)',
               border: '1px solid var(--line-strong)',
               boxShadow: 'var(--shadow)'
             }}
           >
-            <div style={{ padding: '4px 6px 10px' }}>
+            <div style={{ padding: '6px 6px 10px' }}>
               <b style={{ fontSize: '13px', display: 'block' }}>Active jurisdiction</b>
               <div className="note" style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
                 Sets the default county for every screen
@@ -222,55 +425,69 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
             </div>
             <input
               type="text"
-              className="in"
-              placeholder="Filter counties…"
+              className="input"
+              id="jp-q"
+              placeholder="Search counties"
               value={jurFilter}
               onChange={(e) => setJurFilter(e.target.value)}
               autoFocus
               style={{
                 width: '100%',
-                height: '36px',
+                height: '38px',
                 padding: '0 12px',
-                borderRadius: '8px',
-                border: '1px solid var(--line-strong)',
-                background: '#fff',
-                fontSize: '12.5px',
+                borderRadius: '10px',
+                border: '1px solid var(--cyan)',
+                boxShadow: '0 0 0 3px var(--glow)',
+                background: 'var(--surface-2)',
+                color: 'var(--text)',
+                fontSize: '13px',
+                fontWeight: 500,
                 outline: 'none',
-                marginBottom: '8px'
+                marginBottom: '6px'
               }}
             />
-            <div style={{ maxHeight: '240px', overflowY: 'auto' }}>
-              {filteredCounties.map((c: any) => (
-                <button
-                  key={c._id}
-                  onClick={() => {
-                    setActiveJurisdiction(c._id);
-                    setJurOpen(false);
-                  }}
-                  className={`dd-item ${activeCounty?._id === c._id ? 'on' : ''}`}
-                  style={{
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 10px',
-                    borderRadius: '8px',
-                    border: '0',
-                    background: activeCounty?._id === c._id ? 'var(--surface-2)' : 'transparent',
-                    fontSize: '12.5px',
-                    fontWeight: activeCounty?._id === c._id ? 600 : 500,
-                    textAlign: 'left',
-                    color: 'var(--text)',
-                    cursor: 'pointer',
-                    marginBottom: '2px'
-                  }}
-                >
-                  <span>
-                    {c.name}, {c.state || ''}
-                  </span>
-                  <span className="pill sm">{c.totalTracts || 0} tracts</span>
-                </button>
-              ))}
+            <div id="jp-r" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+              {!jurFilter && (
+                <div className="note" style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--muted)' }}>
+                  Current and peer counties
+                </div>
+              )}
+              {jurHits.map((c: any) => {
+                const cid = c.id || c._id;
+                const isSelected = activeCounty?._id === cid || (activeCounty as any)?.id === cid;
+                return (
+                  <div
+                    key={cid}
+                    className={`sr-item ${isSelected ? 'hl' : ''}`}
+                    data-c={cid}
+                    onClick={() => {
+                      setActiveJurisdiction(cid);
+                      setJurOpen(false);
+                      setJurFilter('');
+                      window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+                    }}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '9px 10px',
+                      borderRadius: '9px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      background: isSelected ? 'var(--surface-2)' : undefined,
+                      color: 'var(--text)',
+                      transition: 'background 0.15s',
+                      userSelect: 'none'
+                    }}
+                  >
+                    <span style={{ fontWeight: 600 }}>{countyLabel(c)}</span>
+                    <small style={{ color: 'var(--faint)', fontSize: '12px' }}>
+                      {fmtK(c.pop || c.population || 0)}
+                    </small>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -292,14 +509,36 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
           onChange={(e) => {
             setSearchQuery(e.target.value);
             setSearchOpen(true);
+            setSelectedSearchIdx(0);
           }}
-          onFocus={() => setSearchOpen(true)}
+          onFocus={() => {
+            setSearchOpen(true);
+            setSelectedSearchIdx(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setSelectedSearchIdx((prev) => Math.min(prev + 1, Math.max(0, searchResults.length - 1)));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setSelectedSearchIdx((prev) => Math.max(prev - 1, 0));
+            } else if (e.key === 'Enter') {
+              e.preventDefault();
+              if (searchResults[selectedSearchIdx]) {
+                searchResults[selectedSearchIdx].action();
+              } else if (searchResults[0]) {
+                searchResults[0].action();
+              }
+            } else if (e.key === 'Escape') {
+              setSearchOpen(false);
+            }
+          }}
         />
         <span className="kbd">/</span>
 
-        {searchOpen && searchResults.length > 0 && (
+        {searchOpen && (
           <div
-            className="search-results show"
+            className="search-results open dropdown-anim"
             id="g-results"
             role="listbox"
             style={{
@@ -313,44 +552,52 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
               boxShadow: 'var(--shadow)',
               padding: '6px',
               zIndex: 100,
-              maxHeight: '300px',
+              maxHeight: '340px',
               overflowY: 'auto'
             }}
           >
-            {searchResults.map((item, idx) => (
-              <button
-                key={idx}
-                onClick={item.action}
-                style={{
-                  width: '100%',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '8px 12px',
-                  borderRadius: '8px',
-                  border: 0,
-                  background: 'none',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  color: 'var(--text)'
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-              >
-                <span>{item.label}</span>
-                <span
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: item.type === 'screen' ? 'var(--cyan)' : 'var(--muted)'
+            {searchResults.length > 0 ? (
+              searchResults.map((item, idx) => (
+                <div
+                  key={idx}
+                  className={`sr-item ${idx === selectedSearchIdx ? 'hl' : ''}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    item.action();
                   }}
+                  onClick={item.action}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '9px 12px',
+                    borderRadius: '9px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    background: idx === selectedSearchIdx ? 'var(--surface-2)' : undefined,
+                    color: 'var(--text)',
+                    userSelect: 'none'
+                  }}
+                  onMouseEnter={() => setSelectedSearchIdx(idx)}
                 >
-                  {item.sub}
-                </span>
-              </button>
-            ))}
+                  <span style={{ fontWeight: 600 }}>{item.label}</span>
+                  <small
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: item.type === 'screen' ? 'var(--cyan)' : 'var(--muted)'
+                    }}
+                  >
+                    {item.sub}
+                  </small>
+                </div>
+              ))
+            ) : (
+              <div className="sr-item" style={{ padding: '9px 12px' }}>
+                <small style={{ color: 'var(--faint)' }}>No screens, counties or tracts match</small>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -408,6 +655,7 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
                 onClick={() => {
                   setTrendYears(y);
                   setDateOpen(false);
+                  window.dispatchEvent(new CustomEvent('mapwell:navigate'));
                 }}
                 style={{
                   width: '100%',
@@ -432,31 +680,34 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
         )}
       </div>
 
-      {/* Guided Workflow Chip */}
+      {/* Guided Workflow Chip - exact local prototype ring design */}
       <button
         className="wf-chip"
         id="wf-chip"
         aria-label="Open guided workflow"
         onClick={() => setWorkflowDrawerOpen(true)}
       >
-        <svg className="ring" viewBox="0 0 28 28" width="28" height="28" style={{ transform: 'rotate(-90deg)' }}>
-          <circle cx="14" cy="14" r="11" fill="none" stroke="var(--line)" strokeWidth="3" />
+        <svg className="ring-svg" width="28" height="28" viewBox="0 0 28 28">
+          <circle cx="14" cy="14" r="12.25" fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
           <circle
+            className="ring-fg"
             cx="14"
             cy="14"
-            r="11"
+            r="12.25"
             fill="none"
             stroke="var(--teal)"
-            strokeWidth="3"
-            strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
+            strokeWidth="3.5"
             strokeLinecap="round"
+            strokeDasharray={76.969}
+            strokeDashoffset={76.969 - (wfPct / 100) * 76.969}
+            transform="rotate(-90 14 14)"
+            style={{
+              transition: 'stroke-dashoffset 1.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
+              filter: 'drop-shadow(0 0 4px var(--teal))'
+            }}
           />
         </svg>
-        <span className="t">
-          <b>Workflow</b>
-          <small>{wfCount}/10</small>
-        </span>
+        <span className="t">Workflow {wfCount}/10</span>
       </button>
 
       {/* Theme Toggle Button */}
@@ -466,16 +717,98 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
         aria-label="Toggle theme"
         onClick={toggleTheme}
       >
-        <Icon name="sun" size={17} />
+        <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
       </button>
 
       {/* Notification Bell */}
-      <button className="icon-btn hide-m" id="bell" aria-label="Notifications">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0" />
-        </svg>
-        <span className="badge" />
-      </button>
+      <div className="relative hide-m">
+        <button
+          ref={bellButtonRef}
+          className="icon-btn"
+          id="bell"
+          aria-label="Notifications"
+          onClick={toggleBell}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0" />
+          </svg>
+          {hasBadge && <span className="badge" />}
+        </button>
+
+        {bellOpen && bellPos && (
+          <div
+            ref={bellDropdownRef}
+            className="dropdown dropdown-anim"
+            style={{
+              position: 'fixed',
+              top: `${bellPos.top}px`,
+              left: `${bellPos.left}px`,
+              zIndex: 100,
+              width: '320px',
+              padding: '8px',
+              borderRadius: '16px',
+              background: 'var(--surface-solid)',
+              border: '1px solid var(--line-strong)',
+              boxShadow: 'var(--shadow)'
+            }}
+          >
+            <div style={{ padding: '6px 8px 8px' }}>
+              <b style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>Notifications</b>
+            </div>
+            <div className="list" style={{ padding: '0 8px', width: '100%', display: 'flex', flexDirection: 'column' }}>
+              {NOTIFICATIONS.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="li"
+                  style={{
+                    display: 'flex',
+                    gap: '12px',
+                    alignItems: 'center',
+                    padding: '11px 0',
+                    borderBottom: idx === NOTIFICATIONS.length - 1 ? '0' : '1px solid var(--line)',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                  onClick={() => {
+                    setBellOpen(false);
+                    const target = `/${item.route}`;
+                    if (pathname === target) {
+                      window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+                    } else {
+                      router.push(target);
+                    }
+                  }}
+                >
+                  <span
+                    className="ic"
+                    style={{
+                      width: '34px',
+                      height: '34px',
+                      borderRadius: '50%',
+                      flex: 'none',
+                      display: 'grid',
+                      placeItems: 'center',
+                      background: '#E6F3FF',
+                      border: '0',
+                      color: 'var(--cyan)'
+                    }}
+                  >
+                    {item.icon}
+                  </span>
+                  <div className="b" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <b style={{ whiteSpace: 'normal', fontSize: '13px', fontWeight: 700, lineHeight: '1.35', color: 'var(--text)' }}>
+                      {item.title}
+                    </b>
+                    <small style={{ color: 'var(--faint)', fontSize: '12px', marginTop: '2px' }}>
+                      {item.sub}
+                    </small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* User Role & Account Dropdown */}
       <div className="relative" ref={roleRef}>
