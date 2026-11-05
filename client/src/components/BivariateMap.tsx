@@ -4,7 +4,6 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
 import { CensusTract } from '@/types';
-import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { STATE_META } from '@/utils/countyRepository';
 
 export interface BivariateMapProps {
@@ -29,6 +28,36 @@ export const BIV_MATRIX = [
 let topoCache: any = null;
 const dynamicTractsCache = new Map<string, CensusTract[]>();
 
+// Tooltip helpers matching MapWell standard #tooltip
+function showTip(html: string, e: MouseEvent) {
+  const t = document.getElementById('tooltip');
+  if (!t) return;
+  t.innerHTML = html;
+  t.classList.add('on');
+  moveTip(e);
+}
+
+function moveTip(e: MouseEvent) {
+  const t = document.getElementById('tooltip');
+  if (!t || !e) return;
+  const w = t.offsetWidth;
+  const h = t.offsetHeight;
+  let x = e.clientX + 16;
+  let y = e.clientY + 14;
+  if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
+  if (y + h > window.innerHeight - 8) y = e.clientY - h - 14;
+  t.style.left = x + 'px';
+  t.style.top = y + 'px';
+}
+
+function hideTip() {
+  const t = document.getElementById('tooltip');
+  if (t) t.classList.remove('on');
+}
+
+const tipRows = (rows: [string, string][]) =>
+  rows.map(([a, b]) => `<div class="tv"><span>${a}</span><span>${b}</span></div>`).join('');
+
 export function BivariateMap({
   countyFips,
   countyName = 'County',
@@ -38,39 +67,14 @@ export function BivariateMap({
   selectedTractId,
   onSelectTract,
   onCountySelect,
-  height = 460
+  height = 440
 }: BivariateMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const switchCountyRef = useRef<((targetCid: string) => void) | null>(null);
-  const zoomInRef = useRef<(() => void) | null>(null);
-  const zoomOutRef = useRef<(() => void) | null>(null);
-  const resetZoomRef = useRef<(() => void) | null>(null);
 
-  const [activeCountyId, setActiveCountyId] = useState<string>(countyFips);
-  const [activeCountyName, setActiveCountyName] = useState<string>(countyName);
-  const [primaryCountyName, setPrimaryCountyName] = useState<string>(countyName);
-
-  const [tooltip, setTooltip] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    tractName: string;
-    svi: number;
-    utilization: number;
-    gapScore: number;
-    category: string;
-    isHotspot: boolean;
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    tractName: '',
-    svi: 0,
-    utilization: 0,
-    gapScore: 0,
-    category: '',
-    isHotspot: false
-  });
+  const [, setActiveCountyId] = useState<string>(countyFips);
+  const [, setActiveCountyName] = useState<string>(countyName);
+  const [, setPrimaryCountyName] = useState<string>(countyName);
 
   const getTractUtil = (t: CensusTract, key: string): number => {
     if (key === 'all') {
@@ -87,12 +91,6 @@ export function BivariateMap({
     const nb = svi < sq[0] ? 0 : svi < sq[1] ? 1 : 2;
     const ub = u > uq[1] ? 0 : u > uq[0] ? 1 : 2;
     return BIV_MATRIX[nb][ub];
-  };
-
-  const getCategoryLabel = (u: number, svi: number, uq: [number, number], sq: [number, number]) => {
-    const needLabel = svi >= sq[1] ? 'High Need' : svi >= sq[0] ? 'Moderate Need' : 'Low Need';
-    const utilLabel = u <= uq[0] ? 'Low Util' : u <= uq[1] ? 'Moderate Util' : 'High Util';
-    return `${needLabel} / ${utilLabel}`;
   };
 
   // Sync prop changes
@@ -195,7 +193,7 @@ export function BivariateMap({
         .style('pointer-events', 'none');
 
       // Synthetic Tract Generator for outside counties
-      function getOrGenerateTracts(targetCid: string, targetFeature: any): CensusTract[] {
+      function getOrGenerateTracts(targetCid: string, _targetFeature: any): CensusTract[] {
         if (targetCid === countyFips && tracts.length > 0) {
           return tracts;
         }
@@ -288,18 +286,7 @@ export function BivariateMap({
           rootGroup.attr('transform', targetTransform.toString());
         }
 
-        // Zoom controls handlers
-        zoomInRef.current = () => {
-          rootGroup.transition().duration(300).call(d3.zoom().scaleBy as any, 1.3);
-        };
-        zoomOutRef.current = () => {
-          rootGroup.transition().duration(300).call(d3.zoom().scaleBy as any, 0.77);
-        };
-        resetZoomRef.current = () => {
-          rootGroup.transition().duration(500).attr('transform', targetTransform.toString());
-        };
-
-        // 3. Render Ambient Surrounding Counties (all counties other than demonstrated one)
+        // 3. Render Ambient Surrounding Counties
         const ambientCounties = stateCounties.filter((c: any) => c.id !== targetCid);
         const surroundSelection = gSurround.selectAll<SVGPathElement, any>('path.county-ambient')
           .data(ambientCounties, (d: any) => d.id);
@@ -309,7 +296,7 @@ export function BivariateMap({
         const enterAmbient = surroundSelection.enter()
           .append('path')
           .attr('class', 'county-ambient')
-          .attr('d', (d: any) => pathGen(d))
+          .attr('d', (d: any) => pathGen(d) || '')
           .attr('fill', '#dbeafe')
           .attr('opacity', 0.42)
           .attr('stroke', '#ffffff')
@@ -321,40 +308,29 @@ export function BivariateMap({
         const allAmbient = enterAmbient.merge(surroundSelection as any);
 
         allAmbient
-          .attr('d', (d: any) => pathGen(d))
+          .attr('d', (d: any) => pathGen(d) || '')
           .attr('fill', '#dbeafe')
           .attr('opacity', 0.42)
           .attr('stroke', '#ffffff')
           .attr('stroke-width', 0.8)
-          .on('pointerenter', function (event, d: any) {
+          .on('pointerenter', function (event: MouseEvent, d: any) {
             d3.select(this)
               .attr('fill', 'rgba(56, 189, 248, 0.28)')
               .attr('opacity', 0.88)
               .attr('stroke', '#38BDF8')
               .attr('stroke-width', 1.6);
 
-            const cRect = container.getBoundingClientRect();
             const hoverName = `${d.properties?.name || 'County'} County, ${stateAbbr}`;
-
-            setTooltip({
-              visible: true,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14,
-              tractName: hoverName,
-              svi: 0,
-              utilization: 0,
-              gapScore: 0,
-              category: 'Adjacent Jurisdiction (Click to demonstrate)',
-              isHotspot: false
-            });
+            showTip(
+              `<b>${hoverName}</b>${tipRows([
+                ['Status', 'Adjacent county'],
+                ['State', stateAbbr]
+              ])}<div class="note" style="margin-top:5px">Click to demonstrate county</div>`,
+              event
+            );
           })
-          .on('pointermove', function (event) {
-            const cRect = container.getBoundingClientRect();
-            setTooltip(prev => ({
-              ...prev,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14
-            }));
+          .on('pointermove', function (event: MouseEvent) {
+            moveTip(event);
           })
           .on('pointerleave', function () {
             d3.select(this)
@@ -362,8 +338,7 @@ export function BivariateMap({
               .attr('opacity', 0.42)
               .attr('stroke', '#ffffff')
               .attr('stroke-width', 0.8);
-
-            setTooltip(prev => ({ ...prev, visible: false }));
+            hideTip();
           })
           .on('click', function (event, d: any) {
             event.stopPropagation();
@@ -374,7 +349,7 @@ export function BivariateMap({
           });
 
         // 4. Load or Generate Census Tracts for Demonstrated Region
-        let activeTracts = getOrGenerateTracts(targetCid, targetFeature);
+        const activeTracts = getOrGenerateTracts(targetCid, targetFeature);
 
         // Fetch server tracts asynchronously if not yet cached
         if (targetCid !== countyFips && !dynamicTractsCache.has(targetCid)) {
@@ -396,7 +371,7 @@ export function BivariateMap({
 
       function renderTractCells(
         activeTracts: CensusTract[],
-        targetFeature: any,
+        _targetFeature: any,
         cx0: number,
         cy0: number,
         cWidth: number,
@@ -509,36 +484,30 @@ export function BivariateMap({
 
         // Hover Tooltips on Tracts
         paths
-          .on('pointerenter', function (event, tract) {
+          .on('pointerenter', function (event: MouseEvent, tract) {
             d3.select(this)
               .attr('stroke', '#ffffff')
               .attr('stroke-width', 2.4)
               .raise();
 
-            const cRect = container.getBoundingClientRect();
             const util = getTractUtil(tract, programKey);
             const gap = tract.svi * (100 - util);
-            const isHot = topGapIds.has(tract._id);
+            const tier = tract.tier ?? Math.min(4, Math.floor(tract.svi * 5));
+            const tierName = ['Very low', 'Low', 'Moderate', 'High', 'Very high'][tier] || 'Moderate';
 
-            setTooltip({
-              visible: true,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14,
-              tractName: tract.name || `Tract ${tract._id}`,
-              svi: tract.svi,
-              utilization: util,
-              gapScore: Math.round(gap),
-              category: getCategoryLabel(util, tract.svi, uq, sq),
-              isHotspot: isHot
-            });
+            showTip(
+              `<b>${tract.name || `Tract ${tract._id}`}</b>${tipRows([
+                ['GEOID', tract._id],
+                [`${programLabel} utilization`, `${util.toFixed(0)}%`],
+                ['Vulnerability (SVI)', `${tract.svi.toFixed(2)} (${tierName})`],
+                ['Coverage gap score', `${Math.round(gap)}`],
+                ['Population', (tract.population || 4000).toLocaleString()]
+              ])}<div class="note" style="margin-top:5px">Click to open tract explorer</div>`,
+              event
+            );
           })
-          .on('pointermove', function (event) {
-            const cRect = container.getBoundingClientRect();
-            setTooltip(prev => ({
-              ...prev,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14
-            }));
+          .on('pointermove', function (event: MouseEvent) {
+            moveTip(event);
           })
           .on('pointerleave', function (_, tract) {
             const isHot = topGapIds.has(tract._id);
@@ -552,7 +521,7 @@ export function BivariateMap({
               d3.select(this).raise();
             }
 
-            setTooltip(prev => ({ ...prev, visible: false }));
+            hideTip();
           })
           .on('click', function (_, tract) {
             if (onSelectTract) {
@@ -573,138 +542,15 @@ export function BivariateMap({
 
     return () => {
       isMounted = false;
+      hideTip();
     };
   }, [countyFips, tracts, programKey, selectedTractId, onSelectTract, onCountySelect, height]);
 
-  const isDemonstratingOutside = activeCountyId !== countyFips;
-
-  const handleResetToPrimary = useCallback(() => {
-    setActiveCountyId(countyFips);
-    if (switchCountyRef.current) {
-      switchCountyRef.current(countyFips);
-    }
-  }, [countyFips]);
-
   return (
-    <div className="relative w-full h-full overflow-hidden" style={{ minHeight: `${height}px` }}>
-      <div ref={containerRef} className="w-full h-full" />
-
-      {/* Top Left Floating Header */}
-      <div className="absolute top-4 left-4 z-20 px-3.5 py-2.5 rounded-xl bg-[var(--surface-solid)]/90 backdrop-blur-md border border-[var(--line-strong)] shadow-lg select-none">
-        <h4 className="text-[12.5px] font-bold text-[var(--text)]">Community coverage gaps</h4>
-        <p className="text-[10.5px] text-[var(--muted)]">Tract need against program utilization</p>
-      </div>
-
-      {/* Top Right Zoom & Navigation Controls */}
-      <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
-        {isDemonstratingOutside && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#0f172a]/92 backdrop-blur-md border border-cyan-400/50 text-cyan-300 text-[11px] font-semibold shadow-xl animate-in fade-in zoom-in-95 duration-150">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#38bdf8] animate-pulse" />
-            <span>Demonstrating: {activeCountyName}</span>
-            <button
-              type="button"
-              onClick={handleResetToPrimary}
-              className="ml-1 px-2 py-0.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-200 hover:text-white transition-colors text-[10.5px] border border-cyan-400/40"
-              title={`Return to ${primaryCountyName}`}
-            >
-              Reset
-            </button>
-          </div>
-        )}
-
-        <div className="flex flex-col bg-[var(--surface-solid)]/90 backdrop-blur-md border border-[var(--line-strong)] rounded-xl shadow-md p-1 gap-1">
-          <button
-            onClick={() => zoomInRef.current?.()}
-            className="p-1.5 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
-            title="Zoom in"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => zoomOutRef.current?.()}
-            className="p-1.5 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
-            title="Zoom out"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => resetZoomRef.current?.()}
-            className="p-1.5 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
-            title="Reset zoom"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* 3x3 Bivariate Legend Matrix (Bottom Right) */}
-      <div className="absolute bottom-4 right-4 z-20 p-3 rounded-2xl bg-[var(--surface-solid)]/92 backdrop-blur-md border border-[var(--line-strong)] shadow-xl flex items-center gap-3 select-none">
-        <div className="flex flex-col items-center">
-          <div className="grid grid-cols-3 gap-1">
-            {[2, 1, 0].map(needIdx =>
-              [0, 1, 2].map(utilIdx => (
-                <div
-                  key={`${needIdx}-${utilIdx}`}
-                  className="w-4 h-4 rounded-sm transition-transform hover:scale-110 shadow-xs"
-                  style={{ backgroundColor: BIV_MATRIX[needIdx][utilIdx] }}
-                  title={`Need: ${needIdx === 2 ? 'High' : needIdx === 1 ? 'Mid' : 'Low'}, Util: ${utilIdx === 2 ? 'Low' : utilIdx === 1 ? 'Mid' : 'High'}`}
-                />
-              ))
-            )}
-          </div>
-          <span className="text-[9.5px] font-bold text-[var(--faint)] mt-1.5 uppercase tracking-wider">
-            Lower utilization →
-          </span>
-        </div>
-        <span
-          className="text-[9.5px] font-bold text-[var(--faint)] uppercase tracking-wider"
-          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-        >
-          Higher need →
-        </span>
-      </div>
-
-      {/* Interactive Tooltip */}
-      {tooltip.visible && (
-        <div
-          className="absolute z-30 pointer-events-none px-3.5 py-2.5 rounded-xl bg-[#0b1329]/95 backdrop-blur-md border border-white/15 shadow-2xl text-[11.5px] text-white animate-in fade-in zoom-in-95 duration-100"
-          style={{ left: tooltip.x, top: tooltip.y }}
-        >
-          <div className="font-bold text-white mb-1 flex items-center justify-between gap-3">
-            <span>{tooltip.tractName}</span>
-            {tooltip.isHotspot && (
-              <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                Top Gap
-              </span>
-            )}
-          </div>
-
-          <div className="space-y-1 text-[11px] text-slate-300">
-            {tooltip.category.includes('Adjacent Jurisdiction') ? (
-              <div className="text-cyan-400 font-semibold">{tooltip.category}</div>
-            ) : (
-              <>
-                <div className="flex justify-between gap-4">
-                  <span className="text-slate-400">Vulnerability (SVI):</span>
-                  <span className="font-mono text-cyan-400 font-bold">{tooltip.svi.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-slate-400">Utilization:</span>
-                  <strong className="font-mono text-white">{tooltip.utilization.toFixed(1)}%</strong>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-slate-400">Gap Priority Score:</span>
-                  <span className="font-mono font-bold text-rose-400">{tooltip.gapScore}</span>
-                </div>
-                <div className="pt-1 mt-1 border-t border-white/10 flex justify-between gap-3 text-[10px]">
-                  <span className="text-slate-400">{tooltip.category}</span>
-                  <span className="text-cyan-400 font-semibold">Click to open tract</span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+    <div
+      ref={containerRef}
+      className="w-full h-full select-none"
+      style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
+    />
   );
 }
