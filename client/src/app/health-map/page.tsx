@@ -9,6 +9,8 @@ function HealthMapContent() {
   const searchParams = useSearchParams();
   const urlCounty = searchParams.get('county');
   const urlTract = searchParams.get('tract');
+  const urlLayer = searchParams.get('layer');
+  const urlMetric = searchParams.get('metric');
 
   const {
     activeCounty,
@@ -43,6 +45,8 @@ function HealthMapContent() {
       <HealthMapCanvas
         initialCountyId={urlCounty || undefined}
         initialTractId={urlTract || undefined}
+        initialLayerId={urlLayer || 'disease'}
+        initialMetric={urlMetric || 'incidence'}
         jurisdictionCountyId={activeCounty?._id || undefined}
         onCountySelect={(county) => {
           setActiveJurisdiction(county.id);

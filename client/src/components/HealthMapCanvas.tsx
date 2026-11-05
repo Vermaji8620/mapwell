@@ -243,29 +243,33 @@ const tractCache = new Map<string, any[]>();
 export interface HealthMapCanvasProps {
   initialCountyId?: string;
   initialTractId?: string;
+  initialLayerId?: string;
+  initialMetric?: string;
   jurisdictionCountyId?: string;
-  onTractSelect?: (tract: any) => void;
   onCountySelect?: (county: CountyRecord) => void;
+  onTractSelect?: (tract: any) => void;
   onLayerSelect?: () => void;
   onAddFinding?: (tract: any) => void;
-  onToggleCompare?: (tractId: string) => void;
-  onToggleFlag?: (tractId: string) => void;
   compareTractIds?: string[];
   flaggedTractIds?: string[];
+  onToggleCompare?: (tractId: string) => void;
+  onToggleFlag?: (tractId: string) => void;
 }
 
 export function HealthMapCanvas({
   initialCountyId,
   initialTractId,
+  initialLayerId,
+  initialMetric,
   jurisdictionCountyId,
-  onTractSelect,
   onCountySelect,
+  onTractSelect,
   onLayerSelect,
   onAddFinding,
-  onToggleCompare,
-  onToggleFlag,
   compareTractIds = [],
-  flaggedTractIds = []
+  flaggedTractIds = [],
+  onToggleCompare,
+  onToggleFlag
 }: HealthMapCanvasProps) {
   const router = useRouter();
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -284,10 +288,18 @@ export function HealthMapCanvas({
   const repoRef = useRef<any>(null);
   const stateByRef = useRef<Record<string, any>>({});
   const countiesRef = useRef<CountyRecord[]>([]);
+  const [counties, setCounties] = useState<CountyRecord[]>([]);
+
+  // Default to the 2nd layer: 'disease' (Disease incidence)
+  const defaultLayer = LAYERS[1] || LAYERS[0];
+  const resolvedInitialLayer = initialLayerId || defaultLayer.id; // 'disease'
+  const resolvedInitialMetric =
+    initialMetric ||
+    (LAYERS.find((l) => l.id === resolvedInitialLayer)?.metrics[0] ?? defaultLayer.metrics[0]); // 'incidence'
 
   // Map state
-  const [curLayerId, setCurLayerId] = useState<string>('sdoh');
-  const [curMetric, setCurMetric] = useState<string>('sdoh');
+  const [curLayerId, setCurLayerId] = useState<string>(resolvedInitialLayer);
+  const [curMetric, setCurMetric] = useState<string>(resolvedInitialMetric);
   const [scope, setScope] = useState<{ st: string | null; c: string | null; t: string | null }>({
     st: null,
     c: null,
@@ -438,22 +450,25 @@ export function HealthMapCanvas({
         .duration(700)
         .attr('r', 18);
     } else {
-      const allCounties = countiesRef.current;
-      const sorted = [...allCounties].sort((a, b) => needOf(b, mKey) - needOf(a, mKey));
-      const top = sorted.slice(0, Math.ceil(allCounties.length * 0.14));
+      const allCounties = counties.length > 0 ? counties : countiesRef.current;
+      const pool = scope.st ? (stateByRef.current[scope.st]?.counties || allCounties) : allCounties;
+      const sorted = [...pool]
+        .filter((c: any) => typeof c.cx === 'number' && !isNaN(c.cx) && typeof c.cy === 'number' && !isNaN(c.cy))
+        .sort((a, b) => needOf(b, mKey) - needOf(a, mKey));
+      const top = sorted.slice(0, Math.ceil(pool.length * 0.14));
       gHeat.selectAll('circle')
         .data(top)
         .join('circle')
-        .attr('cx', (d: any) => d.cx || d.centroid?.[0] || 0)
-        .attr('cy', (d: any) => d.cy || d.centroid?.[1] || 0)
+        .attr('cx', (d: any) => d.cx || 0)
+        .attr('cy', (d: any) => d.cy || 0)
         .attr('r', 0)
         .attr('fill', 'url(#hm-heat)')
         .transition()
         .duration(900)
         .delay((_, i) => i * 1.2)
-        .attr('r', (d: any) => Math.max(6, Math.sqrt(d.area || 30) * 1.6));
+        .attr('r', (d: any) => Math.max(6, Math.sqrt(Math.max(1, d.area || 30)) * 1.6));
     }
-  }, [getTractsForCounty, needOf]);
+  }, [counties, getTractsForCounty, needOf, scope.st]);
 
   // Draw Pulse Markers
   const drawMarkers = useCallback((isMarkers: boolean, mKey: string, cRecord: CountyRecord | null, zoomK: number) => {
@@ -467,20 +482,26 @@ export function HealthMapCanvas({
       const tracts = getTractsForCounty(cRecord);
       pts = [...tracts].sort((a, b) => needOf(b, mKey) - needOf(a, mKey)).slice(0, 3).map((t: any) => ({ x: t.cx, y: t.cy }));
     } else {
-      const allCounties = countiesRef.current;
-      pts = [...allCounties].sort((a, b) => needOf(b, mKey) - needOf(a, mKey)).slice(0, 7).map((c: any) => ({ x: c.cx, y: c.cy }));
+      const allCounties = counties.length > 0 ? counties : countiesRef.current;
+      const pool = scope.st ? (stateByRef.current[scope.st]?.counties || allCounties) : allCounties;
+      pts = [...pool]
+        .filter((c: any) => typeof c.cx === 'number' && !isNaN(c.cx) && typeof c.cy === 'number' && !isNaN(c.cy))
+        .sort((a, b) => needOf(b, mKey) - needOf(a, mKey))
+        .slice(0, scope.st ? 4 : 7)
+        .map((c: any) => ({ x: c.cx, y: c.cy }));
     }
 
+    const k = Math.max(0.1, zoomK);
     const m = gM.selectAll('g')
       .data(pts)
       .join('g')
       .attr('class', 'pulse-m')
-      .attr('transform', d => `translate(${d.x},${d.y}) scale(${1 / Math.max(1, zoomK)})`);
+      .attr('transform', d => `translate(${d.x},${d.y}) scale(${1 / k})`);
 
     m.append('circle').attr('class', 'ring').attr('r', 7);
     m.append('circle').attr('class', 'ring r2').attr('r', 7);
     m.append('circle').attr('class', 'core').attr('r', 3.5);
-  }, [getTractsForCounty, needOf]);
+  }, [counties, getTractsForCounty, needOf, scope.st]);
 
   // Zoom bounds helper
   const zoomToBounds = useCallback((bounds: [[number, number], [number, number]], dur = 900, pad = 0.82) => {
@@ -583,12 +604,6 @@ export function HealthMapCanvas({
           sel.attr('fill', t => getTractColor(getV(t, mKey)));
         }
       }
-
-      drawHeatmap(heat, mKey, cRecord);
-      drawMarkers(markers, mKey, cRecord, d3.zoomTransform(svgRef.current?.node()!).k);
-    } else {
-      drawHeatmap(heat, mKey, null);
-      drawMarkers(markers, mKey, null, d3.zoomTransform(svgRef.current?.node()!).k);
     }
 
     const ms = Math.round(performance.now() - t0);
@@ -612,7 +627,18 @@ export function HealthMapCanvas({
         note: 'Quantile bins'
       });
     }
-  }, [drawHeatmap, drawMarkers, getTractsForCounty, heat, markers]);
+  }, [getTractsForCounty]);
+
+  // Synchronize Hotspot heatmap and Highest-need markers
+  useEffect(() => {
+    if (!svgRef.current || (!counties.length && !countiesRef.current.length)) return;
+    const cRecord = scope.c && repoRef.current?.countyById.has(scope.c)
+      ? repoRef.current.countyById.get(scope.c)
+      : null;
+    const currentK = svgRef.current ? d3.zoomTransform(svgRef.current.node()!).k : 1;
+    drawHeatmap(heat, curMetric, cRecord);
+    drawMarkers(markers, curMetric, cRecord, currentK);
+  }, [heat, markers, curMetric, scope.c, scope.st, counties, drawHeatmap, drawMarkers]);
 
   // Initialize Map
   useEffect(() => {
@@ -680,6 +706,7 @@ export function HealthMapCanvas({
         }
       });
       countiesRef.current = repo.counties;
+      setCounties(repo.counties);
 
       // SVG
       const svg = d3.select(el)
@@ -797,9 +824,10 @@ export function HealthMapCanvas({
       // County hover tooltip
       countiesSelection
         .on('pointerenter', (e: MouseEvent, d: CountyRecord) => {
-          const m = METRICS[curMetric] || { short: curMetric, f: (v: number) => String(v) };
+          const currentM = curMetricRef.current || curMetric;
+          const m = METRICS[currentM] || { short: currentM, f: (v: number) => String(v) };
           const tipHtml = `<b>${countyLabel(d)}</b>${tipRows([
-            [m.short, m.f(getV(d, curMetric))],
+            [m.short, m.f(getV(d, currentM))],
             ['Vulnerability', d.svi.toFixed(2)],
             ['Population', fmt.k(d.pop)]
           ])}<div class="note" style="margin-top:5px">Synthetic demo values</div>`;
@@ -1056,17 +1084,18 @@ export function HealthMapCanvas({
   // Search hits
   const searchHits = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    if (q.length < 2 || !countiesRef.current.length) return [];
-    return countiesRef.current
+    const all = counties.length > 0 ? counties : countiesRef.current;
+    if (q.length < 2 || !all.length) return [];
+    return all
       .filter(c => (c.name + ' ' + c.stateName + ' ' + c.stateAbbr).toLowerCase().includes(q))
       .slice(0, 8);
-  }, [searchQuery]);
+  }, [searchQuery, counties]);
 
   // Selected records
   const selectedCountyRecord = useMemo(() => {
     if (!scope.c || !repoRef.current) return null;
     return repoRef.current.countyById.get(scope.c) || null;
-  }, [scope.c]);
+  }, [scope.c, counties]);
 
   const selectedTractRecord = useMemo(() => {
     if (!scope.t || countyTracts.length === 0) return null;
@@ -1087,10 +1116,11 @@ export function HealthMapCanvas({
   }, [selectedTractRecord, countyTracts, curMetric]);
 
   const countyPct = useMemo(() => {
-    if (!selectedCountyRecord || countiesRef.current.length === 0) return 0.5;
-    const vals = countiesRef.current.map(x => getV(x, curMetric)).sort(d3.ascending);
+    const all = counties.length > 0 ? counties : countiesRef.current;
+    if (!selectedCountyRecord || all.length === 0) return 0.5;
+    const vals = all.map(x => getV(x, curMetric)).sort(d3.ascending);
     return pctRank(vals, getV(selectedCountyRecord, curMetric));
-  }, [selectedCountyRecord, curMetric]);
+  }, [selectedCountyRecord, curMetric, counties]);
 
   // Top tracts in county
   const topCountyTracts = useMemo(() => {
@@ -1103,14 +1133,14 @@ export function HealthMapCanvas({
 
   // Top counties in national / state pool
   const topPoolCounties = useMemo(() => {
-    const all = countiesRef.current;
+    const all = counties.length > 0 ? counties : countiesRef.current;
     if (!all.length) return [];
     const pool = scope.st ? (stateByRef.current[scope.st]?.counties || all) : all;
     const m = METRICS[curMetric] || { bad: 'high' };
     return [...pool].sort((a, b) =>
       m.bad === 'low' ? getV(a, curMetric) - getV(b, curMetric) : getV(b, curMetric) - getV(a, curMetric)
     ).slice(0, 8);
-  }, [scope.st, curMetric]);
+  }, [scope.st, curMetric, counties]);
 
   // Trendline for selected county
   const countyTrend = useMemo(() => {
@@ -1309,7 +1339,7 @@ export function HealthMapCanvas({
               role="switch"
               aria-checked={heat}
               aria-label="Hotspot heatmap"
-              onClick={() => setHeat(!heat)}
+              onClick={() => setHeat(prev => !prev)}
             />
           </div>
           <div className="hm-toggle">
@@ -1320,7 +1350,7 @@ export function HealthMapCanvas({
               role="switch"
               aria-checked={markers}
               aria-label="Highest-need markers"
-              onClick={() => setMarkers(!markers)}
+              onClick={() => setMarkers(prev => !prev)}
             />
           </div>
         </div>
