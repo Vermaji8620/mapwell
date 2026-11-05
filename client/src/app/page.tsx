@@ -462,13 +462,20 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div style={{ position: 'relative', height: '400px', borderRadius: '14px', overflow: 'hidden' }}>
+          <div
+            style={{
+              position: 'relative',
+              height: '400px',
+              borderRadius: '14px',
+              overflow: 'hidden',
+              background: 'transparent'
+            }}
+          >
             <OverviewCommunityMap
               countyFips={countyFips}
               activeLayer={activeLayer}
               onSelectTract={(t: any) => setSelectedTract(t)}
               selectedTractId={selectedTract?._id || (selectedTract as any)?.id}
-              onSelectCounty={(c: any) => setActiveJurisdiction(c.id)}
             />
           </div>
         </section>
