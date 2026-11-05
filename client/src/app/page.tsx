@@ -147,17 +147,6 @@ const RECENT_DATA_IMPORTS = [
 export default function DashboardPage() {
   const { activeCounty, setActiveJurisdiction, session, trendYears = 10, markWorkflowMilestone } = useSession();
 
-  const [refreshCount, setRefreshCount] = useState(0);
-
-  // Listen for Overview tab clicks to re-render and reload the page every time
-  useEffect(() => {
-    const handleRefresh = () => {
-      setRefreshCount((prev) => prev + 1);
-    };
-    window.addEventListener('mapwell:refresh-overview', handleRefresh);
-    return () => window.removeEventListener('mapwell:refresh-overview', handleRefresh);
-  }, []);
-
   const [tracts, setTracts] = useState<CensusTract[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [, setFindings] = useState<Finding[]>([]);
@@ -359,7 +348,7 @@ export default function DashboardPage() {
   }, [nextWorkflowIdx]);
 
   return (
-    <div key={`${countyFips}-${trendYears}-${refreshCount}`}>
+    <>
       {/* Page Header matching prototype line 1838 */}
       <div className="page-head">
         <div>
@@ -836,6 +825,6 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
-    </div>
+    </>
   );
 }

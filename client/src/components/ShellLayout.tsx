@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import gsap from 'gsap';
 import { Backdrop } from '@/components/Backdrop';
@@ -40,11 +40,17 @@ function InnerShell({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const animatedKeyRef = useRef<string>('');
+
   // Authentic MapWell GSAP page entrance animation matching prototype lines 1692-1701
   useEffect(() => {
     if (isLoginPage || loading || !user) return;
     const view = document.getElementById('view');
     if (!view) return;
+
+    const navKey = `${pathname}-${navCount}`;
+    if (animatedKeyRef.current === navKey) return;
+    animatedKeyRef.current = navKey;
 
     const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
 
