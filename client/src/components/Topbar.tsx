@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { getCountyRepository, STATE_META } from '@/utils/countyRepository';
 import gsap from 'gsap';
+import { animateViewExit, animateViewEntrance } from '@/utils/transitions';
 
 interface TopbarProps {
   onOpenMobileMenu: () => void;
@@ -377,19 +378,15 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     searchInputRef.current?.blur();
 
     if (item.kind === 'page') {
-      if (pathname === item.r) {
-        window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-      } else {
-        router.push(item.r);
-      }
+      window.dispatchEvent(new CustomEvent('mapwell:navigate', { detail: { href: item.r } }));
     } else if (item.kind === 'county') {
       const cid = item.c.id || item.c._id;
       setActiveJurisdiction(cid);
-      router.push('/health-map');
+      window.dispatchEvent(new CustomEvent('mapwell:navigate', { detail: { href: '/health-map' } }));
     } else if (item.kind === 'tract') {
       const cid = item.t.countyId || item.t.county?.id || item.t.id?.slice(0, 5);
       if (cid) setActiveJurisdiction(cid);
-      router.push('/census-tracts');
+      window.dispatchEvent(new CustomEvent('mapwell:navigate', { detail: { href: '/census-tracts' } }));
     }
   };
 
@@ -403,14 +400,34 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
 
   const wfPct = Math.round((wfCount / 10) * 100);
 
-  // Toggle theme - seamless instant switch
+  // Toggle theme matching prototype line 1069126: exit (200ms) -> flip theme -> staggered entrance (700ms)
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
-    try {
-      localStorage.setItem('mapwell-theme', next);
-    } catch {}
-    document.documentElement.setAttribute('data-theme', next);
-    setTheme(next);
+    const view = document.getElementById('view');
+
+    const applyNextTheme = () => {
+      try {
+        localStorage.setItem('mapwell-theme', next);
+      } catch {}
+      document.documentElement.setAttribute('data-theme', next);
+      setTheme(next);
+    };
+
+    if (!view) {
+      applyNextTheme();
+      return;
+    }
+
+    // Phase 1: 200ms exit fade & upward lift
+    animateViewExit(view, () => {
+      // Phase 2: swap theme tokens
+      applyNextTheme();
+
+      // Phase 3: 700ms staggered entrance bloom with new theme colors
+      requestAnimationFrame(() => {
+        animateViewEntrance(view);
+      });
+    });
   };
 
   const activeCountyLabel = activeCounty ? countyLabel(activeCounty) : 'King County, WA';
@@ -788,11 +805,7 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
                 onClick={() => {
                   setActiveDropdown(null);
                   const target = `/${item.route}`;
-                  if (pathname === target) {
-                    window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-                  } else {
-                    router.push(target);
-                  }
+                  window.dispatchEvent(new CustomEvent('mapwell:navigate', { detail: { href: target } }));
                 }}
               >
                 <span className="ic">{item.icon}</span>

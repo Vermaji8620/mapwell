@@ -29,6 +29,17 @@
 html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
 *,*::before,*::after{box-sizing:border-box}
 body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font-u);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow:hidden}
+
+/* Smooth surface and color transitions for theme switching */
+body, #app, #topbar, .panel, .strip, .tool-tile, .dropdown, .jur-btn, .date-btn, .wf-chip, .demo-card {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.2s ease, box-shadow 0.25s ease;
+}
+#sidebar {
+  transition: width .35s cubic-bezier(.2,.8,.2,1), background-color 0.25s ease, border-color 0.25s ease, color 0.2s ease, box-shadow 0.25s ease;
+}
+#scanline {
+  display: none !important;
+}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:6px}

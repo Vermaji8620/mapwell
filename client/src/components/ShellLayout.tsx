@@ -9,6 +9,7 @@ import { Topbar } from '@/components/Topbar';
 import { WorkflowDrawer } from '@/components/WorkflowDrawer';
 import { SessionProvider } from '@/context/SessionContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { animateViewExit, animateViewEntrance } from '@/utils/transitions';
 
 function InnerShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -27,22 +28,62 @@ function InnerShell({ children }: { children: React.ReactNode }) {
 
   // Global page transition / reload counter for all pages
   const [navCount, setNavCount] = useState(0);
-
-  useEffect(() => {
-    const handleNavRefresh = () => {
-      setNavCount((prev) => prev + 1);
-    };
-    window.addEventListener('mapwell:navigate', handleNavRefresh);
-    window.addEventListener('mapwell:refresh-overview', handleNavRefresh);
-    return () => {
-      window.removeEventListener('mapwell:navigate', handleNavRefresh);
-      window.removeEventListener('mapwell:refresh-overview', handleNavRefresh);
-    };
-  }, []);
-
+  const isTransitioningRef = useRef(false);
   const animatedKeyRef = useRef<string>('');
 
-  // Authentic MapWell GSAP page entrance animation matching prototype lines 1692-1701
+  // Centralized two-phase transition trigger matching prototype function go / swap / enter
+  const triggerTwoPhaseTransition = (targetHref?: string) => {
+    if (isLoginPage || loading || !user) {
+      if (targetHref && targetHref !== pathname) {
+        router.push(targetHref);
+      }
+      return;
+    }
+
+    const view = document.getElementById('view');
+    if (!view) {
+      if (targetHref && targetHref !== pathname) {
+        router.push(targetHref);
+      }
+      setNavCount((prev) => prev + 1);
+      return;
+    }
+
+    if (isTransitioningRef.current) return;
+    isTransitioningRef.current = true;
+
+    // Phase 1 (Exit with Delay): 200ms upward lift and fade out (opacity: 0, y: -8)
+    animateViewExit(view, () => {
+      // Phase 2 (Content Swap): update route state & reset scroll position
+      view.scrollTop = 0;
+      if (targetHref) {
+        router.push(targetHref);
+        // If navigating to the same base pathname (e.g. with query params or re-click),
+        // increment navCount so the key changes and the view re-renders with entrance
+        if (targetHref.split('?')[0] === pathname) {
+          setNavCount((prev) => prev + 1);
+        }
+      } else {
+        setNavCount((prev) => prev + 1);
+      }
+    });
+  };
+
+  useEffect(() => {
+    const handleNavEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ href?: string }>;
+      triggerTwoPhaseTransition(customEvent.detail?.href);
+    };
+
+    window.addEventListener('mapwell:navigate', handleNavEvent);
+    window.addEventListener('mapwell:refresh-overview', handleNavEvent);
+    return () => {
+      window.removeEventListener('mapwell:navigate', handleNavEvent);
+      window.removeEventListener('mapwell:refresh-overview', handleNavEvent);
+    };
+  }, [pathname, isLoginPage, loading, user, router]);
+
+  // Phase 3 (Staggered Bloom): Animate blocks into view on mount or route/navCount change
   useEffect(() => {
     if (isLoginPage || loading || !user) return;
     const view = document.getElementById('view');
@@ -52,33 +93,11 @@ function InnerShell({ children }: { children: React.ReactNode }) {
     if (animatedKeyRef.current === navKey) return;
     animatedKeyRef.current = navKey;
 
-    const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
-
-    const blocks = view.querySelectorAll<HTMLElement>(
-      ':scope > .page-head, :scope > div > .page-head, :scope > .panel, :scope > .tabs, :scope > .toolbar, :scope > .strip > *, :scope > .grid > *, :scope > .dgrid > *, :scope > div > .strip > *, :scope > div > .grid > *, :scope > div > .dgrid > *'
-    );
-    if (blocks.length > 0) {
-      const list = Array.from(blocks).slice(0, 24);
-      tl.fromTo(
-        list,
-        { opacity: 0, y: 12 },
-        { opacity: 1, y: 0, duration: 0.7, stagger: 0.04, ease: 'power3.out', clearProps: 'opacity,transform' },
-        0.04
-      );
-    }
-
-    const floats = view.querySelectorAll<HTMLElement>('.hm .map-float, .map-float');
-    if (floats.length > 0) {
-      tl.fromTo(
-        Array.from(floats),
-        { opacity: 0, x: (_: any, el: HTMLElement) => (el.getBoundingClientRect().left < window.innerWidth / 2 ? -18 : 18) },
-        { opacity: 1, x: 0, duration: 0.8, stagger: 0.05, clearProps: 'opacity,transform' },
-        0.15
-      );
-    }
+    const tl = animateViewEntrance(view);
+    isTransitioningRef.current = false;
 
     return () => {
-      tl.kill();
+      tl?.kill();
     };
   }, [pathname, navCount, isLoginPage, loading, user]);
 
