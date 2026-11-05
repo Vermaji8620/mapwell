@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 
 export interface TrendSeriesItem {
@@ -16,49 +16,103 @@ interface DashboardTrendChartProps {
   series: TrendSeriesItem[];
   height?: number;
   formatValue?: (v: number) => string;
+  metricKey?: string;
 }
 
 const defaultFormatValue = (v: number) => v.toFixed(1) + '%';
-let gidCounter = 0;
+let _gid = 0;
+
+function resolveColor(c: string): string {
+  if (!c) return '#0090C2';
+  if (c.startsWith('var(')) {
+    const varName = c.slice(4, -1).trim();
+    if (typeof window !== 'undefined') {
+      try {
+        const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        if (val) return val;
+      } catch (err) {}
+    }
+    if (varName === '--cyan') return '#0090C2';
+    if (varName === '--teal') return '#079A7E';
+    if (varName === '--violet') return '#6A55E8';
+    if (varName === '--rose') return '#E0336A';
+    if (varName === '--amber') return '#C9810A';
+  }
+  return c;
+}
+
+function showTip(html: string, e: MouseEvent) {
+  let t = document.getElementById('tooltip');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'tooltip';
+    document.body.appendChild(t);
+  }
+  t.innerHTML = html;
+  t.style.opacity = '1';
+  t.style.display = 'block';
+  t.style.position = 'fixed';
+  t.style.zIndex = '300';
+  t.style.pointerEvents = 'none';
+  moveTip(e);
+}
+
+function moveTip(e: MouseEvent) {
+  const t = document.getElementById('tooltip');
+  if (!t) return;
+  const x = Math.min(window.innerWidth - 270, e.clientX + 14);
+  const y = Math.min(window.innerHeight - 120, e.clientY + 14);
+  t.style.left = `${x}px`;
+  t.style.top = `${y}px`;
+}
+
+function hideTip() {
+  const t = document.getElementById('tooltip');
+  if (t) {
+    t.style.opacity = '0';
+    t.style.display = 'none';
+  }
+}
 
 export function DashboardTrendChart({
   years,
   series,
   height = 300,
-  formatValue = defaultFormatValue
+  formatValue = defaultFormatValue,
+  metricKey
 }: DashboardTrendChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const formatValueRef = useRef(formatValue);
   formatValueRef.current = formatValue;
-
-  const [tooltip, setTooltip] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    year: string;
-    items: { name: string; color: string; val: string }[];
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    year: '',
-    items: []
-  });
-
-  const yearsKey = years.join(',');
-  const seriesKey = JSON.stringify(
-    series.map((s) => ({ n: s.name, c: s.color, v: s.values, d: s.dash }))
-  );
+  const lastRenderedKeyRef = useRef<string>('');
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !years.length || !series.length) return;
 
+    // Check if valid numerical values exist in all series
+    const hasValues = series.every(
+      (s) => Array.isArray(s.values) && s.values.length > 0 && s.values.every((v) => typeof v === 'number' && !isNaN(v))
+    );
+    if (!hasValues) return;
+
+    // Deduplicate re-draws on page startup / refresh: only draw once per unique metricKey
+    const activeKey =
+      metricKey ||
+      `${years[0]}_${years[years.length - 1]}_${series.map((s) => s.name).join('_')}_${series[0]?.values?.[series[0].values.length - 1] ?? 0}`;
+
+    if (lastRenderedKeyRef.current === activeKey) {
+      return;
+    }
+    lastRenderedKeyRef.current = activeKey;
+
+    // Clear previous drawing completely: re-draw clean lines with authentic left-to-right drawing animation
     d3.select(el).selectAll('*').remove();
 
-    const W = el.clientWidth || 440;
+    const W = Math.max(200, el.clientWidth || 440);
     const H = height;
-    const m = { t: 14, r: 16, b: 28, l: 44 };
+    const m = { t: 14, r: 14, b: 28, l: 44 };
+    const f = (v: number) => formatValueRef.current(v);
 
     const svg = d3
       .select(el)
@@ -71,10 +125,9 @@ export function DashboardTrendChart({
       .attr('class', 'chart');
 
     const x = d3.scalePoint<string>().domain(years).range([m.l, W - m.r]);
-
-    const allVals = series.flatMap((s) => s.values);
-    const minVal = d3.min(allVals) ?? 0;
-    const maxVal = d3.max(allVals) ?? 20;
+    const all = series.flatMap((s) => s.values);
+    const minVal = d3.min(all) ?? 0;
+    const maxVal = d3.max(all) ?? 20;
 
     const y = d3
       .scaleLinear()
@@ -82,7 +135,7 @@ export function DashboardTrendChart({
       .nice()
       .range([H - m.b, m.t]);
 
-    // Horizontal grid lines
+    // Horizontal gridlines: 4 ticks, stroke: var(--line), stroke-dasharray: 3 4, .domain removed
     svg
       .append('g')
       .attr('class', 'gridl')
@@ -101,7 +154,7 @@ export function DashboardTrendChart({
           .attr('stroke-dasharray', '3 4');
       });
 
-    // Left Y Axis
+    // Left Y Axis: 4 ticks, formatted, .domain removed
     svg
       .append('g')
       .attr('class', 'axis')
@@ -110,7 +163,7 @@ export function DashboardTrendChart({
         d3
           .axisLeft(y)
           .ticks(4)
-          .tickFormat((d) => formatValueRef.current(d as number))
+          .tickFormat((d) => f(d as number))
           .tickSize(0)
       )
       .call((g) => {
@@ -121,10 +174,8 @@ export function DashboardTrendChart({
           .attr('font-family', 'var(--font-u)');
       });
 
-    // Bottom X Axis
+    // Bottom X Axis: tickSize 0, tickPadding 8, .domain removed
     const every = Math.ceil(years.length / Math.max(3, Math.floor(W / 70)));
-    const tickYears = years.filter((_, i) => i % every === 0);
-
     svg
       .append('g')
       .attr('class', 'axis')
@@ -134,7 +185,7 @@ export function DashboardTrendChart({
           .axisBottom(x)
           .tickSize(0)
           .tickPadding(8)
-          .tickValues(tickYears)
+          .tickValues(years.filter((_, i) => i % every === 0))
       )
       .call((g) => {
         g.select('.domain').remove();
@@ -144,26 +195,29 @@ export function DashboardTrendChart({
           .attr('font-family', 'var(--font-u)');
       });
 
-    const lineGen = d3
+    // Natural monotone curves: d3.curveMonotoneX
+    const line = d3
       .line<number>()
       .x((_, i) => x(years[i]) ?? 0)
       .y((d) => y(d))
       .curve(d3.curveMonotoneX);
 
-    const areaGen = d3
+    const area = d3
       .area<number>()
       .x((_, i) => x(years[i]) ?? 0)
       .y0(H - m.b)
       .y1((d) => y(d))
       .curve(d3.curveMonotoneX);
 
-    // Render Series with Transitions
+    // Render Series with left-to-right drawing animation and area fill matching prototype
     series.forEach((s, si) => {
-      // Area under the first series
+      const colorVal = resolveColor(s.color);
+
+      // Area gradient fill under County line (series 0)
       if (si === 0) {
-        const gid = `trend-grad-${++gidCounter}`;
-        const defs = svg.append('defs');
-        const grad = defs
+        const gid = 'a' + ++_gid;
+        const gr = svg
+          .append('defs')
           .append('linearGradient')
           .attr('id', gid)
           .attr('x1', 0)
@@ -171,70 +225,90 @@ export function DashboardTrendChart({
           .attr('x2', 0)
           .attr('y2', 1);
 
-        grad.append('stop').attr('offset', '0%').attr('stop-color', s.color).attr('stop-opacity', 0.28);
-        grad.append('stop').attr('offset', '100%').attr('stop-color', s.color).attr('stop-opacity', 0.0);
+        gr.append('stop')
+          .attr('offset', '0%')
+          .attr('stop-color', colorVal)
+          .attr('stop-opacity', 0.3);
+
+        gr.append('stop')
+          .attr('offset', '100%')
+          .attr('stop-color', colorVal)
+          .attr('stop-opacity', 0);
 
         svg
           .append('path')
-          .attr('d', areaGen(s.values) ?? '')
+          .attr('class', 'area-path')
+          .attr('d', area(s.values) ?? '')
           .attr('fill', `url(#${gid})`)
           .attr('opacity', 0)
           .transition()
           .duration(900)
-          .delay(400)
+          .delay(500)
           .attr('opacity', 1);
       }
 
-      // Stroke Line
-      const path = svg
+      // Trajectory stroke path: solid, stroke-width 2.4px, stroke-linecap round
+      const p = svg
         .append('path')
-        .attr('d', lineGen(s.values) ?? '')
+        .attr('class', `line-path-${si}`)
+        .attr('d', line(s.values) ?? '')
         .attr('fill', 'none')
-        .attr('stroke', s.color)
+        .attr('stroke', colorVal)
+        .style('stroke', colorVal)
         .attr('stroke-width', s.width || 2.4)
-        .attr('stroke-dasharray', s.dash || null)
+        .style('stroke-width', `${s.width || 2.4}px`)
         .attr('stroke-linecap', 'round');
 
-      // Animate line stroke draw-in on mount / data change
-      if (!s.dash) {
-        const node = path.node();
-        if (node) {
-          const totalLen = node.getTotalLength();
-          path
-            .attr('stroke-dasharray', `${totalLen} ${totalLen}`)
-            .attr('stroke-dashoffset', totalLen)
+      if (s.dash) {
+        p.attr('stroke-dasharray', s.dash);
+      } else {
+        const node = p.node();
+        let L = 0;
+        try {
+          L = node ? node.getTotalLength() : 0;
+        } catch (err) {
+          L = 0;
+        }
+
+        if (L > 10) {
+          p.attr('stroke-dasharray', `${L} ${L}`)
+            .attr('stroke-dashoffset', L)
             .transition()
             .duration(1300)
             .delay(si * 160)
             .ease(d3.easeCubicInOut)
-            .attr('stroke-dashoffset', 0);
+            .attr('stroke-dashoffset', 0)
+            .on('end', function () {
+              d3.select(this).attr('stroke-dasharray', null).attr('stroke-dashoffset', null);
+            });
+        } else {
+          p.attr('stroke-dasharray', null).attr('stroke-dashoffset', null);
         }
       }
     });
 
-    // Hover elements: vertical crosshair line & tracking circles
-    const crosshair = svg
+    // Hover crosshair and snapping circle dots
+    const crosshairG = svg.append('g').attr('class', 'crosshair-g').style('pointer-events', 'none');
+    const hl = crosshairG
       .append('line')
       .attr('y1', m.t)
       .attr('y2', H - m.b)
       .attr('stroke', 'var(--line-strong)')
-      .attr('stroke-width', 1.5)
-      .attr('stroke-dasharray', '3 3')
-      .attr('opacity', 0)
-      .style('pointer-events', 'none');
+      .attr('opacity', 0);
 
-    const dots = series.map((s) =>
-      svg
+    const dots = series.map((s) => {
+      const colorVal = resolveColor(s.color);
+      return crosshairG
         .append('circle')
         .attr('r', 4.5)
-        .attr('fill', s.color)
+        .attr('fill', colorVal)
+        .style('fill', colorVal)
         .attr('stroke', 'var(--surface-solid)')
         .attr('stroke-width', 2)
-        .attr('opacity', 0)
-        .style('pointer-events', 'none')
-    );
+        .attr('opacity', 0);
+    });
 
-    // Transparent interactive overlay rect
+    // Transparent overlay for cursor interaction
     svg
       .append('rect')
       .attr('x', m.l)
@@ -242,79 +316,45 @@ export function DashboardTrendChart({
       .attr('width', W - m.l - m.r)
       .attr('height', H - m.t - m.b)
       .attr('fill', 'transparent')
-      .style('cursor', 'default')
       .on('pointermove', function (e) {
         const [mx] = d3.pointer(e);
-        const step = x.step();
-        const rawIdx = Math.round((mx - m.l) / step);
-        const idx = Math.max(0, Math.min(rawIdx, years.length - 1));
+        const step = x.step ? x.step() : (W - m.l - m.r) / Math.max(1, years.length - 1);
+        const i = Math.max(0, Math.min(years.length - 1, Math.round((mx - m.l) / step)));
+        const yearVal = years[i];
+        const posX = x(yearVal) ?? m.l;
 
-        const targetX = x(years[idx]) ?? 0;
+        hl.attr('x1', posX).attr('x2', posX).attr('opacity', 1);
 
-        crosshair.attr('x1', targetX).attr('x2', targetX).attr('opacity', 1);
-
-        dots.forEach((dot, si) => {
-          const val = series[si]?.values[idx] ?? 0;
-          dot.attr('cx', targetX).attr('cy', y(val)).attr('opacity', 1);
+        dots.forEach((d, si) => {
+          if (series[si]?.values?.[i] !== undefined) {
+            d.attr('cx', posX)
+              .attr('cy', y(series[si].values[i]))
+              .attr('opacity', 1);
+          }
         });
 
-        const rect = el.getBoundingClientRect();
-        const tooltipItems = series.map((s) => ({
-          name: s.name,
-          color: s.color,
-          val: formatValueRef.current(s.values[idx] ?? 0)
-        }));
+        const tipRowsHtml = series
+          .map(
+            (s) =>
+              `<div class="tv"><span>${s.name}</span><span>${f(s.values[i])}</span></div>`
+          )
+          .join('');
 
-        setTooltip({
-          visible: true,
-          x: targetX,
-          y: Math.max(10, e.clientY - rect.top - 50),
-          year: years[idx],
-          items: tooltipItems
-        });
+        showTip(`<b>${yearVal}</b>${tipRowsHtml}`, e);
       })
       .on('pointerleave', function () {
-        crosshair.attr('opacity', 0);
-        dots.forEach((dot) => dot.attr('opacity', 0));
-        setTooltip((prev) => ({ ...prev, visible: false }));
+        hl.attr('opacity', 0);
+        dots.forEach((d) => d.attr('opacity', 0));
+        hideTip();
       });
-  }, [yearsKey, seriesKey, height]);
+  }, [years, series, height]);
 
-  return (
-    <div ref={containerRef} style={{ width: '100%', height: `${height}px`, position: 'relative' }}>
-      {tooltip.visible && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${Math.min(tooltip.x + 10, (containerRef.current?.clientWidth || 400) - 160)}px`,
-            top: `${tooltip.y}px`,
-            background: 'var(--surface-solid)',
-            border: '1px solid var(--line-strong)',
-            borderRadius: '8px',
-            boxShadow: 'var(--shadow)',
-            padding: '8px 12px',
-            fontSize: '11.5px',
-            pointerEvents: 'none',
-            zIndex: 40,
-            color: 'var(--text)',
-            minWidth: '130px',
-            userSelect: 'none'
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: '4px' }}>{tooltip.year}</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            {tooltip.items.map((it, idx) => (
-              <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--muted)', fontSize: '11px' }}>
-                  <i style={{ width: '7px', height: '7px', borderRadius: '50%', background: it.color, display: 'inline-block' }} />
-                  {it.name}
-                </span>
-                <b className="num" style={{ color: 'var(--text)', fontSize: '11.5px' }}>{it.val}</b>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  // Clean up tooltip on unmount
+  useEffect(() => {
+    return () => {
+      hideTip();
+    };
+  }, []);
+
+  return <div ref={containerRef} id="d-trend" style={{ position: 'relative', width: '100%', height }} />;
 }

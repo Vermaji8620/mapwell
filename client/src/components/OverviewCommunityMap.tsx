@@ -93,6 +93,29 @@ const LAYER_CONFIG: Record<
   }
 };
 
+function getTractLayerVal(t: any, layerKey: string): number {
+  return layerKey === 'sdoh'
+    ? t.svi
+    : layerKey === 'disease'
+    ? t.diabetes
+    : layerKey === 'program'
+    ? t.utilization
+    : t.uninsured;
+}
+
+function makeColorScale(layerKey: string, tractList: any[]) {
+  const ramp = LAYER_CONFIG[layerKey]?.ramp || LAYER_CONFIG.sdoh.ramp;
+  const low = '#E4ECFA';
+  const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [d3.interpolateRgb(low, ramp[0])(0.6), ...ramp]);
+
+  const vals = tractList.map((t) => getTractLayerVal(t, layerKey));
+  const q = d3.scaleQuantile().domain(vals).range(d3.range(7));
+  return (val: number) => {
+    const t = (q(val) + 0.5) / 7;
+    return interp(t);
+  };
+}
+
 export function OverviewCommunityMap({
   countyFips = '53033',
   activeLayer = 'sdoh',
@@ -138,6 +161,15 @@ export function OverviewCommunityMap({
     pop: ''
   });
 
+  // Track map DOM elements for smooth layer changes without rebuild
+  const gTractsRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const tractsRef = useRef<any[]>([]);
+  const cfgRef = useRef(LAYER_CONFIG[activeLayer]);
+  const activeLayerRef = useRef(activeLayer);
+  const selectedTractIdRef = useRef(selectedTractId);
+  selectedTractIdRef.current = selectedTractId;
+
+  // 1. Initial Map Creation or County Change
   useEffect(() => {
     let isMounted = true;
 
@@ -235,11 +267,14 @@ export function OverviewCommunityMap({
       }
 
       const tracts = getTracts(currentCounty);
+      tractsRef.current = tracts;
       const veryHighTracts = tracts.filter((t) => t.tier === 4);
       setVeryHighCount(Math.max(1, veryHighTracts.length));
 
       // Config and legend data
-      const cfg = LAYER_CONFIG[activeLayer] || LAYER_CONFIG.sdoh;
+      const currentLayer = activeLayerRef.current;
+      const cfg = LAYER_CONFIG[currentLayer] || LAYER_CONFIG.sdoh;
+      cfgRef.current = cfg;
       setLegendInfo({
         title: cfg.name,
         ramp: cfg.ramp,
@@ -247,30 +282,7 @@ export function OverviewCommunityMap({
         hi: cfg.ext[1]
       });
 
-      // Quantile scale with gamma 1.6 interpolation matching prototype colorScale
-      function makeColorScale(layerKey: string, tractList: any[]) {
-        const ramp = LAYER_CONFIG[layerKey]?.ramp || LAYER_CONFIG.sdoh.ramp;
-        const low = '#E4ECFA';
-        const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [d3.interpolateRgb(low, ramp[0])(0.6), ...ramp]);
-
-        const vals = tractList.map((t) => {
-          return layerKey === 'sdoh'
-            ? t.svi
-            : layerKey === 'disease'
-            ? t.diabetes
-            : layerKey === 'program'
-            ? t.utilization
-            : t.uninsured;
-        });
-
-        const q = d3.scaleQuantile().domain(vals).range(d3.range(7));
-        return (val: number) => {
-          const t = (q(val) + 0.5) / 7;
-          return interp(t);
-        };
-      }
-
-      const tractScale = makeColorScale(activeLayer, tracts);
+      const tractScale = makeColorScale(currentLayer, tracts);
 
       const svg = d3
         .select(el)
@@ -354,6 +366,7 @@ export function OverviewCommunityMap({
       const rootG = svg.append('g').attr('class', 'map-root-g');
       const gCounties = rootG.append('g').attr('class', 'state-counties');
       const gTracts = rootG.append('g').attr('class', 'tracts-layer').attr('clip-path', 'url(#ov-map-clip)');
+      gTractsRef.current = gTracts;
       const gSelOutline = rootG.append('g').attr('class', 'sel-outline-group');
       const gMarkers = rootG.append('g').attr('class', 'markers-layer').style('pointer-events', 'none');
 
@@ -377,19 +390,9 @@ export function OverviewCommunityMap({
         .selectAll<SVGPathElement, any>('path.tract')
         .data(tracts, (t) => t.id)
         .join('path')
-        .attr('class', (t) => `tract ${t.id === selectedTractId || t.id === clickedTract?.id ? 'sel' : ''}`)
+        .attr('class', (t) => `tract ${t.id === selectedTractIdRef.current || t.id === clickedTract?.id ? 'sel' : ''}`)
         .attr('d', (t) => t.d)
-        .attr('fill', (t) => {
-          const val =
-            activeLayer === 'sdoh'
-              ? t.svi
-              : activeLayer === 'disease'
-              ? t.diabetes
-              : activeLayer === 'program'
-              ? t.utilization
-              : t.uninsured;
-          return tractScale(val);
-        });
+        .attr('fill', (t) => tractScale(getTractLayerVal(t, currentLayer)));
 
       // Staggered boundary sweep & fade-in matching prototype
       tractPaths
@@ -416,15 +419,8 @@ export function OverviewCommunityMap({
       tractPaths
         .on('pointerenter', function (e, t) {
           const rect = el.getBoundingClientRect();
-          const val = cfg.format(
-            activeLayer === 'sdoh'
-              ? t.svi
-              : activeLayer === 'disease'
-              ? t.diabetes
-              : activeLayer === 'program'
-              ? t.utilization
-              : t.uninsured
-          );
+          const activeCfg = cfgRef.current;
+          const val = activeCfg.format(getTractLayerVal(t, activeLayerRef.current));
 
           setTooltip({
             visible: true,
@@ -432,7 +428,7 @@ export function OverviewCommunityMap({
             y: e.clientY - rect.top - 20,
             title: t.name,
             geoid: t.id,
-            metricLabel: cfg.metricName,
+            metricLabel: activeCfg.metricName,
             metricVal: val,
             tier: TIER_LABELS[t.tier],
             pop: (t.pop || 0).toLocaleString('en-US')
@@ -456,27 +452,73 @@ export function OverviewCommunityMap({
           if (onSelectTract) onSelectTract(t);
         });
 
-      // 3. Draw cyan glowing county selection outline
+      // 3. Draw cyan glowing county selection outline with smooth fade-in
       gSelOutline
         .append('path')
         .attr('class', 'sel-outline')
-        .attr('d', currentCounty.d || pathGen(currentCounty.feature) || '');
+        .attr('d', currentCounty.d || pathGen(currentCounty.feature) || '')
+        .attr('opacity', 0)
+        .transition('outline-in')
+        .delay(350)
+        .duration(500)
+        .attr('opacity', 1);
 
-      // 4. Calculate zoom transform: zoomBounds(bounds, dur, 0.7)
-      const [[x0, y0], [x1, y1]] = pathGen.bounds(currentCounty.feature);
-      const pad = 0.7;
-      const s = Math.min(90, pad / Math.max((x1 - x0) / 975, (y1 - y0) / 610));
-      const t = d3.zoomIdentity
+      // 4. Smooth State-to-County Camera Glide matching prototype MapView lines 1311 & 1424
+      // D3 Zoom & Pan behavior
+      let currentK = 1;
+      const zoom = d3
+        .zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.5, 90])
+        .translateExtent([
+          [-200, -200],
+          [1175, 810]
+        ])
+        .on('zoom', (e) => {
+          rootG.attr('transform', e.transform);
+          currentK = e.transform.k;
+          gMarkers
+            .selectAll('g.pulse-m')
+            .attr('transform', (d: any) => `translate(${d.cx},${d.cy}) scale(${1 / currentK})`);
+        });
+
+      svg.call(zoom).on('dblclick.zoom', null);
+
+      // Calculate initial State bounding box
+      let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+      stateCounties.forEach((c) => {
+        if (c.feature) {
+          const [[bx0, by0], [bx1, by1]] = pathGen.bounds(c.feature);
+          if (bx0 < sx0) sx0 = bx0;
+          if (by0 < sy0) sy0 = by0;
+          if (bx1 > sx1) sx1 = bx1;
+          if (by1 > sy1) sy1 = by1;
+        }
+      });
+      if (sx0 === Infinity || isNaN(sx0)) {
+        sx0 = 0; sy0 = 0; sx1 = 975; sy1 = 610;
+      }
+      const sState = Math.min(90, 0.88 / Math.max((sx1 - sx0) / 975, (sy1 - sy0) / 610));
+      const stateTransform = d3.zoomIdentity
         .translate(975 / 2, 610 / 2)
-        .scale(s)
+        .scale(sState)
+        .translate(-(sx0 + sx1) / 2, -(sy0 + sy1) / 2);
+
+      // Calculate target County bounding box
+      const [[x0, y0], [x1, y1]] = pathGen.bounds(currentCounty.feature);
+      const pad = 0.72;
+      const sCounty = Math.min(90, pad / Math.max((x1 - x0) / 975, (y1 - y0) / 610));
+      const countyTransform = d3.zoomIdentity
+        .translate(975 / 2, 610 / 2)
+        .scale(sCounty)
         .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
 
-      // Smooth zoom into the county
-      rootG
-        .transition()
-        .duration(900)
+      // Frame state immediately, then glide into county over 950ms with easeCubicInOut
+      svg.call(zoom.transform, stateTransform);
+      svg
+        .transition('camera-zoom')
+        .duration(950)
         .ease(d3.easeCubicInOut)
-        .attr('transform', t.toString());
+        .call(zoom.transform, countyTransform);
 
       // 5. Draw pulsating radar markers on the top 3 highest vulnerability tracts
       const topTracts = tracts
@@ -489,30 +531,18 @@ export function OverviewCommunityMap({
         .data(topTracts)
         .join('g')
         .attr('class', 'pulse-m')
-        .attr('transform', (d) => `translate(${d.cx},${d.cy}) scale(${1 / s})`);
+        .attr('transform', (d) => `translate(${d.cx},${d.cy}) scale(${1 / sCounty})`)
+        .attr('opacity', 0);
 
       mGroups.append('circle').attr('class', 'ring').attr('r', 7);
       mGroups.append('circle').attr('class', 'ring r2').attr('r', 7);
       mGroups.append('circle').attr('class', 'core').attr('r', 3.5);
 
-      // D3 Zoom & Pan behavior
-      const zoom = d3
-        .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.5, 90])
-        .translateExtent([
-          [-200, -200],
-          [1175, 810]
-        ])
-        .on('zoom', (e) => {
-          rootG.attr('transform', e.transform);
-          const currentK = e.transform.k;
-          gMarkers
-            .selectAll('g.pulse-m')
-            .attr('transform', (d: any) => `translate(${d.cx},${d.cy}) scale(${1 / currentK})`);
-        });
-
-      svg.call(zoom).on('dblclick.zoom', null);
-      svg.call(zoom.transform, t);
+      mGroups
+        .transition('markers-in')
+        .delay(700)
+        .duration(450)
+        .attr('opacity', 1);
     }
 
     init();
@@ -520,7 +550,39 @@ export function OverviewCommunityMap({
     return () => {
       isMounted = false;
     };
-  }, [countyFips, activeLayer, selectedTractId]);
+  }, [countyFips]);
+
+  // 2. Reactive Smooth Layer Toggling (Zero Flicker, Zero Jump)
+  useEffect(() => {
+    activeLayerRef.current = activeLayer;
+    const cfg = LAYER_CONFIG[activeLayer] || LAYER_CONFIG.sdoh;
+    cfgRef.current = cfg;
+    setLegendInfo({
+      title: cfg.name,
+      ramp: cfg.ramp,
+      lo: cfg.ext[0],
+      hi: cfg.ext[1]
+    });
+
+    if (gTractsRef.current && tractsRef.current.length > 0) {
+      const tractScale = makeColorScale(activeLayer, tractsRef.current);
+      gTractsRef.current
+        .selectAll<SVGPathElement, any>('path.tract')
+        .transition('fill')
+        .duration(500)
+        .delay((_, i) => i * 6)
+        .attr('fill', (t) => tractScale(getTractLayerVal(t, activeLayer)));
+    }
+  }, [activeLayer]);
+
+  // Sync selected tract outline
+  useEffect(() => {
+    if (gTractsRef.current) {
+      gTractsRef.current
+        .selectAll('path.tract')
+        .classed('sel', (d: any) => d.id === selectedTractId || d.id === clickedTract?.id);
+    }
+  }, [selectedTractId, clickedTract]);
 
   return (
     <div
@@ -535,7 +597,7 @@ export function OverviewCommunityMap({
     >
       <div ref={containerRef} className="map-shell" style={{ position: 'absolute', inset: 0 }} />
 
-      {/* Floating Legend Card (Bottom-Left) */}
+      {/* Floating Legend Card (Bottom-Left) matching #d-leg */}
       <div
         className="map-float legend"
         id="d-leg"
@@ -544,35 +606,25 @@ export function OverviewCommunityMap({
           left: '12px',
           bottom: '12px',
           minWidth: '200px',
-          padding: '12px 14px',
           zIndex: 5
         }}
       >
-        <div className="ttl" style={{ fontSize: '12px', fontWeight: 700, marginBottom: '8px' }}>
+        <div className="ttl">
           <span>{legendInfo.title}</span>
         </div>
-        <div className="ramp" style={{ display: 'flex', height: '9px', borderRadius: '5px', overflow: 'hidden' }}>
+        <div className="ramp">
           {legendInfo.ramp.map((c, i) => (
-            <i key={i} style={{ flex: 1, background: c }} />
+            <i key={i} style={{ background: c }} />
           ))}
         </div>
-        <div
-          className="ends"
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            fontSize: '11px',
-            color: 'var(--faint)',
-            marginTop: '5px'
-          }}
-        >
+        <div className="ends">
           <span>{legendInfo.lo}</span>
           <span>Tracts</span>
           <span>{legendInfo.hi}</span>
         </div>
       </div>
 
-      {/* Floating Selection Card (Top-Right) */}
+      {/* Floating Selection Card (Top-Right) matching #d-sel */}
       <div
         className="map-float"
         id="d-sel"
@@ -593,8 +645,9 @@ export function OverviewCommunityMap({
               {TIER_LABELS[clickedTract.tier]} vulnerability. {(clickedTract.pop || 3200).toLocaleString()} residents
             </div>
             <button
-              className="btn sm primary"
-              style={{ marginTop: '8px', width: '100%' }}
+              className="btn sm primary mt-s"
+              id="d-open"
+              style={{ width: '100%' }}
               onClick={() => router.push(`/census-tracts?county=${countyFips}&tract=${clickedTract.id}`)}
             >
               Open in tract explorer
@@ -613,42 +666,32 @@ export function OverviewCommunityMap({
       {/* Tract Hover Tooltip */}
       {tooltip.visible && (
         <div
+          id="tooltip"
           style={{
             position: 'absolute',
             left: `${tooltip.x}px`,
             top: `${tooltip.y}px`,
-            background: 'var(--surface-solid)',
-            border: '1px solid var(--line-strong)',
-            borderRadius: '10px',
-            boxShadow: 'var(--shadow)',
-            padding: '10px 14px',
-            fontSize: '12px',
-            pointerEvents: 'none',
-            zIndex: 60,
-            color: 'var(--text)',
-            minWidth: '170px'
+            display: 'block',
+            zIndex: 100,
+            pointerEvents: 'none'
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '2px' }}>{tooltip.title}</div>
-          <div style={{ color: 'var(--faint)', fontSize: '10.5px', marginBottom: '6px' }}>GEOID: {tooltip.geoid}</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '11.5px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-              <span style={{ color: 'var(--muted)' }}>{tooltip.metricLabel}:</span>
-              <b className="num" style={{ color: 'var(--cyan)' }}>
-                {tooltip.metricVal}
-              </b>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-              <span style={{ color: 'var(--muted)' }}>Vulnerability tier:</span>
-              <b>{tooltip.tier}</b>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-              <span style={{ color: 'var(--muted)' }}>Population:</span>
-              <b className="num">{tooltip.pop}</b>
-            </div>
+          <b>{tooltip.title}</b>
+          <div className="tv">
+            <span>GEOID</span>
+            <span>{tooltip.geoid}</span>
           </div>
-          <div className="note" style={{ color: 'var(--faint)', fontSize: '10px', marginTop: '6px' }}>
-            Synthetic demo values
+          <div className="tv">
+            <span>{tooltip.metricLabel}</span>
+            <span>{tooltip.metricVal}</span>
+          </div>
+          <div className="tv">
+            <span>Vulnerability tier</span>
+            <span>{tooltip.tier}</span>
+          </div>
+          <div className="tv">
+            <span>Population</span>
+            <span>{tooltip.pop}</span>
           </div>
         </div>
       )}

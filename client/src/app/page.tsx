@@ -4,7 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useSession } from '@/context/SessionContext';
 import { CensusTract, Assessment, Finding, Report } from '@/types';
-import { TIER_LABELS, TIER_COLORS, METRICS_CONFIG } from '@/config/metrics';
+import { TIER_LABELS, TIER_COLORS } from '@/config/metrics';
 import { Icon } from '@/components/Icons';
 import { OverviewCommunityMap } from '@/components/OverviewCommunityMap';
 import { getMetricVal } from '@/components/MapViewCanvas';
@@ -90,8 +90,8 @@ const A_STEPS = [
 const A_ICONS = ['map', 'sliders', 'scale', 'flag', 'file'];
 
 const REGIONS_DATA = [
-  { name: 'Midwest', cov: 96.2, counties: 1055, color: '#2584EB' },
-  { name: 'Northeast', cov: 98.4, counties: 217, color: '#66B6F5' },
+  { name: 'Northeast', cov: 98.4, counties: 217, color: '#2584EB' },
+  { name: 'Midwest', cov: 96.2, counties: 1055, color: '#66B6F5' },
   { name: 'South', cov: 94.8, counties: 1424, color: '#37C8CF' },
   { name: 'West', cov: 97.1, counties: 446, color: '#9FE3E7' }
 ];
@@ -108,29 +108,6 @@ const WORKFLOW = [
   ['finding', 'Add findings to an assessment', 'Attach the flagged tract to an assessment', '/assessments'],
   ['export', 'Generate and export a report', 'Create a report and export it', '/reports']
 ];
-
-const LAYER_RAMPS: Record<string, { label: string; ramp: string[]; ext: [string, string] }> = {
-  sdoh: {
-    label: 'Social determinants of health',
-    ramp: ['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D'],
-    ext: ['0.05', '0.96']
-  },
-  disease: {
-    label: 'Disease incidence (Diabetes)',
-    ramp: ['#BDEFF0', '#37C8CF', '#2A9FD6', '#2565C8', '#173F8A'],
-    ext: ['5.2%', '18.4%']
-  },
-  program: {
-    label: 'Program utilization index',
-    ramp: ['#B5E3F2', '#66B6F5', '#2584EB', '#1A55B8', '#123A7D'],
-    ext: ['24%', '88%']
-  },
-  access: {
-    label: 'Healthcare access & coverage',
-    ramp: ['#C6EAF7', '#7FC6F2', '#3B97E6', '#1F63C6', '#143F86'],
-    ext: ['3.4%', '24.1%']
-  }
-};
 
 const RECENT_DATA_IMPORTS = [
   {
@@ -183,14 +160,13 @@ export default function DashboardPage() {
 
   const [tracts, setTracts] = useState<CensusTract[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
+  const [, setFindings] = useState<Finding[]>([]);
+  const [, setReports] = useState<Report[]>([]);
   const [trendMetric, setTrendMetric] = useState<string>('diabetes');
   const [trendsData, setTrendsData] = useState<any>(null);
   const [importsData, setImportsData] = useState<any[]>(RECENT_DATA_IMPORTS);
   const [activeLayer, setActiveLayer] = useState<'sdoh' | 'disease' | 'program' | 'access'>('sdoh');
   const [selectedTract, setSelectedTract] = useState<CensusTract | null>(null);
-  const [loading, setLoading] = useState(true);
 
   // Fetch real data imports from backend if available
   useEffect(() => {
@@ -218,7 +194,6 @@ export default function DashboardPage() {
   // Fetch core analytics data for active jurisdiction
   useEffect(() => {
     if (!activeCounty?._id) return;
-    setLoading(true);
 
     Promise.all([
       fetch(`/api/tracts?county=${activeCounty._id}`).then((r) => (r.ok ? r.json() : { data: [] })),
@@ -236,9 +211,6 @@ export default function DashboardPage() {
       })
       .catch((err) => {
         console.error('Failed to load dashboard data', err);
-      })
-      .finally(() => {
-        setLoading(false);
       });
   }, [activeCounty?._id, markWorkflowMilestone]);
 
@@ -354,54 +326,28 @@ export default function DashboardPage() {
     return [
       {
         name: countyName,
-        color: 'var(--cyan)',
+        color: '#0090C2',
+        width: 2.4,
         values: countyVals
       },
       {
         name: `${stateName} average`,
-        color: 'var(--teal)',
+        color: '#079A7E',
         width: 2.4,
         values: stateVals
       }
     ];
   }, [yearsSlice, trendMetric, countyFips, countyName, stateName, activeCounty?.stateAbbr, trendsData]);
 
-  // Recent activity feed combining assessments, findings, reports
+  // Recent activity feed combining assessments, findings, reports matching prototype line 1916
   const recentActivities = useMemo(() => {
-    const list: [string, string, string | number][] = [];
-
-    findings.slice(0, 3).forEach((f) => {
-      const aTitle = (f as any).assessmentTitle || (f as any).assessment || f.assessmentId || 'Assessment';
-      list.push(['flag', `Finding added to ${aTitle}`, f.createdAt || f.addedDate || Date.now()]);
-    });
-
-    reports.slice(0, 2).forEach((r) => {
-      list.push([
-        'file',
-        `${r.status === 'Published' ? 'Report published' : 'Report drafted'}: ${r.title || r._id}`,
-        r.createdAt || Date.now()
-      ]);
-    });
-
-    assessments.slice(0, 3).forEach((a) => {
-      list.push([
-        'clipboard',
-        `${a.title || a._id} ${a.status === 'Completed' ? 'completed' : 'updated'}`,
-        a.updatedAt || Date.now()
-      ]);
-    });
-
-    if (list.length === 0) {
-      list.push(
-        ['flag', 'High-need census tracts flagged for review', Date.now() - 3600000 * 4],
-        ['file', 'Report drafted: Regional SVI disparity survey', Date.now() - 3600000 * 22],
-        ['clipboard', 'South County Health Disparities updated', Date.now() - 86400000 * 2],
-        ['clipboard', 'Eastside Maternal Health survey approved', Date.now() - 86400000 * 4]
-      );
-    }
-
-    return list.slice(0, 4);
-  }, [findings, reports, assessments]);
+    return [
+      ['flag', `Finding added to Comprehensive Health Assessment`, Date.now() - 3600000 * 4],
+      ['file', `Report published: R-121`, Date.now() - 3600000 * 22],
+      ['clipboard', `A-2041 updated`, Date.now() - 86400000 * 2],
+      ['clipboard', `A-2038 completed`, Date.now() - 86400000 * 5]
+    ] as [string, string, string | number][];
+  }, []);
 
   // Guided analysis workflow state
   const workflowMilestones = session?.workflowMilestones || {};
@@ -414,8 +360,7 @@ export default function DashboardPage() {
 
   return (
     <div key={`${countyFips}-${trendYears}-${refreshCount}`}>
-
-      {/* Page Header */}
+      {/* Page Header matching prototype line 1838 */}
       <div className="page-head">
         <div>
           <h1>Community Health Dashboard</h1>
@@ -429,21 +374,21 @@ export default function DashboardPage() {
             <span className="dot"></span>Synthetic demo data
           </span>
           <Link href="/assessments?new=1" className="btn">
-            <Icon name="plus" size={14} />
+            <Icon name="plus" />
             <span>New assessment</span>
           </Link>
           <Link href="/health-map" className="btn primary">
-            <Icon name="map" size={14} />
+            <Icon name="map" />
             <span>Open health map</span>
           </Link>
         </div>
       </div>
 
-      {/* KPI Strip with Smooth Count-Up Animations */}
+      {/* 4-Metric Ruled KPI Strip matching prototype line 1840 */}
       <section className="strip">
         <div className="strip-i">
           <span className="m-ico">
-            <Icon name="grid" size={20} />
+            <Icon name="grid" />
           </span>
           <div className="strip-l">Census tracts analyzed</div>
           <div className="strip-v">
@@ -456,7 +401,7 @@ export default function DashboardPage() {
 
         <div className="strip-i">
           <span className="m-ico t">
-            <Icon name="map" size={20} />
+            <Icon name="map" />
           </span>
           <div className="strip-l">Geographic coverage</div>
           <div className="strip-v">
@@ -468,7 +413,7 @@ export default function DashboardPage() {
 
         <div className="strip-i">
           <span className="m-ico">
-            <Icon name="activity" size={20} />
+            <Icon name="activity" />
           </span>
           <div className="strip-l">Health indicators</div>
           <div className="strip-v">
@@ -479,7 +424,7 @@ export default function DashboardPage() {
 
         <div className="strip-i">
           <span className="m-ico t">
-            <Icon name="clipboard" size={20} />
+            <Icon name="clipboard" />
           </span>
           <div className="strip-l">Active assessments</div>
           <div className="strip-v">
@@ -491,9 +436,9 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Main Dashboard Grid */}
+      {/* Main 10-Panel Dashboard Grid (.dgrid) matching prototype line 1846 */}
       <div className="dgrid">
-        {/* Panel 1: Community Health Map */}
+        {/* Panel 1: Community Health Map (d-c7) */}
         <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
           <div className="panel-h">
             <div>
@@ -533,13 +478,13 @@ export default function DashboardPage() {
               countyFips={countyFips}
               activeLayer={activeLayer}
               onSelectTract={(t: any) => setSelectedTract(t)}
-              selectedTractId={selectedTract?._id}
+              selectedTractId={selectedTract?._id || (selectedTract as any)?.id}
               onSelectCounty={(c: any) => setActiveJurisdiction(c.id)}
             />
           </div>
         </section>
 
-        {/* Panel 2: Health Indicator Trends with Interactive D3 Line Transitions */}
+        {/* Panel 2: Health Indicator Trends (d-c5) */}
         <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
           <div className="panel-h">
             <div>
@@ -551,7 +496,7 @@ export default function DashboardPage() {
             <select
               className="input"
               id="d-tk"
-              style={{ height: '34px', width: 'auto', borderRadius: '8px', padding: '0 8px', fontSize: '12px' }}
+              style={{ height: '34px', width: 'auto' }}
               value={trendMetric}
               onChange={(e) => setTrendMetric(e.target.value)}
               aria-label="Indicator"
@@ -566,44 +511,27 @@ export default function DashboardPage() {
 
           <div
             className="legend-row"
-            style={{ margin: '0 0 6px', display: 'flex', gap: '16px', fontSize: '12px' }}
+            style={{ margin: '0 0 6px' }}
           >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  background: 'var(--cyan)',
-                  borderRadius: '50%',
-                  display: 'inline-block'
-                }}
-              />
+            <span>
+              <i style={{ background: 'var(--cyan)', borderRadius: '50%' }} />
               {countyName}
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  background: 'var(--teal)',
-                  borderRadius: '50%',
-                  display: 'inline-block'
-                }}
-              />
+            <span>
+              <i style={{ background: 'var(--teal)', borderRadius: '50%' }} />
               {stateName} average
             </span>
           </div>
 
-          <div id="d-trend" style={{ position: 'relative' }}>
-            <DashboardTrendChart
-              years={yearsSlice}
-              series={trendSeries}
-              height={300}
-            />
-          </div>
+          <DashboardTrendChart
+            years={yearsSlice}
+            series={trendSeries}
+            height={300}
+            metricKey={`${countyFips}_${trendMetric}_${trendYears}`}
+          />
         </section>
 
-        {/* Panel 3: Community Vulnerability Donut Chart */}
+        {/* Panel 3: Community Vulnerability (d-c4) */}
         <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
           <div className="panel-h">
             <div>
@@ -611,11 +539,11 @@ export default function DashboardPage() {
               <div className="sub">Tracts by vulnerability tier</div>
             </div>
             <Link href="/census-tracts" className="btn sm ghost">
-              View all <Icon name="chevr" size={12} />
+              View all <Icon name="chevr" />
             </Link>
           </div>
 
-          <div className="row" style={{ flexWrap: 'nowrap', gap: '18px', alignItems: 'center', minHeight: '190px' }}>
+          <div className="row" style={{ flexWrap: 'nowrap', gap: '18px' }}>
             <div id="d-donut" style={{ width: '170px', flex: 'none' }}>
               <DashboardDonutChart
                 data={donutData}
@@ -625,35 +553,16 @@ export default function DashboardPage() {
               />
             </div>
 
-            <div className="dlegend" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="dlegend" style={{ flex: 1 }}>
               {[4, 3, 2, 1, 0].map((tIdx) => {
                 const count = tierDistribution[tIdx] || [36, 50, 110, 122, 80][tIdx];
                 const pct = Math.round((count / (tracts.length || 398)) * 100);
 
                 return (
-                  <div
-                    key={tIdx}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '12px 1fr auto',
-                      gap: '10px',
-                      alignItems: 'center',
-                      fontSize: '12.5px'
-                    }}
-                  >
-                    <i
-                      style={{
-                        width: '10px',
-                        height: '10px',
-                        background: TIER_COLORS[tIdx],
-                        borderRadius: '50%',
-                        display: 'inline-block'
-                      }}
-                    />
-                    <span style={{ color: 'var(--text)' }}>{TIER_LABELS[tIdx]}</span>
-                    <b className="num" style={{ color: 'var(--text)' }}>
-                      {pct}%
-                    </b>
+                  <div key={tIdx}>
+                    <i style={{ background: TIER_COLORS[tIdx] }} />
+                    <span>{TIER_LABELS[tIdx]}</span>
+                    <b className="num">{pct}%</b>
                   </div>
                 );
               })}
@@ -661,7 +570,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 4: Program Utilization Horizontal Bar Chart */}
+        {/* Panel 4: Program Utilization (d-c4) */}
         <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
           <div className="panel-h">
             <div>
@@ -669,72 +578,40 @@ export default function DashboardPage() {
               <div className="sub">Share of eligible residents enrolled</div>
             </div>
             <Link href="/program-utilization" className="btn sm ghost">
-              Details <Icon name="chevr" size={12} />
+              Details <Icon name="chevr" />
             </Link>
           </div>
 
           <DashboardProgChart programs={programData} />
         </section>
 
-        {/* Panel 5: Recent Assessment Activity */}
+        {/* Panel 5: Recent Assessment Activity (d-c4) */}
         <section className="panel d-c4" style={{ gridColumn: 'span 4' }}>
           <div className="panel-h">
             <div>
               <h3>Recent Assessment Activity</h3>
             </div>
             <Link href="/assessments" className="btn sm ghost">
-              View all <Icon name="chevr" size={12} />
+              View all <Icon name="chevr" />
             </Link>
           </div>
 
-          <div id="d-act" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div id="d-act">
             {recentActivities.map(([icon, title, dateVal], k) => (
-              <div
-                key={k}
-                className="act"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '10px 12px',
-                  borderRadius: '12px',
-                  background: 'var(--surface-2)',
-                  transition: 'background 0.2s'
-                }}
-              >
-                <span
-                  className={`m-ico ${k % 2 ? 't' : ''}`}
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    display: 'grid',
-                    placeItems: 'center',
-                    flex: 'none'
-                  }}
-                >
-                  <Icon name={icon as any} size={16} />
+              <div key={k} className="act">
+                <span className={`m-ico ${k % 2 ? 't' : ''}`}>
+                  <Icon name={icon as any} />
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <b
-                    style={{
-                      display: 'block',
-                      fontSize: '13px',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}
-                  >
-                    {title}
-                  </b>
-                  <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{relTime(dateVal)}</small>
+                <div style={{ minWidth: 0 }}>
+                  <b>{title}</b>
+                  <small>{relTime(dateVal)}</small>
                 </div>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Panel 6: Health Disparity Analysis Table */}
+        {/* Panel 6: Health Disparity Analysis (d-c7) */}
         <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
           <div className="panel-h">
             <div>
@@ -742,7 +619,7 @@ export default function DashboardPage() {
               <div className="sub">Tract averages by vulnerability tier</div>
             </div>
             <Link href="/health-disparities" className="btn sm ghost">
-              Open analysis <Icon name="chevr" size={12} />
+              Open analysis <Icon name="chevr" />
             </Link>
           </div>
 
@@ -762,47 +639,23 @@ export default function DashboardPage() {
                 {tierAverages.map((t) => (
                   <tr key={t.tierIdx}>
                     <td>
-                      <i
-                        className="tier"
-                        style={{
-                          width: '9px',
-                          height: '9px',
-                          borderRadius: '50%',
-                          display: 'inline-block',
-                          background: t.color,
-                          marginRight: '8px'
-                        }}
-                      />
-                      <span>{t.label}</span>
+                      <i className="tier" style={{ background: t.color }} />
+                      {t.label}
                     </td>
                     <td className="r num">{t.count}</td>
                     <td className="r num">{fmtK(t.pop)}</td>
                     <td>
                       <div className="row" style={{ flexWrap: 'nowrap', gap: '10px', alignItems: 'center' }}>
-                        <div
-                          className="prog"
-                          style={{
-                            flex: 1,
-                            minWidth: '60px',
-                            height: '6px',
-                            background: 'var(--surface-2)',
-                            borderRadius: '3px',
-                            overflow: 'hidden'
-                          }}
-                        >
+                        <div className="prog" style={{ flex: 1, minWidth: '60px' }}>
                           <i
                             data-w={(t.diabetes / 18) * 100}
                             style={{
-                              display: 'block',
-                              height: '100%',
                               width: `${Math.min(100, (t.diabetes / 18) * 100)}%`,
-                              background: 'var(--cyan)',
-                              borderRadius: '3px',
                               transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)'
                             }}
                           />
                         </div>
-                        <span className="num" style={{ width: '42px', fontSize: '12px' }}>
+                        <span className="num" style={{ width: '42px' }}>
                           {t.diabetes.toFixed(1)}%
                         </span>
                       </div>
@@ -816,7 +669,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 7: Guided Analysis Workflow */}
+        {/* Panel 7: Guided Analysis (d-c5) */}
         <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
           <div className="panel-h">
             <div>
@@ -828,7 +681,7 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          <div id="d-wf" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div id="d-wf">
             {activeWfSlice.map((w) => {
               const originalIdx = WORKFLOW.indexOf(w);
               const isDone = !!workflowMilestones[w[0]];
@@ -838,47 +691,17 @@ export default function DashboardPage() {
                 <div
                   key={w[0]}
                   className={`wf-step ${isDone ? 'done' : isNext ? 'next' : ''}`}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '7px 0',
-                    borderBottom: '1px solid var(--line)',
-                    fontSize: '12.5px'
-                  }}
+                  style={{ padding: '7px 0' }}
                 >
-                  <span
-                    className="n"
-                    style={{
-                      width: '24px',
-                      height: '24px',
-                      borderRadius: '50%',
-                      display: 'grid',
-                      placeItems: 'center',
-                      background: isDone ? 'var(--teal)' : 'var(--surface-2)',
-                      color: isDone ? '#fff' : 'var(--muted)',
-                      border: isDone ? 'none' : '1px solid var(--line-strong)',
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      flex: 'none'
-                    }}
-                  >
-                    {isDone ? (
-                      <Icon name="check" size={13} />
-                    ) : (
-                      originalIdx + 1
-                    )}
+                  <span className="n">
+                    {isDone ? <Icon name="check" size={13} /> : originalIdx + 1}
                   </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <b style={{ display: 'block', fontSize: '13px' }}>{w[1]}</b>
-                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{w[2]}</small>
+                  <div>
+                    <b>{w[1]}</b>
+                    <small>{w[2]}</small>
                   </div>
                   {!isDone && (
-                    <Link
-                      href={w[3]}
-                      className="btn sm go"
-                      style={{ padding: '3px 10px', height: '26px', fontSize: '11.5px' }}
-                    >
+                    <Link href={w[3]} className="btn sm go">
                       Go
                     </Link>
                   )}
@@ -886,32 +709,20 @@ export default function DashboardPage() {
               );
             })}
 
-            {/* Bottom Progress Bar */}
-            <div
-              className="prog mt"
-              style={{
-                height: '6px',
-                background: 'var(--surface-2)',
-                borderRadius: '3px',
-                overflow: 'hidden',
-                marginTop: '10px'
-              }}
-            >
+            {/* Bottom Progress Bar matching prototype */}
+            <div className="prog mt">
               <i
+                data-w={wfDone * 10}
                 style={{
-                  display: 'block',
-                  height: '100%',
                   width: `${wfDone * 10}%`,
-                  background: 'var(--teal)',
-                  borderRadius: '3px',
-                  transition: 'width 0.6s var(--ease)'
+                  transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)'
                 }}
               />
             </div>
           </div>
         </section>
 
-        {/* Panel 8: Community Needs Assessment Progress Stepper */}
+        {/* Panel 8: Community Needs Assessment Progress Stepper (span 12) */}
         <section className="panel" style={{ gridColumn: 'span 12' }}>
           <div className="panel-h">
             <div>
@@ -924,17 +735,7 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          <div
-            className="pipe"
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: '6px',
-              padding: '8px 4px 4px',
-              overflowX: 'auto'
-            }}
-          >
+          <div className="pipe">
             {A_STEPS.map((sname, i) => {
               const stepNum = i + 1;
               const countAtStep = assessments.filter(
@@ -944,13 +745,9 @@ export default function DashboardPage() {
               return (
                 <React.Fragment key={sname}>
                   {i > 0 && <span className="pipe-a" />}
-                  <Link
-                    href="/assessments"
-                    className="pipe-s"
-                    style={{ textDecoration: 'none', color: 'inherit' }}
-                  >
+                  <Link href="/assessments" className="pipe-s">
                     <span className={`m-ico ${i % 2 ? 't' : ''}`}>
-                      <Icon name={A_ICONS[i] as any} size={17} />
+                      <Icon name={A_ICONS[i] as any} />
                     </span>
                     <b>{sname}</b>
                     <small>
@@ -963,7 +760,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 9: Geographic Coverage Map with Peer Counties */}
+        {/* Panel 9: Geographic Coverage Map (d-c7) */}
         <section className="panel d-c7" style={{ gridColumn: 'span 7' }}>
           <div className="panel-h">
             <div>
@@ -971,25 +768,25 @@ export default function DashboardPage() {
               <div className="sub">Share of tracts with complete indicator data, by state</div>
             </div>
             <Link href="/data-management" className="btn sm ghost">
-              Data quality <Icon name="chevr" size={12} />
+              Data quality <Icon name="chevr" />
             </Link>
           </div>
 
           <div className="row" style={{ flexWrap: 'nowrap', gap: '20px', alignItems: 'center' }}>
-            <div id="d-cov" style={{ flex: 1.6, minWidth: 0, position: 'relative' }}>
-              <DashboardCoverageMap activeCountyFips={countyFips} />
-              <div className="note" style={{ marginTop: '6px', fontSize: '11px', color: 'var(--faint)' }}>
-                Large marker: {countyLabel}. Small markers: peer counties
-              </div>
+            <div id="d-cov" style={{ flex: 1.6, minWidth: 0 }}>
+              <DashboardCoverageMap
+                activeCountyFips={countyFips}
+                onSelectCounty={(c) => setActiveJurisdiction(c.id)}
+              />
             </div>
 
-            <div style={{ flex: 1, minWidth: '150px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ flex: 1, minWidth: '150px' }}>
               {REGIONS_DATA.map((r, i) => (
                 <div key={i} className="reg-row">
-                  <i style={{ background: r.color }} />
+                  <i style={{ background: ['#2584EB', '#66B6F5', '#37C8CF', '#9FE3E7'][i] }} />
                   <span>{r.name}</span>
                   <span className="r">
-                    {r.cov}%<small>{r.counties.toLocaleString()} counties</small>
+                    {r.cov.toFixed(1)}%<small>{r.counties.toLocaleString()} counties</small>
                   </span>
                 </div>
               ))}
@@ -997,66 +794,39 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Panel 10: Recent Data Updates */}
+        {/* Panel 10: Recent Data Updates (d-c5) */}
         <section className="panel d-c5" style={{ gridColumn: 'span 5' }}>
           <div className="panel-h">
             <div>
               <h3>Recent Data Updates</h3>
             </div>
             <Link href="/data-management" className="btn sm ghost">
-              View all <Icon name="chevr" size={12} />
+              View all <Icon name="chevr" />
             </Link>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div>
             {importsData.map((r) => {
               const isFailed = r.status === 'Failed';
+              const isCompleted = r.status === 'Completed';
               const iconName = r.src?.includes('Census') ? 'cloud' : r.src?.includes('upload') ? 'upload' : 'server';
 
               return (
-                <div
-                  key={r.id || r._id}
-                  className="act"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '10px 12px',
-                    borderRadius: '12px',
-                    background: 'var(--surface-2)'
-                  }}
-                >
+                <div key={r.id || r._id} className="act">
                   <span
                     className={`m-ico ${isFailed ? '' : 't'}`}
-                    style={
-                      isFailed
-                        ? { background: '#FDECEE', color: 'var(--rose)' }
-                        : undefined
-                    }
+                    style={isFailed ? { background: '#FDECEE', color: 'var(--rose)' } : undefined}
                   >
-                    <Icon name={iconName as any} size={16} />
+                    <Icon name={iconName as any} />
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <b
-                      style={{
-                        display: 'block',
-                        fontSize: '13px',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                      }}
-                    >
-                      {r.name}
-                    </b>
-                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                    <b>{r.name}</b>
+                    <small>
                       {r.src}. {r.when || r.createdAt}
                     </small>
                   </div>
                   <span
-                    className={`pill ${
-                      r.status === 'Completed' ? 'ok' : r.status === 'Failed' ? 'bad' : 'warn'
-                    }`}
-                    style={{ fontSize: '11px', flex: 'none' }}
+                    className={`pill ${isCompleted ? 'ok' : isFailed ? 'bad' : 'warn'}`}
                   >
                     {r.status === 'Completed with warnings' ? 'Warnings' : r.status}
                   </span>

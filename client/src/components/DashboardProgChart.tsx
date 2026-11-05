@@ -22,9 +22,9 @@ export function DashboardProgChart({ programs }: DashboardProgChartProps) {
 
     d3.select(el).selectAll('*').remove();
 
-    const W = el.clientWidth || 320;
+    const W = Math.max(200, el.clientWidth || 320);
     const rowH = 38;
-    const lw = Math.min(130, W * 0.44);
+    const lw = Math.min(130, W * 0.42);
     const H = programs.length * rowH + 6;
 
     const svg = d3
@@ -36,7 +36,7 @@ export function DashboardProgChart({ programs }: DashboardProgChartProps) {
       .style('display', 'block')
       .attr('class', 'chart');
 
-    const x = d3.scaleLinear().domain([0, 100]).range([0, W - lw - 54]);
+    const x = d3.scaleLinear().domain([0, 100]).range([0, W - lw - 64]);
 
     const row = svg
       .selectAll('g.r')
@@ -51,10 +51,6 @@ export function DashboardProgChart({ programs }: DashboardProgChartProps) {
       .attr('class', 'lbl')
       .attr('x', 0)
       .attr('y', rowH / 2 + 4)
-      .attr('fill', 'var(--text)')
-      .attr('font-size', '12.5px')
-      .attr('font-weight', '500')
-      .attr('font-family', 'var(--font-u)')
       .text((d) => (d.label.length > 24 ? d.label.slice(0, 23) + '…' : d.label));
 
     // Background track rect
@@ -63,17 +59,17 @@ export function DashboardProgChart({ programs }: DashboardProgChartProps) {
       .attr('x', lw)
       .attr('y', rowH / 2 - 3)
       .attr('height', 6)
-      .attr('rx', 1.5)
+      .attr('rx', 1)
       .attr('fill', 'var(--surface-2)')
-      .attr('width', Math.max(0, W - lw - 54));
+      .attr('width', Math.max(0, W - lw - 64));
 
-    // Animated bar fill
+    // Animated bar fill matching prototype
     const bar = row
       .append('rect')
       .attr('x', lw)
       .attr('y', rowH / 2 - 3)
       .attr('height', 6)
-      .attr('rx', 1.5)
+      .attr('rx', 1)
       .attr('fill', 'var(--cyan)')
       .attr('width', 0);
 
@@ -87,16 +83,12 @@ export function DashboardProgChart({ programs }: DashboardProgChartProps) {
     // Right value readout
     row
       .append('text')
-      .attr('class', 'val num')
+      .attr('class', 'val')
       .attr('x', W)
       .attr('text-anchor', 'end')
       .attr('y', rowH / 2 + 4)
-      .attr('fill', 'var(--text)')
-      .attr('font-size', '12px')
-      .attr('font-weight', '700')
-      .attr('font-family', 'var(--font-d)')
       .text((d) => `${Math.round(d.value)}%`);
   }, [programs]);
 
-  return <div ref={containerRef} id="d-prog" style={{ width: '100%', minHeight: '196px' }} />;
+  return <div ref={containerRef} id="d-prog" style={{ width: '100%' }} />;
 }

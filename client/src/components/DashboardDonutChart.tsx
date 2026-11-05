@@ -43,7 +43,6 @@ export function DashboardDonutChart({
     const el = containerRef.current;
     if (!el) return;
 
-    // Clear previous SVG
     d3.select(el).selectAll('*').remove();
 
     const W = el.clientWidth || size;
@@ -57,7 +56,8 @@ export function DashboardDonutChart({
       .attr('width', W)
       .attr('height', H)
       .style('display', 'block')
-      .style('overflow', 'visible');
+      .style('overflow', 'visible')
+      .attr('class', 'chart');
 
     const g = svg
       .append('g')
@@ -91,7 +91,7 @@ export function DashboardDonutChart({
       .style('cursor', 'pointer')
       .style('transition', 'filter 0.2s');
 
-    // Smooth clockwise arc growth animation matching prototype:
+    // Smooth clockwise arc growth animation matching prototype
     paths
       .transition()
       .duration(1100)
@@ -144,53 +144,50 @@ export function DashboardDonutChart({
         setTooltip((prev) => ({ ...prev, visible: false }));
       });
 
-    // Center text readout
+    // Center text readout matching prototype
     const centerTot = centerCount !== undefined ? centerCount : total;
     g.append('text')
       .attr('text-anchor', 'middle')
       .attr('dy', '.1em')
-      .attr('class', 'num')
-      .style('font-family', 'var(--font-d)')
-      .style('font-size', `${S * 0.14}px`)
+      .attr('class', 'val num')
+      .style('font-size', `${S * 0.13}px`)
       .style('font-weight', '700')
       .style('fill', 'var(--text)')
       .text(centerTot.toLocaleString('en-US'));
 
     g.append('text')
       .attr('text-anchor', 'middle')
-      .attr('dy', '1.8em')
-      .style('font-family', 'var(--font-u)')
-      .style('font-size', `${S * 0.065}px`)
-      .style('font-weight', '600')
-      .style('letter-spacing', '0.06em')
-      .style('fill', 'var(--faint)')
-      .text(centerLabel.toUpperCase());
+      .attr('dy', '1.9em')
+      .attr('class', 'lbl')
+      .style('font-size', '12px')
+      .style('fill', 'var(--muted)')
+      .text(centerLabel);
   }, [data, size, centerCount, centerLabel]);
 
   return (
-    <div ref={containerRef} style={{ width: `${size}px`, height: `${size}px`, position: 'relative' }}>
+    <div style={{ position: 'relative', width: size, height: size }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+
       {tooltip.visible && (
         <div
+          id="tooltip"
           style={{
             position: 'absolute',
             left: `${tooltip.x}px`,
             top: `${tooltip.y}px`,
-            background: 'var(--surface-solid)',
-            border: '1px solid var(--line-strong)',
-            borderRadius: '8px',
-            boxShadow: 'var(--shadow)',
-            padding: '8px 10px',
-            fontSize: '11.5px',
-            pointerEvents: 'none',
-            zIndex: 50,
-            whiteSpace: 'nowrap',
-            color: 'var(--text)'
+            display: 'block',
+            zIndex: 100,
+            pointerEvents: 'none'
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: '2px' }}>{tooltip.title}</div>
-          <div style={{ display: 'flex', gap: '8px', color: 'var(--muted)', fontSize: '11px' }}>
-            <span>Share: <b style={{ color: 'var(--text)' }}>{tooltip.share}</b></span>
-            <span>Tracts: <b style={{ color: 'var(--text)' }}>{tooltip.count}</b></span>
+          <b>{tooltip.title}</b>
+          <div className="tv">
+            <span>Share</span>
+            <span>{tooltip.share}</span>
+          </div>
+          <div className="tv">
+            <span>Tracts</span>
+            <span>{tooltip.count.toLocaleString()}</span>
           </div>
         </div>
       )}

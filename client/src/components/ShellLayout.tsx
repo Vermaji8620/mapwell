@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import gsap from 'gsap';
 import { Backdrop } from '@/components/Backdrop';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
@@ -38,6 +39,42 @@ function InnerShell({ children }: { children: React.ReactNode }) {
       window.removeEventListener('mapwell:refresh-overview', handleNavRefresh);
     };
   }, []);
+
+  // Authentic MapWell GSAP page entrance animation matching prototype lines 1692-1701
+  useEffect(() => {
+    if (isLoginPage || loading || !user) return;
+    const view = document.getElementById('view');
+    if (!view) return;
+
+    const tl = gsap.timeline({ defaults: { ease: 'expo.out' } });
+
+    const blocks = view.querySelectorAll<HTMLElement>(
+      ':scope > .page-head, :scope > div > .page-head, :scope > .panel, :scope > .tabs, :scope > .toolbar, :scope > .strip > *, :scope > .grid > *, :scope > .dgrid > *, :scope > div > .strip > *, :scope > div > .grid > *, :scope > div > .dgrid > *'
+    );
+    if (blocks.length > 0) {
+      const list = Array.from(blocks).slice(0, 24);
+      tl.fromTo(
+        list,
+        { opacity: 0, y: 12 },
+        { opacity: 1, y: 0, duration: 0.7, stagger: 0.04, ease: 'power3.out', clearProps: 'opacity,transform' },
+        0.04
+      );
+    }
+
+    const floats = view.querySelectorAll<HTMLElement>('.hm .map-float, .map-float');
+    if (floats.length > 0) {
+      tl.fromTo(
+        Array.from(floats),
+        { opacity: 0, x: (_: any, el: HTMLElement) => (el.getBoundingClientRect().left < window.innerWidth / 2 ? -18 : 18) },
+        { opacity: 1, x: 0, duration: 0.8, stagger: 0.05, clearProps: 'opacity,transform' },
+        0.15
+      );
+    }
+
+    return () => {
+      tl.kill();
+    };
+  }, [pathname, navCount, isLoginPage, loading, user]);
 
   // Auth redirect
   useEffect(() => {
@@ -130,11 +167,10 @@ function InnerShell({ children }: { children: React.ReactNode }) {
       <div id="main">
         <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
         <div id="view-wrap">
-          <div id="scanline" />
           <main
             id="view"
             key={`${pathname}-${navCount}`}
-            className={`${isFlush ? 'flush' : ''} page-stagger-enter`}
+            className={isFlush ? 'flush' : ''}
             tabIndex={-1}
           >
             {children}
