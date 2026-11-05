@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 import { METRICS_CONFIG } from '@/config/metrics';
 import { CountyRecord, getCountyRepository } from '@/utils/countyRepository';
@@ -15,6 +15,7 @@ interface StateCountyMapProps {
   layerId?: 'sdoh' | 'access';
   height?: number;
   showControls?: boolean;
+  zoomOnSelect?: boolean;
 }
 
 // Official SDOH & Healthcare Access Layer Color Ramps matching local prototype (lines 1081 & 1094-1104)
@@ -56,15 +57,161 @@ export function StateCountyMap({
   metric,
   layerId = 'sdoh',
   height = 490,
-  showControls = false
+  showControls = false,
+  zoomOnSelect = false
 }: StateCountyMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
-  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const pathRef = useRef<d3.GeoPath<any, d3.GeoPermissibleObjects> | null>(null);
   const countiesRef = useRef<CountyRecord[]>([]);
+  const gMapRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const gMarkersRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const gSelRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
 
-  // Initial render of SVG and state geometry
+  const metricRef = useRef<string>(metric);
+  const layerIdRef = useRef<'sdoh' | 'access'>(layerId);
+  const currentSelectedCountyIdRef = useRef<string | null | undefined>(undefined);
+  const isInitializedRef = useRef<boolean>(false);
+
+  // Update selected county outline in-place (#102A4C deep navy, no glow, vector-effect non-scaling-stroke)
+  const updateSelectedOutline = (selId?: string | null) => {
+    const gSel = gSelRef.current;
+    if (!gSel) return;
+    gSel.selectAll('*').remove();
+
+    if (gMapRef.current) {
+      gMapRef.current.selectAll<SVGPathElement, CountyRecord>('path.county')
+        .classed('sel', c => c.id === selId);
+    }
+
+    if (!selId) return;
+    const target = countiesRef.current.find(c => c.id === selId);
+    if (target && pathRef.current) {
+      gSel.append('path')
+        .attr('class', 'sel-outline')
+        .attr('d', pathRef.current(target.feature) || '')
+        .attr('fill', 'none')
+        .attr('stroke', '#102A4C')
+        .attr('stroke-width', 1.8)
+        .attr('vector-effect', 'non-scaling-stroke')
+        .style('filter', 'none');
+    }
+  };
+
+  // Step 2: Region Enlargement on County Click & Selection
+  const zoomToCounty = (targetCounty?: CountyRecord | null, animate = true) => {
+    if (!svgRef.current || !zoomRef.current || !pathRef.current) return;
+    const path = pathRef.current;
+    const svg = svgRef.current;
+    const zoom = zoomRef.current;
+    const width = containerRef.current?.clientWidth || 550;
+    const H = height;
+    const padding = 28;
+
+    if (!targetCounty) {
+      currentSelectedCountyIdRef.current = null;
+      if (animate) {
+        svg.transition('camera-zoom')
+          .duration(750)
+          .ease(d3.easeCubicInOut)
+          .call(zoom.transform, d3.zoomIdentity);
+      } else {
+        svg.call(zoom.transform, d3.zoomIdentity);
+      }
+      updateSelectedOutline(null);
+      return;
+    }
+
+    currentSelectedCountyIdRef.current = targetCounty.id;
+    const [[x0, y0], [x1, y1]] = path.bounds(targetCounty.feature);
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const midX = (x0 + x1) / 2 + padding;
+    const midY = (y0 + y1) / 2 + padding;
+
+    // Zoom scale to enlarge county to ~50% of viewport with surrounding context visible
+    const pad = 0.50;
+    const s = Math.min(8.5, pad / Math.max(dx / width, dy / H, 0.001));
+    const tx = width / 2 - s * midX;
+    const ty = H / 2 - s * midY;
+    const targetTransform = d3.zoomIdentity.translate(tx, ty).scale(s);
+
+    if (animate) {
+      svg.transition('camera-zoom')
+        .duration(750)
+        .ease(d3.easeCubicInOut)
+        .call(zoom.transform, targetTransform);
+    } else {
+      svg.call(zoom.transform, targetTransform);
+    }
+
+    // Update crisp dark navy outline
+    updateSelectedOutline(targetCounty.id);
+  };
+
+  // Smoothly update .pulse-m need markers for current metric
+  const updatePulseMarkers = (metricKey: string) => {
+    const gMarkers = gMarkersRef.current;
+    const path = pathRef.current;
+    if (!gMarkers || !path) return;
+    const stateCounties = countiesRef.current;
+    if (stateCounties.length === 0) return;
+
+    const meta = METRICS_CONFIG[metricKey] || { label: metricKey, short: metricKey, bad: 'high', unit: '%' };
+    const isBadLow = meta.bad === 'low';
+    const topCounties = [...stateCounties].sort((a, b) => {
+      const valA = (a.indicators as any)[metricKey] ?? 0;
+      const valB = (b.indicators as any)[metricKey] ?? 0;
+      return isBadLow ? valA - valB : valB - valA;
+    }).slice(0, 4);
+
+    const currentTransform = svgRef.current ? d3.zoomTransform(svgRef.current.node()!) : d3.zoomIdentity;
+    const k = currentTransform.k || 1;
+
+    gMarkers.selectAll<SVGGElement, CountyRecord>('g.pulse-m')
+      .data(topCounties, d => d.id)
+      .join(
+        enter => {
+          const marker = enter.append('g')
+            .attr('class', 'pulse-m')
+            .attr('data-id', d => d.id)
+            .each(function (d) {
+              const centroid = path.centroid(d.feature);
+              if (centroid && !isNaN(centroid[0]) && !isNaN(centroid[1])) {
+                d3.select(this)
+                  .attr('data-cx', centroid[0])
+                  .attr('data-cy', centroid[1])
+                  .attr('transform', `translate(${centroid[0]}, ${centroid[1]}) scale(${1 / k})`);
+              }
+            })
+            .style('pointer-events', 'none')
+            .style('opacity', 0);
+
+          marker.append('circle').attr('class', 'ring').attr('r', 7);
+          marker.append('circle').attr('class', 'ring r2').attr('r', 7);
+          marker.append('circle').attr('class', 'core').attr('r', 3.5);
+
+          marker.transition('marker-fade')
+            .duration(450)
+            .style('opacity', 1);
+
+          return marker;
+        },
+        update => {
+          update.transition('marker-fade')
+            .duration(300)
+            .style('opacity', 1);
+          return update;
+        },
+        exit => exit.transition('marker-fade')
+          .duration(300)
+          .style('opacity', 0)
+          .remove()
+      );
+  };
+
+  // Step 1: Prevent SVG Unmounting on Metric / Tab Changes (ONLY mount when stateFips or height changes)
   useEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
@@ -75,6 +222,7 @@ export function StateCountyMap({
       if (isCancelled || !containerRef.current) return;
 
       container.innerHTML = '';
+      isInitializedRef.current = false;
       const width = container.clientWidth || 550;
       const H = height;
 
@@ -96,13 +244,13 @@ export function StateCountyMap({
         return;
       }
 
+      // Feature collection for state framing
       const features = stateCounties.map(c => c.feature).filter(Boolean);
       const featureCollection = {
         type: 'FeatureCollection',
         features
       };
 
-      // Fit pre-projected coordinates to the viewport
       const padding = 28;
       const projection = d3.geoIdentity().fitSize([width - padding * 2, H - padding * 2], featureCollection as any);
       const path = d3.geoPath(projection);
@@ -113,80 +261,126 @@ export function StateCountyMap({
         .attr('viewBox', `0 0 ${width} ${H}`)
         .attr('width', '100%')
         .attr('height', '100%')
+        .attr('preserveAspectRatio', 'xMidYMid meet')
         .attr('class', 'overflow-hidden select-none cursor-grab active:cursor-grabbing');
 
       svgRef.current = svg;
 
-      // Glow filter for selected county & pulse style
+      // Pulse markers and outline styles
       const defs = svg.append('defs');
-      const filter = defs.append('filter').attr('id', 'county-glow').attr('x', '-20%').attr('y', '-20%').attr('width', '140%').attr('height', '140%');
-      filter.append('feGaussianBlur').attr('stdDeviation', '4').attr('result', 'blur');
-      filter.append('feComposite').attr('in', 'SourceGraphic').attr('in2', 'blur').attr('operator', 'over');
-
-      const pulseStyle = defs.append('style');
-      pulseStyle.text(`
-        @keyframes mapPulse {
-          0% { r: 3px; opacity: 0.9; }
-          50% { r: 9px; opacity: 0.2; }
-          100% { r: 3px; opacity: 0.9; }
+      const style = defs.append('style');
+      style.text(`
+        .county {
+          transition: stroke 0.15s ease;
         }
-        .pulse-marker {
-          animation: mapPulse 2.4s ease-in-out infinite;
+        .county:hover {
+          stroke: #FFFFFF !important;
+          stroke-width: 1.4px !important;
+        }
+        .sel-outline {
+          fill: none;
+          stroke: #102A4C !important;
+          stroke-width: 1.8px !important;
+          filter: none !important;
+          vector-effect: non-scaling-stroke;
+          pointer-events: none;
+        }
+        .pulse-m {
+          filter: drop-shadow(0 0 6px var(--cyan, #37C8CF)) drop-shadow(0 0 10px rgba(56, 225, 255, 0.45));
+        }
+        .pulse-m .ring {
+          fill: none;
+          stroke: var(--cyan, #37C8CF);
+          stroke-width: 1.5px;
+          vector-effect: non-scaling-stroke;
+          transform-box: fill-box;
           transform-origin: center;
+          animation: pulseRing 2.4s ease-out infinite;
+        }
+        .pulse-m .ring.r2 {
+          animation-delay: 1.2s;
+        }
+        .pulse-m .core {
+          fill: #FFFFFF;
+          stroke: var(--cyan, #37C8CF);
+          stroke-width: 2px;
+          vector-effect: non-scaling-stroke;
+        }
+        @keyframes pulseRing {
+          0% { transform: scale(0.6); opacity: 0.95; }
+          100% { transform: scale(3.2); opacity: 0; }
         }
       `);
 
-      // Zoom root group
+      // Root zoom group
       const gZoom = svg.append('g').attr('class', 'zoom-root');
-      const gMap = gZoom.append('g').attr('class', 'map-container').attr('transform', `translate(${padding},${padding})`);
-      const gMarkers = gZoom.append('g').attr('class', 'markers-container').attr('transform', `translate(${padding},${padding})`);
+
+      // County polygons layer
+      const gMap = gZoom.append('g')
+        .attr('class', 'map-container')
+        .attr('transform', `translate(${padding},${padding})`);
+      gMapRef.current = gMap;
+
+      // Selected outline layer
+      const gSel = gZoom.append('g')
+        .attr('class', 'selected-county-outline')
+        .attr('transform', `translate(${padding},${padding})`)
+        .style('pointer-events', 'none');
+      gSelRef.current = gSel;
+
+      // Pulse markers layer
+      const gMarkers = gZoom.append('g')
+        .attr('class', 'markers-container')
+        .attr('transform', `translate(${padding},${padding})`)
+        .style('pointer-events', 'none');
+      gMarkersRef.current = gMarkers;
 
       const zoom = d3.zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.8, 16])
-        .translateExtent([[-width * 0.5, -H * 0.5], [width * 1.5, H * 1.5]])
+        .scaleExtent([0.5, 30])
+        .translateExtent([[-width * 10, -H * 10], [width * 10, H * 10]])
         .on('zoom', (event) => {
           gZoom.attr('transform', event.transform);
           const k = event.transform.k;
-          gMarkers.selectAll('circle').attr('transform', function(this: any) {
+          gMarkers.selectAll<SVGGElement, unknown>('.pulse-m').attr('transform', function (this: any) {
             const cx = d3.select(this).attr('data-cx');
             const cy = d3.select(this).attr('data-cy');
-            return `translate(${cx}, ${cy}) scale(${1 / Math.sqrt(k)}) translate(${-cx}, ${-cy})`;
+            return `translate(${cx}, ${cy}) scale(${1 / k})`;
           });
         });
 
       svg.call(zoom).on('dblclick.zoom', null);
-      zoomBehaviorRef.current = zoom;
+      zoomRef.current = zoom;
 
-      // Metric extent & color ramp matching prototype
-      const meta = METRICS_CONFIG[metric] || { label: metric, short: metric, bad: 'high', unit: '%' };
-      const values = stateCounties.map(c => (c.indicators as any)[metric] ?? 0);
-      const { getColor } = createSdohColorScale(values, metric, layerId, meta.bad as any);
+      // Initial color calculation
+      const curMetric = metricRef.current;
+      const curLayer = layerIdRef.current;
+      const meta = METRICS_CONFIG[curMetric] || { label: curMetric, short: curMetric, bad: 'high', unit: '%' };
+      const values = stateCounties.map(c => (c.indicators as any)[curMetric] ?? 0);
+      const { getColor } = createSdohColorScale(values, curMetric, curLayer, meta.bad as any);
 
       // Render County Polygons
-      const paths = gMap.selectAll('path.county')
-        .data(stateCounties)
-        .enter()
-        .append('path')
+      const paths = gMap.selectAll<SVGPathElement, CountyRecord>('path.county')
+        .data(stateCounties, d => d.id)
+        .join('path')
         .attr('class', 'county')
-        .attr('data-id', (c: CountyRecord) => c.id)
-        .attr('d', (c: CountyRecord) => path(c.feature))
-        .attr('fill', (c: CountyRecord) => getColor((c.indicators as any)[metric] ?? 0))
-        .attr('stroke', (c: CountyRecord) =>
-          c.id === selectedCountyId ? 'var(--cyan, #37C8CF)' : 'rgba(255,255,255,0.22)'
-        )
-        .attr('stroke-width', (c: CountyRecord) =>
-          c.id === selectedCountyId ? 2.8 : 0.8
-        )
-        .attr('cursor', 'pointer')
-        .attr('class', 'transition-colors duration-150 hover:brightness-125');
+        .attr('data-id', c => c.id)
+        .attr('d', c => path(c.feature) || '')
+        .attr('fill', c => getColor((c.indicators as any)[curMetric] ?? 0))
+        .attr('stroke', 'rgba(141, 170, 200, 0.45)')
+        .attr('stroke-width', 0.65)
+        .attr('vector-effect', 'non-scaling-stroke')
+        .style('cursor', 'pointer');
 
+      // County hover & click interactions
       paths.on('pointerenter', (event: MouseEvent, c: CountyRecord) => {
-        const val = (c.indicators as any)[metric] ?? 0;
-        const formattedVal = meta.bad === 'low' && metric === 'income'
+        const mKey = metricRef.current;
+        const mMeta = METRICS_CONFIG[mKey] || { label: mKey, short: mKey, bad: 'high', unit: '%' };
+        const val = (c.indicators as any)[mKey] ?? 0;
+        const formattedVal = mMeta.bad === 'low' && mKey === 'income'
           ? `$${Math.round(val).toLocaleString()}`
-          : `${val.toFixed(1)}${meta.unit || '%'}`;
+          : `${val.toFixed(1)}${mMeta.unit || '%'}`;
         const lbl = `${c.name} ${c.st === '22' ? 'Parish' : c.st === '02' ? 'Borough' : 'County'}, ${c.stateAbbr}`;
-        const html = `<b>${lbl}</b><div class="tv"><span>${meta.short || meta.label}</span><span>${formattedVal}</span></div><div class="tv"><span>Vulnerability</span><span>${(c.svi ?? 0).toFixed(2)}</span></div><div class="tv"><span>Population</span><span>${(c.pop || 0).toLocaleString()}</span></div><div class="note" style="margin-top:5px">Synthetic demo values</div>`;
+        const html = `<b>${lbl}</b><div class="tv"><span>${mMeta.short || mMeta.label}</span><span>${formattedVal}</span></div><div class="tv"><span>Vulnerability</span><span>${(c.svi ?? 0).toFixed(2)}</span></div><div class="tv"><span>Population</span><span>${(c.pop || 0).toLocaleString()}</span></div><div class="note" style="margin-top:5px">Synthetic demo values</div>`;
         const tip = document.getElementById('tooltip');
         if (tip) {
           tip.innerHTML = html;
@@ -214,62 +408,29 @@ export function StateCountyMap({
         const tip = document.getElementById('tooltip');
         if (tip) tip.classList.remove('on');
       })
-      .on('click', (_, c: CountyRecord) => {
+      .on('click', (event: MouseEvent, c: CountyRecord) => {
+        event.stopPropagation();
+        zoomToCounty(c, true);
         if (onSelectCounty) {
           onSelectCounty(c);
         }
       });
 
-      // Animated Pulsing Need Markers on Top 4 Greatest Need Counties
-      const isBadLow = meta.bad === 'low';
-      const topCounties = [...stateCounties].sort((a, b) => {
-        const valA = (a.indicators as any)[metric] ?? 0;
-        const valB = (b.indicators as any)[metric] ?? 0;
-        return isBadLow ? valA - valB : valB - valA;
-      }).slice(0, 4);
-
-      topCounties.forEach(c => {
-        const centroid = path.centroid(c.feature);
-        if (!centroid || isNaN(centroid[0])) return;
-
-        // Outer pulsing ring
-        gMarkers.append('circle')
-          .attr('data-cx', centroid[0])
-          .attr('data-cy', centroid[1])
-          .attr('cx', centroid[0])
-          .attr('cy', centroid[1])
-          .attr('class', 'pulse-marker pointer-events-none')
-          .attr('fill', 'var(--rose, #FF5D8F)')
-          .attr('opacity', 0.65);
-
-        // Core dot
-        gMarkers.append('circle')
-          .attr('data-cx', centroid[0])
-          .attr('data-cy', centroid[1])
-          .attr('cx', centroid[0])
-          .attr('cy', centroid[1])
-          .attr('r', 2.8)
-          .attr('fill', '#ffffff')
-          .attr('stroke', 'var(--rose, #FF5D8F)')
-          .attr('stroke-width', 1.2)
-          .attr('class', 'pointer-events-none');
+      // Background click clears county selection if handler provided
+      svg.on('click', (event: MouseEvent) => {
+        if (event.target === svg.node()) {
+          if (onClearCounty) onClearCounty();
+          zoomToCounty(null, true);
+        }
       });
 
-      // Initial county zoom if one is already selected
-      if (selectedCountyId) {
-        const targetCounty = stateCounties.find(c => c.id === selectedCountyId);
-        if (targetCounty && path) {
-          const [[x0, y0], [x1, y1]] = path.bounds(targetCounty.feature);
-          const dx = x1 - x0;
-          const dy = y1 - y0;
-          const midX = (x0 + x1) / 2 + padding;
-          const midY = (y0 + y1) / 2 + padding;
-          const s = Math.min(6.5, 0.42 / Math.max(dx / width, dy / H));
-          const tx = width / 2 - s * midX;
-          const ty = H / 2 - s * midY;
-          svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(s));
-        }
-      }
+      // Initial pulse markers
+      updatePulseMarkers(curMetric);
+
+      // Initial outline for selected county without zooming the camera (keeps full state framing on refresh/reload)
+      updateSelectedOutline(selectedCountyId);
+
+      isInitializedRef.current = true;
     }
 
     initMap();
@@ -278,78 +439,78 @@ export function StateCountyMap({
       const tip = document.getElementById('tooltip');
       if (tip) tip.classList.remove('on');
     };
-  }, [stateFips, metric, layerId, height]);
+  }, [stateFips, height]);
 
-  // Smooth Zoom & Enlarge Effect when selectedCountyId changes
+  // Step 3: Implement Subtle West-to-East Fill Transition for Tabs
   useEffect(() => {
-    if (!svgRef.current || !zoomBehaviorRef.current || !pathRef.current) return;
-    const svg = svgRef.current;
-    const zoom = zoomBehaviorRef.current;
+    metricRef.current = metric;
+    layerIdRef.current = layerId;
+
+    if (!isInitializedRef.current || !gMapRef.current || !pathRef.current || countiesRef.current.length === 0) return;
     const path = pathRef.current;
     const width = containerRef.current?.clientWidth || 550;
-    const H = height;
-    const padding = 28;
+    const stateCounties = countiesRef.current;
+    const meta = METRICS_CONFIG[metric] || { label: metric, short: metric, bad: 'high', unit: '%' };
+    const values = stateCounties.map(c => (c.indicators as any)[metric] ?? 0);
+    const { getColor } = createSdohColorScale(values, metric, layerId, meta.bad as any);
 
-    // Update stroke highlights
-    svg.selectAll('path.county')
-      .attr('stroke', function (this: any) {
-        const id = d3.select(this).attr('data-id');
-        return id === selectedCountyId ? 'var(--cyan, #37C8CF)' : 'rgba(255,255,255,0.22)';
+    // Subtle west-to-east wave transition across counties
+    gMapRef.current.selectAll<SVGPathElement, CountyRecord>('path.county')
+      .transition('color-wave')
+      .duration(520)
+      .delay(c => {
+        const centroid = path.centroid(c.feature);
+        const cx = centroid && !isNaN(centroid[0]) ? centroid[0] : 0;
+        return (cx / width) * 450;
       })
-      .attr('stroke-width', function (this: any) {
-        const id = d3.select(this).attr('data-id');
-        return id === selectedCountyId ? 2.8 : 0.8;
-      });
+      .attr('fill', c => getColor((c.indicators as any)[metric] ?? 0));
 
-    if (selectedCountyId) {
-      // Find county and enlarge that particular region
-      const targetCounty = countiesRef.current.find(c => c.id === selectedCountyId);
-      if (targetCounty) {
-        // Raise selected county above peers
-        svg.selectAll('path.county')
-          .filter(function (this: any) {
-            return d3.select(this).attr('data-id') === selectedCountyId;
-          })
-          .raise();
+    // Recompute & smoothly update top-4 pulse markers
+    updatePulseMarkers(metric);
+  }, [metric, layerId]);
 
-        const [[x0, y0], [x1, y1]] = path.bounds(targetCounty.feature);
-        const dx = x1 - x0;
-        const dy = y1 - y0;
-        const midX = (x0 + x1) / 2 + padding;
-        const midY = (y0 + y1) / 2 + padding;
-        const s = Math.min(6.5, 0.42 / Math.max(dx / width, dy / H));
-        const tx = width / 2 - s * midX;
-        const ty = H / 2 - s * midY;
+  // Synchronize camera zoom and outline when selectedCountyId changes
+  useEffect(() => {
+    if (!isInitializedRef.current || countiesRef.current.length === 0) return;
+    if (currentSelectedCountyIdRef.current === selectedCountyId) return;
+    currentSelectedCountyIdRef.current = selectedCountyId;
 
-        svg.transition()
-          .duration(850)
-          .ease(d3.easeCubicInOut)
-          .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(s));
+    if (zoomOnSelect && selectedCountyId) {
+      const target = countiesRef.current.find(c => c.id === selectedCountyId);
+      if (target) {
+        zoomToCounty(target, true);
+        return;
       }
-    } else {
-      // Smoothly zoom back out to fit full state
-      svg.transition()
-        .duration(750)
-        .ease(d3.easeCubicInOut)
-        .call(zoom.transform, d3.zoomIdentity);
     }
-  }, [selectedCountyId, height]);
+
+    // Reset zoom to full state framing when selection changes without zoom flag (e.g. jurisdiction change)
+    if (!zoomOnSelect && svgRef.current && zoomRef.current) {
+      const t = d3.zoomTransform(svgRef.current.node()!);
+      if (t.k !== 1 || t.x !== 0 || t.y !== 0) {
+        svgRef.current.transition('camera-zoom').duration(600).ease(d3.easeCubicInOut).call(zoomRef.current.transform, d3.zoomIdentity);
+      }
+    }
+
+    updateSelectedOutline(selectedCountyId);
+  }, [selectedCountyId, zoomOnSelect]);
 
   // Interactive HUD Zoom Controls
   const handleZoomIn = () => {
-    if (!svgRef.current || !zoomBehaviorRef.current) return;
-    svgRef.current.transition().duration(350).call(zoomBehaviorRef.current.scaleBy, 1.4);
+    if (!svgRef.current || !zoomRef.current) return;
+    svgRef.current.transition('camera-zoom').duration(350).call(zoomRef.current.scaleBy, 1.4);
   };
 
   const handleZoomOut = () => {
-    if (!svgRef.current || !zoomBehaviorRef.current) return;
-    svgRef.current.transition().duration(350).call(zoomBehaviorRef.current.scaleBy, 1 / 1.4);
+    if (!svgRef.current || !zoomRef.current) return;
+    svgRef.current.transition('camera-zoom').duration(350).call(zoomRef.current.scaleBy, 1 / 1.4);
   };
 
   const handleResetZoom = () => {
-    if (!svgRef.current || !zoomBehaviorRef.current) return;
+    if (!svgRef.current || !zoomRef.current) return;
     if (onClearCounty) onClearCounty();
-    svgRef.current.transition().duration(600).call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+    currentSelectedCountyIdRef.current = null;
+    updateSelectedOutline(null);
+    svgRef.current.transition('camera-zoom').duration(600).ease(d3.easeCubicInOut).call(zoomRef.current.transform, d3.zoomIdentity);
   };
 
   return (

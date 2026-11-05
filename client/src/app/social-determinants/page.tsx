@@ -210,6 +210,7 @@ function SocialDeterminantsContent() {
   const [selectedCountyId, setSelectedCountyId] = useState<string | null>(
     activeCounty?._id || '27053'
   );
+  const [zoomOnSelect, setZoomOnSelect] = useState<boolean>(false);
 
   const dumbbellRef = useRef<HTMLDivElement>(null);
 
@@ -224,11 +225,12 @@ function SocialDeterminantsContent() {
     markWorkflowMilestone('layer');
   }, [markWorkflowMilestone]);
 
-  // Synchronize state and county when activeCounty changes from Topbar
+  // Synchronize state and county when activeCounty changes from Topbar (do not zoom into county)
   useEffect(() => {
     if (activeCounty?.stateFips) {
       setActiveStateFips(activeCounty.stateFips);
       setSelectedCountyId(activeCounty._id);
+      setZoomOnSelect(false);
     }
   }, [activeCounty]);
 
@@ -374,6 +376,7 @@ function SocialDeterminantsContent() {
                 const nextSt = e.target.value;
                 setActiveStateFips(nextSt);
                 setSelectedCountyId(null);
+                setZoomOnSelect(false);
               }}
             >
               {availableStates.map(s => (
@@ -419,8 +422,10 @@ function SocialDeterminantsContent() {
               stateFips={activeStateFips}
               metric={activeMetric}
               selectedCountyId={selectedCountyId}
+              zoomOnSelect={zoomOnSelect}
               onSelectCounty={c => {
                 setSelectedCountyId(c.id);
+                setZoomOnSelect(false);
                 markWorkflowMilestone('region');
               }}
               layerId={activeDomainId === 'access' ? 'access' : 'sdoh'}
@@ -676,6 +681,7 @@ function SocialDeterminantsContent() {
                           return;
                         }
                         setSelectedCountyId(c.id);
+                        setZoomOnSelect(true);
                         markWorkflowMilestone('region');
                       }}
                     >
