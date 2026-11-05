@@ -3,24 +3,37 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from './Icons';
 import { useRouter, usePathname } from 'next/navigation';
 import { getCountyRepository, STATE_META } from '@/utils/countyRepository';
+import gsap from 'gsap';
 
 interface TopbarProps {
   onOpenMobileMenu: () => void;
 }
 
 const RANGES: Record<number, string> = {
-  3: '2023 – 2025',
+  10: '2016 – 2025',
   5: '2021 – 2025',
-  10: '2016 – 2025'
+  3: '2023 – 2025'
 };
+
+const ROUTE_PAGES: Array<{ r: string; t: string }> = [
+  { r: '/', t: 'Community Health Dashboard' },
+  { r: '/health-map', t: 'Interactive Health Map' },
+  { r: '/census-tracts', t: 'Census Tract Explorer' },
+  { r: '/health-disparities', t: 'Health Disparity Analysis' },
+  { r: '/social-determinants', t: 'Social Determinants of Health' },
+  { r: '/disease-incidence', t: 'Disease Incidence' },
+  { r: '/program-utilization', t: 'Program Utilization' },
+  { r: '/assessments', t: 'Community Health Needs Assessments' },
+  { r: '/reports', t: 'Reports & Exports' },
+  { r: '/data-management', t: 'Data Management' }
+];
 
 const NOTIFICATIONS = [
   {
     icon: (
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-1 8.5z" />
       </svg>
     ),
@@ -30,7 +43,7 @@ const NOTIFICATIONS = [
   },
   {
     icon: (
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 3 2 20h20z" />
         <path d="M12 10v4M12 17.5v.5" />
       </svg>
@@ -41,7 +54,7 @@ const NOTIFICATIONS = [
   },
   {
     icon: (
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <rect x="5" y="4" width="14" height="17" rx="2" />
         <path d="M9 4V3h6v1M9 11h6M9 15h4" />
       </svg>
@@ -52,7 +65,7 @@ const NOTIFICATIONS = [
   },
   {
     icon: (
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z" />
         <path d="M14 3v5h5M9 13h6M9 17h6" />
       </svg>
@@ -65,11 +78,12 @@ const NOTIFICATIONS = [
 
 function countyLabel(c: any): string {
   if (!c) return '';
-  const name = (c.name || '').replace(/\s+(County|Parish|Borough)$/i, '');
+  const rawName = c.name || '';
+  const cleanName = rawName.replace(/\s+(County|Parish|Borough)$/i, '');
   const st = c.st || c.stateFips || (c.id ? String(c.id).padStart(5, '0').slice(0, 2) : '');
   const designation = st === '22' ? 'Parish' : st === '02' ? 'Borough' : 'County';
-  const abbr = c.stateAbbr || c.state?.abbr || (c.stateName ? c.stateName.slice(0, 2).toUpperCase() : '');
-  return `${name} ${designation}, ${abbr}`;
+  const abbr = c.stateAbbr || c.state?.abbr || (c.stateName ? STATE_META[st]?.[0] || c.stateName.slice(0, 2).toUpperCase() : '');
+  return `${cleanName} ${designation}, ${abbr}`;
 }
 
 function fmtK(v: number): string {
@@ -99,6 +113,8 @@ function peersOf(c: any, all: any[], n = 6) {
     .map((o) => o.x);
 }
 
+type ActiveDropdown = 'jur' | 'date' | 'bell' | 'role' | null;
+
 export function Topbar({ onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -108,73 +124,151 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     setActiveJurisdiction,
     jurisdictions,
     session,
-    trendYears,
+    trendYears = 10,
     setTrendYears,
     setWorkflowDrawerOpen,
     theme,
     setTheme
   } = useSession();
 
-  // Dropdown states
-  const [jurOpen, setJurOpen] = useState(false);
+  // Active dropdown state & position
+  const [activeDropdown, setActiveDropdown] = useState<ActiveDropdown>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Jurisdiction search input state
   const [jurFilter, setJurFilter] = useState('');
-  const [dateOpen, setDateOpen] = useState(false);
+
+  // Global search input state
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSearchIdx, setSelectedSearchIdx] = useState(0);
-  const [roleOpen, setRoleOpen] = useState(false);
-  const [bellOpen, setBellOpen] = useState(false);
+  const [tractHits, setTractHits] = useState<any[]>([]);
+
+  // Notifications badge state
   const [hasBadge, setHasBadge] = useState(true);
-  const [bellPos, setBellPos] = useState<{ top: number; left: number } | null>(null);
+
+  // County repository
   const [allCounties, setAllCounties] = useState<any[]>([]);
 
   useEffect(() => {
-    getCountyRepository().then((repo) => {
-      if (repo && repo.counties) {
-        setAllCounties(repo.counties);
-      }
-    }).catch(() => {});
+    getCountyRepository()
+      .then((repo) => {
+        if (repo && repo.counties) {
+          setAllCounties(repo.counties);
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  const jurRef = useRef<HTMLDivElement>(null);
-  const dateRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const roleRef = useRef<HTMLDivElement>(null);
-  const bellButtonRef = useRef<HTMLButtonElement>(null);
-  const bellDropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Close popups on click outside
+  // Open/toggle a dropdown anchored to a specific button
+  const openDropdown = (type: ActiveDropdown, anchor: HTMLElement, width: number) => {
+    if (activeDropdown === type) {
+      setActiveDropdown(null);
+      return;
+    }
+    const r = anchor.getBoundingClientRect();
+    let left: number;
+    if (type === 'role') {
+      left = r.right - width;
+      if (left + width > window.innerWidth - 10) {
+        left = window.innerWidth - width - 10;
+      }
+      left = Math.max(10, left);
+    } else {
+      left = r.left;
+      if (left + width > window.innerWidth - 10) {
+        left = window.innerWidth - width - 10;
+      }
+      left = Math.max(10, left);
+    }
+    const top = r.bottom + 8;
+    setDropdownPos({ top, left });
+    setActiveDropdown(type);
+  };
+
+  // Animate dropdown entrance with GSAP matching prototype lines 1757
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      const target = e.target as Node;
-      if (jurRef.current && !jurRef.current.contains(target)) setJurOpen(false);
-      if (dateRef.current && !dateRef.current.contains(target)) setDateOpen(false);
-      if (searchRef.current && !searchRef.current.contains(target)) setSearchOpen(false);
-      if (roleRef.current && !roleRef.current.contains(target)) setRoleOpen(false);
+    if (activeDropdown && dropdownRef.current) {
+      gsap.fromTo(
+        dropdownRef.current,
+        { opacity: 0, y: -6, clipPath: 'inset(0% 0% 100% 0%)' },
+        { opacity: 1, y: 0, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.45, ease: 'expo.out', clearProps: 'clipPath' }
+      );
+    }
+  }, [activeDropdown]);
+
+  // Close dropdown on outside click or Escape key
+  useEffect(() => {
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as HTMLElement;
       if (
-        bellButtonRef.current &&
-        !bellButtonRef.current.contains(target) &&
-        (!bellDropdownRef.current || !bellDropdownRef.current.contains(target))
+        target.closest('.dropdown') ||
+        target.closest('#jur-btn') ||
+        target.closest('#date-btn') ||
+        target.closest('#bell') ||
+        target.closest('#role-btn')
       ) {
-        setBellOpen(false);
+        return;
+      }
+      setActiveDropdown(null);
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setActiveDropdown(null);
+        setSearchOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+
+    document.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
-  // Update bell dropdown position on resize or scroll
+  // Update dropdown position on resize or scroll
   useEffect(() => {
+    if (!activeDropdown) return;
     const updatePos = () => {
-      if (bellOpen && bellButtonRef.current) {
-        const r = bellButtonRef.current.getBoundingClientRect();
-        const w = 320;
-        let left = r.left;
-        if (left + w > window.innerWidth - 10) {
-          left = window.innerWidth - w - 10;
+      let anchorId = '';
+      let width = 320;
+      if (activeDropdown === 'jur') {
+        anchorId = 'jur-btn';
+        width = 320;
+      } else if (activeDropdown === 'date') {
+        anchorId = 'date-btn';
+        width = 220;
+      } else if (activeDropdown === 'bell') {
+        anchorId = 'bell';
+        width = 340;
+      } else if (activeDropdown === 'role') {
+        anchorId = 'role-btn';
+        width = 280;
+      }
+      const anchor = document.getElementById(anchorId);
+      if (anchor) {
+        const r = anchor.getBoundingClientRect();
+        let left: number;
+        if (activeDropdown === 'role') {
+          left = r.right - width;
+          if (left + width > window.innerWidth - 10) {
+            left = window.innerWidth - width - 10;
+          }
+          left = Math.max(10, left);
+        } else {
+          left = r.left;
+          if (left + width > window.innerWidth - 10) {
+            left = window.innerWidth - width - 10;
+          }
+          left = Math.max(10, left);
         }
-        setBellPos({ top: r.bottom + 8, left: Math.max(10, left) });
+        setDropdownPos({ top: r.bottom + 8, left });
       }
     };
     window.addEventListener('resize', updatePos);
@@ -183,26 +277,23 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
       window.removeEventListener('resize', updatePos);
       window.removeEventListener('scroll', updatePos, true);
     };
-  }, [bellOpen]);
+  }, [activeDropdown]);
 
-  const toggleBell = () => {
-    if (!bellOpen && bellButtonRef.current) {
-      const r = bellButtonRef.current.getBoundingClientRect();
-      const w = 320;
-      let left = r.left;
-      if (left + w > window.innerWidth - 10) {
-        left = window.innerWidth - w - 10;
+  // Global search outside-click dismissal
+  useEffect(() => {
+    function handleClickOutsideSearch(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
       }
-      setBellPos({ top: r.bottom + 8, left: Math.max(10, left) });
     }
-    setHasBadge(false);
-    setBellOpen((prev) => !prev);
-  };
+    document.addEventListener('mousedown', handleClickOutsideSearch);
+    return () => document.removeEventListener('mousedown', handleClickOutsideSearch);
+  }, []);
 
-  // Keyboard shortcut '/' to focus search
+  // Keyboard shortcut '/' to focus search globally (when not typing in other inputs)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      if (e.key === '/' && !/input|textarea|select/i.test(document.activeElement?.tagName || '')) {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
@@ -211,7 +302,7 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Filtered counties for jurisdiction selector (matches local prototype peersOf + search)
+  // Filtered counties for jurisdiction selector (peer counties when empty, search results when typed)
   const jurHits = useMemo(() => {
     const q = jurFilter.toLowerCase().trim();
     const sourceList = allCounties.length > 0 ? allCounties : jurisdictions;
@@ -227,104 +318,80 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
       .slice(0, 12);
   }, [jurFilter, allCounties, jurisdictions, activeCounty]);
 
-  // Global search items (screens and counties) with instant suggestions
+  // Fetch tract hits when query is numeric with 6+ digits
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (/^\d{6,}/.test(q)) {
+      const countyFips = q.slice(0, 5);
+      fetch(`/api/tracts?county=${countyFips}`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          const raw = Array.isArray(data) ? data : data.data || [];
+          const matched = raw
+            .filter((t: any) => (t.id || t._id || t.geoid || '').startsWith(q))
+            .slice(0, 4);
+          setTractHits(matched);
+        })
+        .catch(() => setTractHits([]));
+    } else {
+      setTractHits([]);
+    }
+  }, [searchQuery]);
+
+  // Global search multi-entity results matching prototype line 2813-2823
   const searchResults = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    const results: Array<{ label: string; sub: string; type: 'screen' | 'county'; action: () => void }> = [];
+    if (q.length < 2) return [];
 
-    const screens = [
-      { name: 'Overview Dashboard', href: '/' },
-      { name: 'Interactive Health Map', href: '/health-map' },
-      { name: 'Census Tract Explorer', href: '/census-tracts' },
-      { name: 'Health Disparity Analysis', href: '/health-disparities' },
-      { name: 'Social Determinants of Health', href: '/social-determinants' },
-      { name: 'Disease Incidence', href: '/disease-incidence' },
-      { name: 'Program Utilization', href: '/program-utilization' },
-      { name: 'Community Needs Assessments', href: '/assessments' },
-      { name: 'Reports & Exports', href: '/reports' },
-      { name: 'Data Management', href: '/data-management' }
-    ];
-
-    if (!q) {
-      // Immediate suggestions on focus / selection
-      screens.slice(0, 5).forEach((s) => {
-        results.push({
-          label: s.name,
-          sub: 'Screen',
-          type: 'screen',
-          action: () => {
-            setSearchOpen(false);
-            setSearchQuery('');
-            if (pathname === s.href) {
-              window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-            } else {
-              router.push(s.href);
-            }
-          }
-        });
-      });
-
-      const sourceList = allCounties.length > 0 ? allCounties : jurisdictions;
-      const suggestedCounties = sourceList.slice(0, 5);
-      suggestedCounties.forEach((c: any) => {
-        const id = c.id || c._id;
-        results.push({
-          label: `${c.name}, ${c.stateName || c.state || c.stateAbbr || ''}`,
-          sub: `${c.pop ? (c.pop >= 1e6 ? (c.pop / 1e6).toFixed(1) + 'M' : Math.round(c.pop / 1e3) + 'k') + ' residents' : (c.totalTracts || 0) + ' tracts'}`,
-          type: 'county',
-          action: () => {
-            setActiveJurisdiction(id);
-            setSearchOpen(false);
-          }
-        });
-      });
-
-      return results;
-    }
-
-    screens.forEach((s) => {
-      if (s.name.toLowerCase().includes(q)) {
-        results.push({
-          label: s.name,
-          sub: 'Screen',
-          type: 'screen',
-          action: () => {
-            setSearchOpen(false);
-            setSearchQuery('');
-            if (pathname === s.href) {
-              window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-            } else {
-              router.push(s.href);
-            }
-          }
-        });
-      }
-    });
+    const pages = ROUTE_PAGES.filter((p) => p.t.toLowerCase().includes(q)).map((p) => ({
+      kind: 'page' as const,
+      r: p.r,
+      t: p.t
+    }));
 
     const sourceList = allCounties.length > 0 ? allCounties : jurisdictions;
-    sourceList.forEach((c: any) => {
-      const match =
-        (c.name && c.name.toLowerCase().includes(q)) ||
-        (c.stateName && c.stateName.toLowerCase().includes(q)) ||
-        (c.stateAbbr && c.stateAbbr.toLowerCase().includes(q)) ||
-        (c.state && c.state.toLowerCase().includes(q));
+    const cs = sourceList
+      .filter((c: any) => {
+        const text = `${c.name} ${c.stateName || c.state?.name || ''} ${c.stateAbbr || c.state?.abbr || ''}`.toLowerCase();
+        return text.includes(q);
+      })
+      .slice(0, 6)
+      .map((c: any) => ({
+        kind: 'county' as const,
+        c
+      }));
 
-      if (match && results.length < 18) {
-        const id = c.id || c._id;
-        results.push({
-          label: `${c.name}, ${c.stateName || c.state || c.stateAbbr || ''}`,
-          sub: `${c.pop ? (c.pop >= 1e6 ? (c.pop / 1e6).toFixed(1) + 'M' : Math.round(c.pop / 1e3) + 'k') + ' residents' : (c.totalTracts || 0) + ' tracts'}`,
-          type: 'county',
-          action: () => {
-            setActiveJurisdiction(id);
-            setSearchOpen(false);
-          }
-        });
+    const tr = tractHits.map((t: any) => ({
+      kind: 'tract' as const,
+      t
+    }));
+
+    return [...pages, ...cs, ...tr];
+  }, [searchQuery, allCounties, jurisdictions, tractHits]);
+
+  // Pick a search result item
+  const pickSearchResult = (item: any) => {
+    if (!item) return;
+    setSearchQuery('');
+    setSearchOpen(false);
+    searchInputRef.current?.blur();
+
+    if (item.kind === 'page') {
+      if (pathname === item.r) {
+        window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+      } else {
+        router.push(item.r);
       }
-    });
-
-    return results;
-  }, [searchQuery, allCounties, jurisdictions, router, setActiveJurisdiction]);
+    } else if (item.kind === 'county') {
+      const cid = item.c.id || item.c._id;
+      setActiveJurisdiction(cid);
+      router.push('/health-map');
+    } else if (item.kind === 'tract') {
+      const cid = item.t.countyId || item.t.county?.id || item.t.id?.slice(0, 5);
+      if (cid) setActiveJurisdiction(cid);
+      router.push('/census-tracts');
+    }
+  };
 
   // Completed workflow milestones count
   const wfCount = useMemo(() => {
@@ -334,49 +401,42 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
     return Object.values(wf).filter(Boolean).length;
   }, [session]);
 
-  // Workflow progress percentage for circular SVG
   const wfPct = Math.round((wfCount / 10) * 100);
-  const circumference = 2 * Math.PI * 11; // r=11 inside 28x28
-  const strokeDashoffset = circumference - (wfPct / 100) * circumference;
 
-  // Toggle theme - reloads the entire current page in the new theme
+  // Toggle theme - seamless instant switch
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
     try {
       localStorage.setItem('mapwell-theme', next);
     } catch {}
     document.documentElement.setAttribute('data-theme', next);
-    fetch('/api/session', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ theme: next })
-    }).catch(() => {});
-    window.location.reload();
+    setTheme(next);
   };
 
   const activeCountyLabel = activeCounty ? countyLabel(activeCounty) : 'King County, WA';
+  const initials = user?.avatar || 'PA';
 
   return (
-    <header id="topbar">
-      {/* Mobile Menu Button */}
-      <button
-        className="icon-btn menu-btn"
-        id="menu-btn"
-        aria-label="Open navigation"
-        onClick={onOpenMobileMenu}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-          <path d="M4 7h16M4 12h16M4 17h16" />
-        </svg>
-      </button>
+    <>
+      <header id="topbar">
+        {/* 1. Mobile Menu Button matching prototype line 880 */}
+        <button
+          className="icon-btn menu-btn"
+          id="menu-btn"
+          aria-label="Open navigation"
+          onClick={onOpenMobileMenu}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
 
-      {/* Jurisdiction Picker */}
-      <div className="relative" ref={jurRef}>
+        {/* 2. Jurisdiction Button matching prototype line 881 */}
         <button
           className="jur-btn"
           id="jur-btn"
           aria-label="Change jurisdiction"
-          onClick={() => setJurOpen(!jurOpen)}
+          onClick={(e) => openDropdown('jur', e.currentTarget, 320)}
         >
           <span className="pin">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -401,223 +461,107 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
           </svg>
         </button>
 
-        {jurOpen && (
-          <div
-            className="dropdown"
-            style={{
-              position: 'absolute',
-              top: '52px',
-              left: '0',
-              zIndex: 100,
-              width: '320px',
-              padding: '8px',
-              borderRadius: '16px',
-              background: 'var(--surface-solid)',
-              border: '1px solid var(--line-strong)',
-              boxShadow: 'var(--shadow)'
+        {/* 3. Global Search Input matching prototype line 882 */}
+        <div className="search" ref={searchRef}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            ref={searchInputRef}
+            id="g-search"
+            placeholder="Search counties, tracts or screens…"
+            autoComplete="off"
+            aria-label="Search"
+            value={searchQuery}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSearchQuery(val);
+              setSearchOpen(val.trim().length >= 2);
+              setSelectedSearchIdx(0);
             }}
-          >
-            <div style={{ padding: '6px 6px 10px' }}>
-              <b style={{ fontSize: '13px', display: 'block' }}>Active jurisdiction</b>
-              <div className="note" style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-                Sets the default county for every screen
-              </div>
-            </div>
-            <input
-              type="text"
-              className="input"
-              id="jp-q"
-              placeholder="Search counties"
-              value={jurFilter}
-              onChange={(e) => setJurFilter(e.target.value)}
-              autoFocus
-              style={{
-                width: '100%',
-                height: '38px',
-                padding: '0 12px',
-                borderRadius: '10px',
-                border: '1px solid var(--cyan)',
-                boxShadow: '0 0 0 3px var(--glow)',
-                background: 'var(--surface-2)',
-                color: 'var(--text)',
-                fontSize: '13px',
-                fontWeight: 500,
-                outline: 'none',
-                marginBottom: '6px'
-              }}
-            />
-            <div id="jp-r" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-              {!jurFilter && (
-                <div className="note" style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--muted)' }}>
-                  Current and peer counties
-                </div>
-              )}
-              {jurHits.map((c: any) => {
-                const cid = c.id || c._id;
-                const isSelected = activeCounty?._id === cid || (activeCounty as any)?.id === cid;
-                return (
-                  <div
-                    key={cid}
-                    className={`sr-item ${isSelected ? 'hl' : ''}`}
-                    data-c={cid}
-                    onClick={() => {
-                      setActiveJurisdiction(cid);
-                      setJurOpen(false);
-                      setJurFilter('');
-                      window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-                    }}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '10px',
-                      padding: '9px 10px',
-                      borderRadius: '9px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      background: isSelected ? 'var(--surface-2)' : undefined,
-                      color: 'var(--text)',
-                      transition: 'background 0.15s',
-                      userSelect: 'none'
-                    }}
-                  >
-                    <span style={{ fontWeight: 600 }}>{countyLabel(c)}</span>
-                    <small style={{ color: 'var(--faint)', fontSize: '12px' }}>
-                      {fmtK(c.pop || c.population || 0)}
-                    </small>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Global Search */}
-      <div className="search" ref={searchRef}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-          <circle cx="11" cy="11" r="7" />
-          <path d="m20 20-3.5-3.5" />
-        </svg>
-        <input
-          ref={searchInputRef}
-          id="g-search"
-          placeholder="Search counties, tracts or screens…"
-          autoComplete="off"
-          aria-label="Search"
-          value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
-            setSearchOpen(true);
-            setSelectedSearchIdx(0);
-          }}
-          onFocus={() => {
-            setSearchOpen(true);
-            setSelectedSearchIdx(0);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              setSelectedSearchIdx((prev) => Math.min(prev + 1, Math.max(0, searchResults.length - 1)));
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              setSelectedSearchIdx((prev) => Math.max(prev - 1, 0));
-            } else if (e.key === 'Enter') {
-              e.preventDefault();
-              if (searchResults[selectedSearchIdx]) {
-                searchResults[selectedSearchIdx].action();
-              } else if (searchResults[0]) {
-                searchResults[0].action();
+            onFocus={() => {
+              if (searchQuery.trim().length >= 2) {
+                setSearchOpen(true);
               }
-            } else if (e.key === 'Escape') {
-              setSearchOpen(false);
-            }
-          }}
-        />
-        <span className="kbd">/</span>
-
-        {searchOpen && (
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setSelectedSearchIdx((prev) => Math.min(prev + 1, Math.max(0, searchResults.length - 1)));
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSelectedSearchIdx((prev) => Math.max(prev - 1, 0));
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (searchResults[selectedSearchIdx]) {
+                  pickSearchResult(searchResults[selectedSearchIdx]);
+                }
+              } else if (e.key === 'Escape') {
+                setSearchOpen(false);
+              }
+            }}
+          />
+          <span className="kbd">/</span>
           <div
-            className="search-results open dropdown-anim"
+            className={`search-results ${searchOpen ? 'open' : ''}`}
             id="g-results"
             role="listbox"
-            style={{
-              position: 'absolute',
-              top: '48px',
-              left: 0,
-              right: 0,
-              background: 'var(--surface-solid)',
-              border: '1px solid var(--line-strong)',
-              borderRadius: '14px',
-              boxShadow: 'var(--shadow)',
-              padding: '6px',
-              zIndex: 100,
-              maxHeight: '340px',
-              overflowY: 'auto'
-            }}
           >
             {searchResults.length > 0 ? (
-              searchResults.map((item, idx) => (
+              searchResults.map((x, i) => (
                 <div
-                  key={idx}
-                  className={`sr-item ${idx === selectedSearchIdx ? 'hl' : ''}`}
+                  key={i}
+                  className={`sr-item ${i === selectedSearchIdx ? 'hl' : ''}`}
+                  data-i={i}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    item.action();
+                    pickSearchResult(x);
                   }}
-                  onClick={item.action}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '10px',
-                    padding: '9px 12px',
-                    borderRadius: '9px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    background: idx === selectedSearchIdx ? 'var(--surface-2)' : undefined,
-                    color: 'var(--text)',
-                    userSelect: 'none'
-                  }}
-                  onMouseEnter={() => setSelectedSearchIdx(idx)}
+                  onMouseEnter={() => setSelectedSearchIdx(i)}
                 >
-                  <span style={{ fontWeight: 600 }}>{item.label}</span>
-                  <small
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      color: item.type === 'screen' ? 'var(--cyan)' : 'var(--muted)'
-                    }}
-                  >
-                    {item.sub}
-                  </small>
+                  {x.kind === 'page' ? (
+                    <>
+                      <span>{x.t}</span>
+                      <small>Screen</small>
+                    </>
+                  ) : x.kind === 'county' ? (
+                    <>
+                      <span>{countyLabel(x.c)}</span>
+                      <small>Open on map</small>
+                    </>
+                  ) : (
+                    <>
+                      <span>{x.t.name}</span>
+                      <small>{x.t.id}</small>
+                    </>
+                  )}
                 </div>
               ))
             ) : (
-              <div className="sr-item" style={{ padding: '9px 12px' }}>
-                <small style={{ color: 'var(--faint)' }}>No screens, counties or tracts match</small>
+              <div className="sr-item">
+                <small>No screens, counties or tracts match</small>
               </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
 
-      <div className="top-spacer" />
+        {/* 4. Top Spacer matching prototype line 883 */}
+        <div className="top-spacer" />
 
-      {/* Date Range Selector */}
-      <div className="relative hide-m" ref={dateRef}>
+        {/* 5. Date Trend Window Selector matching prototype line 884 */}
         <button
-          className="date-btn"
+          className="date-btn hide-m"
           id="date-btn"
           aria-haspopup="listbox"
-          onClick={() => setDateOpen(!dateOpen)}
+          onClick={(e) => openDropdown('date', e.currentTarget, 220)}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
             <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
             <path d="M3.5 10h17M8 3v4M16 3v4" />
           </svg>
           <span className="t" id="date-lbl">
-            {RANGES[trendYears] || `${trendYears} Yrs`}
+            {RANGES[trendYears] || '2016 – 2025'}
           </span>
           <svg
             viewBox="0 0 24 24"
@@ -630,104 +574,65 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
           </svg>
         </button>
 
-        {dateOpen && (
-          <div
-            className="dropdown"
-            style={{
-              position: 'absolute',
-              top: '48px',
-              right: 0,
-              width: '210px',
-              borderRadius: '14px',
-              background: 'var(--surface-solid)',
-              border: '1px solid var(--line-strong)',
-              boxShadow: 'var(--shadow)',
-              padding: '6px',
-              zIndex: 100
-            }}
-          >
-            <div style={{ padding: '6px 10px 4px', fontSize: '11px', fontWeight: 600, color: 'var(--faint)' }}>
-              Trend analysis window
-            </div>
-            {[10, 5, 3].map((y) => (
-              <button
-                key={y}
-                onClick={() => {
-                  setTrendYears(y);
-                  setDateOpen(false);
-                  window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-                }}
-                style={{
-                  width: '100%',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  border: 0,
-                  background: trendYears === y ? 'var(--surface-2)' : 'none',
-                  fontSize: '12.5px',
-                  fontWeight: trendYears === y ? 600 : 500,
-                  cursor: 'pointer',
-                  color: 'var(--text)'
-                }}
-              >
-                <span>{y} years</span>
-                <span style={{ fontSize: '11px', color: 'var(--faint)' }}>{RANGES[y]}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Guided Workflow Chip - exact local prototype ring design */}
-      <button
-        className="wf-chip"
-        id="wf-chip"
-        aria-label="Open guided workflow"
-        onClick={() => setWorkflowDrawerOpen(true)}
-      >
-        <svg className="ring-svg" width="28" height="28" viewBox="0 0 28 28">
-          <circle cx="14" cy="14" r="12.25" fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
-          <circle
-            className="ring-fg"
-            cx="14"
-            cy="14"
-            r="12.25"
-            fill="none"
-            stroke="var(--teal)"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeDasharray={76.969}
-            strokeDashoffset={76.969 - (wfPct / 100) * 76.969}
-            transform="rotate(-90 14 14)"
-            style={{
-              transition: 'stroke-dashoffset 1.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
-              filter: 'drop-shadow(0 0 4px var(--teal))'
-            }}
-          />
-        </svg>
-        <span className="t">Workflow {wfCount}/10</span>
-      </button>
-
-      {/* Theme Toggle Button */}
-      <button
-        className="icon-btn"
-        id="theme-btn"
-        aria-label="Toggle theme"
-        onClick={toggleTheme}
-      >
-        <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={17} />
-      </button>
-
-      {/* Notification Bell */}
-      <div className="relative hide-m">
+        {/* 6. Guided Workflow Chip matching prototype line 885 */}
         <button
-          ref={bellButtonRef}
+          className="wf-chip"
+          id="wf-chip"
+          aria-label="Open guided workflow"
+          onClick={() => setWorkflowDrawerOpen(true)}
+        >
+          <svg className="ring-svg" width="28" height="28" viewBox="0 0 28 28">
+            <circle cx="14" cy="14" r="12.25" fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
+            <circle
+              className="ring-fg"
+              data-pct={wfCount * 10}
+              cx="14"
+              cy="14"
+              r="12.25"
+              fill="none"
+              stroke="var(--teal)"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              strokeDasharray={76.969}
+              strokeDashoffset={76.969 * (1 - (wfCount * 10) / 100)}
+              transform="rotate(-90 14 14)"
+              style={{
+                transition: 'stroke-dashoffset 1.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
+                filter: 'drop-shadow(0 0 4px var(--teal))'
+              }}
+            />
+          </svg>
+          <span className="t">Workflow {wfCount}/10</span>
+        </button>
+
+        {/* 7. Theme Toggle Button matching prototype line 886 */}
+        <button
           className="icon-btn"
+          id="theme-btn"
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          onClick={toggleTheme}
+        >
+          {theme === 'dark' ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
+            </svg>
+          )}
+        </button>
+
+        {/* 8. Notification Bell matching prototype line 887 */}
+        <button
+          className="icon-btn hide-m"
           id="bell"
           aria-label="Notifications"
-          onClick={toggleBell}
+          onClick={(e) => {
+            setHasBadge(false);
+            openDropdown('bell', e.currentTarget, 340);
+          }}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
             <path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0" />
@@ -735,148 +640,221 @@ export function Topbar({ onOpenMobileMenu }: TopbarProps) {
           {hasBadge && <span className="badge" />}
         </button>
 
-        {bellOpen && bellPos && (
-          <div
-            ref={bellDropdownRef}
-            className="dropdown dropdown-anim"
-            style={{
-              position: 'fixed',
-              top: `${bellPos.top}px`,
-              left: `${bellPos.left}px`,
-              zIndex: 100,
-              width: '320px',
-              padding: '8px',
-              borderRadius: '16px',
-              background: 'var(--surface-solid)',
-              border: '1px solid var(--line-strong)',
-              boxShadow: 'var(--shadow)'
-            }}
-          >
-            <div style={{ padding: '6px 8px 8px' }}>
-              <b style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>Notifications</b>
-            </div>
-            <div className="list" style={{ padding: '0 8px', width: '100%', display: 'flex', flexDirection: 'column' }}>
-              {NOTIFICATIONS.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="li"
-                  style={{
-                    display: 'flex',
-                    gap: '12px',
-                    alignItems: 'center',
-                    padding: '11px 0',
-                    borderBottom: idx === NOTIFICATIONS.length - 1 ? '0' : '1px solid var(--line)',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                  onClick={() => {
-                    setBellOpen(false);
-                    const target = `/${item.route}`;
-                    if (pathname === target) {
-                      window.dispatchEvent(new CustomEvent('mapwell:navigate'));
-                    } else {
-                      router.push(target);
-                    }
-                  }}
-                >
-                  <span
-                    className="ic"
-                    style={{
-                      width: '34px',
-                      height: '34px',
-                      borderRadius: '50%',
-                      flex: 'none',
-                      display: 'grid',
-                      placeItems: 'center',
-                      background: '#E6F3FF',
-                      border: '0',
-                      color: 'var(--cyan)'
-                    }}
-                  >
-                    {item.icon}
-                  </span>
-                  <div className="b" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <b style={{ whiteSpace: 'normal', fontSize: '13px', fontWeight: 700, lineHeight: '1.35', color: 'var(--text)' }}>
-                      {item.title}
-                    </b>
-                    <small style={{ color: 'var(--faint)', fontSize: '12px', marginTop: '2px' }}>
-                      {item.sub}
-                    </small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* User Role & Account Dropdown */}
-      <div className="relative" ref={roleRef}>
-        <button
+        {/* 9. User Role Badge matching prototype line 888 */}
+        <div
           className="role"
           id="role-btn"
+          role="button"
+          tabIndex={0}
           aria-label="Account menu"
-          onClick={() => setRoleOpen(!roleOpen)}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => openDropdown('role', e.currentTarget, 280)}
         >
           <span className="avatar mono" id="role-av" aria-hidden="true">
-            {user?.avatar || 'PA'}
+            {initials}
           </span>
           <span className="t">
             <b id="role-name">{user?.roleName || 'Public Health Analyst'}</b>
             <small id="role-org">{user?.organization || 'County Health Department'}</small>
           </span>
-        </button>
+        </div>
+      </header>
 
-        {roleOpen && (
-          <div
-            className="dropdown"
-            style={{
-              position: 'absolute',
-              top: '52px',
-              right: 0,
-              width: '260px',
-              borderRadius: '16px',
-              background: 'var(--surface-solid)',
-              border: '1px solid var(--line-strong)',
-              boxShadow: 'var(--shadow)',
-              padding: '12px',
-              zIndex: 100
-            }}
-          >
-            <div style={{ paddingBottom: '8px', marginBottom: '8px', borderBottom: '1px solid var(--line)' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>
-                {user?.roleName || 'Public Health Analyst'}
-              </div>
-              <div style={{ fontSize: '11.5px', color: 'var(--cyan)', marginTop: '2px' }}>
-                {user?.email || 'analyst@health.gov'}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-                {user?.organization || 'County Health Department'}
-              </div>
+      {/* Global Clamped Dropdowns Container */}
+      {activeDropdown === 'jur' && (
+        <div
+          ref={dropdownRef}
+          className="dropdown dropdown-anim"
+          style={{
+            position: 'fixed',
+            top: `${dropdownPos.top}px`,
+            left: `${dropdownPos.left}px`,
+            width: '320px',
+            zIndex: 100
+          }}
+        >
+          <div style={{ padding: '6px 6px 10px' }}>
+            <b style={{ fontSize: '13px', display: 'block' }}>Active jurisdiction</b>
+            <div className="note" style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+              Sets the default county for every screen
             </div>
+          </div>
+          <input
+            className="input"
+            id="jp-q"
+            placeholder="Search counties"
+            style={{
+              width: '100%',
+              marginBottom: '6px',
+              borderColor: 'var(--cyan)',
+              boxShadow: '0 0 0 3px var(--glow)'
+            }}
+            value={jurFilter}
+            onChange={(e) => setJurFilter(e.target.value)}
+            autoFocus
+          />
+          <div id="jp-r" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+            {!jurFilter && (
+              <div className="note" style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--muted)' }}>
+                Current and peer counties
+              </div>
+            )}
+            {jurHits.map((c: any) => {
+              const cid = c.id || c._id;
+              const isSelected = activeCounty?._id === cid || (activeCounty as any)?.id === cid;
+              return (
+                <div
+                  key={cid}
+                  className={`sr-item ${isSelected ? 'hl' : ''}`}
+                  data-c={cid}
+                  onClick={() => {
+                    setActiveJurisdiction(cid);
+                    setActiveDropdown(null);
+                    setJurFilter('');
+                    window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{countyLabel(c)}</span>
+                  <small style={{ color: 'var(--faint)', fontSize: '12px' }}>
+                    {fmtK(c.pop || c.population || 0)}
+                  </small>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-            <button
+      {activeDropdown === 'date' && (
+        <div
+          ref={dropdownRef}
+          className="dropdown dropdown-anim"
+          style={{
+            position: 'fixed',
+            top: `${dropdownPos.top}px`,
+            left: `${dropdownPos.left}px`,
+            width: '220px',
+            zIndex: 100
+          }}
+        >
+          <div style={{ padding: '6px 8px 8px' }}>
+            <b style={{ fontSize: '13px', display: 'block' }}>Trend window</b>
+            <div className="note" style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+              Applies to dashboard trend charts
+            </div>
+          </div>
+          {[10, 5, 3].map((y) => (
+            <div
+              key={y}
+              className={`sr-item ${y === trendYears ? 'hl' : ''}`}
+              data-r={y}
               onClick={() => {
-                setRoleOpen(false);
-                logout();
-              }}
-              className="btn sm"
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                color: 'var(--rose)',
-                borderColor: 'var(--rose)'
+                setTrendYears(y);
+                setActiveDropdown(null);
+                window.dispatchEvent(new CustomEvent('mapwell:navigate'));
               }}
             >
-              <Icon name="x" size={14} />
-              <span>Sign out</span>
-            </button>
+              <span>{RANGES[y]}</span>
+              <small>{y} years</small>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeDropdown === 'bell' && (
+        <div
+          ref={dropdownRef}
+          className="dropdown dropdown-anim"
+          style={{
+            position: 'fixed',
+            top: `${dropdownPos.top}px`,
+            left: `${dropdownPos.left}px`,
+            width: '340px',
+            boxSizing: 'border-box',
+            padding: '8px',
+            zIndex: 100
+          }}
+        >
+          <div style={{ padding: '6px 8px 8px' }}>
+            <b style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>Notifications</b>
           </div>
-        )}
-      </div>
-    </header>
+          <div className="list" style={{ padding: '0 8px', width: '100%', boxSizing: 'border-box' }}>
+            {NOTIFICATIONS.map((item, idx) => (
+              <div
+                key={idx}
+                className="li"
+                style={{ cursor: 'pointer' }}
+                data-go={item.route}
+                onClick={() => {
+                  setActiveDropdown(null);
+                  const target = `/${item.route}`;
+                  if (pathname === target) {
+                    window.dispatchEvent(new CustomEvent('mapwell:navigate'));
+                  } else {
+                    router.push(target);
+                  }
+                }}
+              >
+                <span className="ic">{item.icon}</span>
+                <div className="b" style={{ flex: 1, minWidth: 0 }}>
+                  <b style={{ whiteSpace: 'normal', wordBreak: 'normal', lineHeight: 1.35 }}>{item.title}</b>
+                  <small style={{ display: 'block', color: 'var(--faint)', fontSize: '12px', marginTop: '2px' }}>
+                    {item.sub}
+                  </small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeDropdown === 'role' && (
+        <div
+          ref={dropdownRef}
+          className="dropdown dropdown-anim"
+          style={{
+            position: 'fixed',
+            top: `${dropdownPos.top}px`,
+            left: `${dropdownPos.left}px`,
+            width: '280px',
+            zIndex: 100,
+            padding: '8px',
+            boxSizing: 'border-box',
+            transformOrigin: 'top right'
+          }}
+        >
+          <div style={{ padding: '8px 10px 10px' }}>
+            <b style={{ fontSize: '13px', display: 'block', color: 'var(--text)' }} id="dd-role">
+              {user?.roleName || 'Public Health Analyst'}
+            </b>
+            <div className="note" id="dd-org" style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+              {user?.organization || 'County Health Department'}
+            </div>
+          </div>
+          <div
+            className="sr-item"
+            id="dd-wf"
+            onClick={() => {
+              setActiveDropdown(null);
+              setWorkflowDrawerOpen(true);
+            }}
+          >
+            <span>Guided workflow</span>
+            <small>{wfCount}/10</small>
+          </div>
+          <div
+            className="sr-item"
+            id="dd-out"
+            onClick={() => {
+              setActiveDropdown(null);
+              logout();
+            }}
+          >
+            <span>Sign out</span>
+            <small>Return to sign-in</small>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

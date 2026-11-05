@@ -1088,21 +1088,27 @@ html, body {
     transform: translateY(-6px);
     clip-path: inset(0% 0% 100% 0%);
   }
-  100% {
+  99% {
     opacity: 1;
     transform: translateY(0);
     clip-path: inset(0% 0% 0% 0%);
   }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    clip-path: none;
+  }
 }
 
-.dropdown-anim {
-  animation: dropdownEnter 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.dropdown-anim,
+.dropdown {
+  animation: dropdownEnter 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   transform-origin: top left;
 }
 
 .search-results.open {
   display: block !important;
-  animation: dropdownEnter 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: dropdownEnter 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   transform-origin: top left;
 }
 
