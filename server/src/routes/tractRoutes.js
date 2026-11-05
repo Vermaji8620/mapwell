@@ -5,6 +5,7 @@ import { METRICS } from '../config/metrics.js';
 import { getMetricValue } from '../utils/mathAnalytics.js';
 import { generateTractsForCounty } from '../utils/tractGenerator.js';
 import { getCountyFromFullDataset } from '../utils/countyDataHelper.js';
+import { invalidateCoverageCache } from './dataManagementRoutes.js';
 
 const router = express.Router();
 
@@ -64,6 +65,7 @@ router.get('/', async (req, res, next) => {
         if (generated.length > 0) {
           try {
             await CensusTract.insertMany(generated, { ordered: false });
+            invalidateCoverageCache();
           } catch (err) {
             // Ignore duplicate key warnings
           }

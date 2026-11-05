@@ -29,10 +29,17 @@ async function generateUniqueErrorId() {
   return id;
 }
 
-// In-memory cache for state coverage calculations (5-minute TTL)
+// In-memory cache for state coverage calculations (60s TTL + Promise sharing)
 let cachedStateCoverage = null;
 let lastCoverageFetchTime = 0;
-const COVERAGE_CACHE_TTL = 5 * 60 * 1000;
+let inFlightCoveragePromise = null;
+const COVERAGE_CACHE_TTL = 60 * 1000;
+
+export function invalidateCoverageCache() {
+  cachedStateCoverage = null;
+  lastCoverageFetchTime = 0;
+  inFlightCoveragePromise = null;
+}
 
 async function getStateCoverage() {
   const now = Date.now();
@@ -40,45 +47,62 @@ async function getStateCoverage() {
     return cachedStateCoverage;
   }
 
-  try {
-    const tractAgg = await CensusTract.aggregate([
-      {
-        $project: {
-          stFips: { $substrCP: ['$countyFips', 0, 2] },
-          isComplete: {
-            $cond: [
-              { $and: [{ $gt: ['$svi', 0] }, { $gt: ['$population', 0] }] },
-              1,
-              0
-            ]
+  // Deduplicate concurrent in-flight requests (prevent thundering herd)
+  if (inFlightCoveragePromise) {
+    return inFlightCoveragePromise;
+  }
+
+  inFlightCoveragePromise = (async () => {
+    try {
+      const tractAgg = await CensusTract.aggregate([
+        {
+          $match: {
+            countyFips: { $type: 'string' },
+            $expr: { $gte: [{ $strLenCP: '$countyFips' }, 2] }
+          }
+        },
+        {
+          $project: {
+            stFips: { $substrCP: ['$countyFips', 0, 2] },
+            isComplete: {
+              $cond: [
+                { $and: [{ $gt: ['$svi', 0] }, { $gt: ['$population', 0] }] },
+                1,
+                0
+              ]
+            }
+          }
+        },
+        {
+          $group: {
+            _id: '$stFips',
+            total: { $sum: 1 },
+            complete: { $sum: '$isComplete' }
           }
         }
-      },
-      {
-        $group: {
-          _id: '$stFips',
-          total: { $sum: 1 },
-          complete: { $sum: '$isComplete' }
+      ]);
+
+      const stateCoverage = {};
+      for (const item of tractAgg) {
+        if (item._id && item._id.length === 2) {
+          stateCoverage[item._id] = item.total > 0
+            ? Number(((item.complete / item.total) * 100).toFixed(1))
+            : 98.8;
         }
       }
-    ]);
 
-    const stateCoverage = {};
-    for (const item of tractAgg) {
-      if (item._id && item._id.length === 2) {
-        stateCoverage[item._id] = item.total > 0
-          ? Number(((item.complete / item.total) * 100).toFixed(1))
-          : 98.8;
-      }
+      cachedStateCoverage = stateCoverage;
+      lastCoverageFetchTime = Date.now();
+      return stateCoverage;
+    } catch (err) {
+      console.warn('[DataManagement] State coverage aggregation fallback:', err.message);
+      return cachedStateCoverage || {};
+    } finally {
+      inFlightCoveragePromise = null;
     }
+  })();
 
-    cachedStateCoverage = stateCoverage;
-    lastCoverageFetchTime = now;
-    return stateCoverage;
-  } catch (err) {
-    console.warn('[DataManagement] State coverage aggregation fallback:', err.message);
-    return cachedStateCoverage || {};
-  }
+  return inFlightCoveragePromise;
 }
 
 /**
@@ -197,6 +221,7 @@ router.post('/sources/sync-all', async (req, res, next) => {
     }
 
     const updatedSources = await DataSource.find({}).lean();
+    invalidateCoverageCache();
     res.json({
       message: 'All data sources synchronized successfully.',
       sources: updatedSources,
@@ -247,6 +272,7 @@ router.post('/sources/:id/sync', async (req, res, next) => {
       startedAt: new Date()
     });
 
+    invalidateCoverageCache();
     res.json({
       message: `${source.name} synchronized successfully.`,
       source,
@@ -300,6 +326,7 @@ router.patch('/errors/:id/resolve', async (req, res, next) => {
       return res.status(404).json({ error: `Issue '${id}' not found.` });
     }
 
+    invalidateCoverageCache();
     res.json({ message: `Issue '${id}' resolved.`, errorDoc });
   } catch (err) {
     next(err);
@@ -393,6 +420,7 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       });
     }
 
+    invalidateCoverageCache();
     res.json({
       success: true,
       filename: req.file.originalname,
