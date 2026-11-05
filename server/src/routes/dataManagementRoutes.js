@@ -29,6 +29,58 @@ async function generateUniqueErrorId() {
   return id;
 }
 
+// In-memory cache for state coverage calculations (5-minute TTL)
+let cachedStateCoverage = null;
+let lastCoverageFetchTime = 0;
+const COVERAGE_CACHE_TTL = 5 * 60 * 1000;
+
+async function getStateCoverage() {
+  const now = Date.now();
+  if (cachedStateCoverage && (now - lastCoverageFetchTime < COVERAGE_CACHE_TTL)) {
+    return cachedStateCoverage;
+  }
+
+  try {
+    const tractAgg = await CensusTract.aggregate([
+      {
+        $project: {
+          stFips: { $substrCP: ['$countyFips', 0, 2] },
+          isComplete: {
+            $cond: [
+              { $and: [{ $gt: ['$svi', 0] }, { $gt: ['$population', 0] }] },
+              1,
+              0
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: '$stFips',
+          total: { $sum: 1 },
+          complete: { $sum: '$isComplete' }
+        }
+      }
+    ]);
+
+    const stateCoverage = {};
+    for (const item of tractAgg) {
+      if (item._id && item._id.length === 2) {
+        stateCoverage[item._id] = item.total > 0
+          ? Number(((item.complete / item.total) * 100).toFixed(1))
+          : 98.8;
+      }
+    }
+
+    cachedStateCoverage = stateCoverage;
+    lastCoverageFetchTime = now;
+    return stateCoverage;
+  } catch (err) {
+    console.warn('[DataManagement] State coverage aggregation fallback:', err.message);
+    return cachedStateCoverage || {};
+  }
+}
+
 /**
  * GET /api/data/stats
  * Calculate live data quality scores, connected source counts, and surveillance indicators from MongoDB
@@ -74,15 +126,7 @@ router.get('/stats', async (req, res, next) => {
     ];
 
     // Calculate state-level coverage map from stored tracts
-    const jurisdictions = await Jurisdiction.find({}).lean();
-    const stateCoverage = {};
-    for (const jur of jurisdictions) {
-      const stFips = jur._id.slice(0, 2);
-      const jTracts = await CensusTract.countDocuments({ countyFips: jur._id });
-      const jComplete = await CensusTract.countDocuments({ countyFips: jur._id, svi: { $gt: 0 }, population: { $gt: 0 } });
-      const pct = jTracts > 0 ? Number(((jComplete / jTracts) * 100).toFixed(1)) : 98.8;
-      stateCoverage[stFips] = pct;
-    }
+    const stateCoverage = await getStateCoverage();
 
     res.json({
       connectedSources,
