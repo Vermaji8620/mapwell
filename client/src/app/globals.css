@@ -349,6 +349,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .conn .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .conn .logo{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--surface-2);border:1px solid var(--line);color:var(--cyan)}
 .conn .logo svg{width:20px;height:20px}
+.conn .kv{grid-template-columns:auto 1fr}
+.conn .kv dt{white-space:nowrap}
+.conn .kv dd{min-width:0;word-break:break-word}
 .log{font-size:12px;max-height:180px;overflow:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:var(--muted)}
 .log div{padding:2px 0}
 .log .ok{color:var(--green)}.log .err{color:var(--rose)}.log .warn{color:var(--amber)}
@@ -1197,3 +1200,44 @@ html, body {
 .page-entrance {
   animation: pageEntrance 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+/* upload box: the label must render as a block, not inline */
+.dropzone {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  width: 100% !important;
+  min-height: 150px !important;
+  padding: 24px 18px !important;
+  text-align: center !important;
+  box-sizing: border-box !important;
+}
+.dropzone svg {
+  display: block !important;
+  width: 30px !important;
+  height: 30px !important;
+  margin: 0 auto 4px !important;
+  flex: none !important;
+}
+.dropzone > div {
+  max-width: 100% !important;
+}
+.dropzone:focus-within {
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 4px var(--glow) !important;
+}
+#dm-up .log {
+  max-height: 200px;
+}
+#dm-up .row {
+  flex-wrap: nowrap;
+}
+#dm-up .row b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

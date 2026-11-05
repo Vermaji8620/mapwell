@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
 
@@ -10,92 +10,149 @@ export interface StateCoverageMapProps {
   onSelectState?: (stateName: string, covPct: number) => void;
 }
 
-// Deterministic state coverage generator (82% to 99.8%) matching MapWell specification
-export const STATE_COVERAGE: Record<string, { name: string; abbr: string; cov: number }> = {
-  '01': { name: 'Alabama', abbr: 'AL', cov: 91.4 },
-  '02': { name: 'Alaska', abbr: 'AK', cov: 83.2 },
-  '04': { name: 'Arizona', abbr: 'AZ', cov: 94.7 },
-  '05': { name: 'Arkansas', abbr: 'AR', cov: 89.6 },
-  '06': { name: 'California', abbr: 'CA', cov: 98.9 },
-  '08': { name: 'Colorado', abbr: 'CO', cov: 97.4 },
-  '09': { name: 'Connecticut', abbr: 'CT', cov: 98.1 },
-  '10': { name: 'Delaware', abbr: 'DE', cov: 96.5 },
-  '11': { name: 'District of Columbia', abbr: 'DC', cov: 99.4 },
-  '12': { name: 'Florida', abbr: 'FL', cov: 95.8 },
-  '13': { name: 'Georgia', abbr: 'GA', cov: 92.3 },
-  '15': { name: 'Hawaii', abbr: 'HI', cov: 93.8 },
-  '16': { name: 'Idaho', abbr: 'ID', cov: 91.0 },
-  '17': { name: 'Illinois', abbr: 'IL', cov: 96.9 },
-  '18': { name: 'Indiana', abbr: 'IN', cov: 93.7 },
-  '19': { name: 'Iowa', abbr: 'IA', cov: 95.2 },
-  '20': { name: 'Kansas', abbr: 'KS', cov: 92.8 },
-  '21': { name: 'Kentucky', abbr: 'KY', cov: 90.5 },
-  '22': { name: 'Louisiana', abbr: 'LA', cov: 88.9 },
-  '23': { name: 'Maine', abbr: 'ME', cov: 94.6 },
-  '24': { name: 'Maryland', abbr: 'MD', cov: 97.8 },
-  '25': { name: 'Massachusetts', abbr: 'MA', cov: 99.2 },
-  '26': { name: 'Michigan', abbr: 'MI', cov: 96.1 },
-  '27': { name: 'Minnesota', abbr: 'MN', cov: 98.5 },
-  '28': { name: 'Mississippi', abbr: 'MS', cov: 87.4 },
-  '29': { name: 'Missouri', abbr: 'MO', cov: 91.8 },
-  '30': { name: 'Montana', abbr: 'MT', cov: 89.1 },
-  '31': { name: 'Nebraska', abbr: 'NE', cov: 94.0 },
-  '32': { name: 'Nevada', abbr: 'NV', cov: 93.4 },
-  '33': { name: 'New Hampshire', abbr: 'NH', cov: 97.1 },
-  '34': { name: 'New Jersey', abbr: 'NJ', cov: 98.4 },
-  '35': { name: 'New Mexico', abbr: 'NM', cov: 89.9 },
-  '36': { name: 'New York', abbr: 'NY', cov: 98.7 },
-  '37': { name: 'North Carolina', abbr: 'NC', cov: 95.3 },
-  '38': { name: 'North Dakota', abbr: 'ND', cov: 92.6 },
-  '39': { name: 'Ohio', abbr: 'OH', cov: 95.7 },
-  '40': { name: 'Oklahoma', abbr: 'OK', cov: 88.7 },
-  '41': { name: 'Oregon', abbr: 'OR', cov: 97.2 },
-  '42': { name: 'Pennsylvania', abbr: 'PA', cov: 96.4 },
-  '44': { name: 'Rhode Island', abbr: 'RI', cov: 98.0 },
-  '45': { name: 'South Carolina', abbr: 'SC', cov: 92.1 },
-  '46': { name: 'South Dakota', abbr: 'SD', cov: 91.5 },
-  '47': { name: 'Tennessee', abbr: 'TN', cov: 93.1 },
-  '48': { name: 'Texas', abbr: 'TX', cov: 94.2 },
-  '49': { name: 'Utah', abbr: 'UT', cov: 96.0 },
-  '50': { name: 'Vermont', abbr: 'VT', cov: 96.8 },
-  '51': { name: 'Virginia', abbr: 'VA', cov: 97.5 },
-  '53': { name: 'Washington', abbr: 'WA', cov: 98.8 },
-  '54': { name: 'West Virginia', abbr: 'WV', cov: 88.3 },
-  '55': { name: 'Wisconsin', abbr: 'WI', cov: 97.0 },
-  '56': { name: 'Wyoming', abbr: 'WY', cov: 90.2 }
+export const STATE_META: Record<string, { abbr: string; name: string; region: string }> = {
+  '01': { abbr: 'AL', name: 'Alabama', region: 'South' },
+  '02': { abbr: 'AK', name: 'Alaska', region: 'West' },
+  '04': { abbr: 'AZ', name: 'Arizona', region: 'West' },
+  '05': { abbr: 'AR', name: 'Arkansas', region: 'South' },
+  '06': { abbr: 'CA', name: 'California', region: 'West' },
+  '08': { abbr: 'CO', name: 'Colorado', region: 'West' },
+  '09': { abbr: 'CT', name: 'Connecticut', region: 'Northeast' },
+  '10': { abbr: 'DE', name: 'Delaware', region: 'South' },
+  '11': { abbr: 'DC', name: 'District of Columbia', region: 'South' },
+  '12': { abbr: 'FL', name: 'Florida', region: 'South' },
+  '13': { abbr: 'GA', name: 'Georgia', region: 'South' },
+  '15': { abbr: 'HI', name: 'Hawaii', region: 'West' },
+  '16': { abbr: 'ID', name: 'Idaho', region: 'West' },
+  '17': { abbr: 'IL', name: 'Illinois', region: 'Midwest' },
+  '18': { abbr: 'IN', name: 'Indiana', region: 'Midwest' },
+  '19': { abbr: 'IA', name: 'Iowa', region: 'Midwest' },
+  '20': { abbr: 'KS', name: 'Kansas', region: 'Midwest' },
+  '21': { abbr: 'KY', name: 'Kentucky', region: 'South' },
+  '22': { abbr: 'LA', name: 'Louisiana', region: 'South' },
+  '23': { abbr: 'ME', name: 'Maine', region: 'Northeast' },
+  '24': { abbr: 'MD', name: 'Maryland', region: 'South' },
+  '25': { abbr: 'MA', name: 'Massachusetts', region: 'Northeast' },
+  '26': { abbr: 'MI', name: 'Michigan', region: 'Midwest' },
+  '27': { abbr: 'MN', name: 'Minnesota', region: 'Midwest' },
+  '28': { abbr: 'MS', name: 'Mississippi', region: 'South' },
+  '29': { abbr: 'MO', name: 'Missouri', region: 'Midwest' },
+  '30': { abbr: 'MT', name: 'Montana', region: 'West' },
+  '31': { abbr: 'NE', name: 'Nebraska', region: 'Midwest' },
+  '32': { abbr: 'NV', name: 'Nevada', region: 'West' },
+  '33': { abbr: 'NH', name: 'New Hampshire', region: 'Northeast' },
+  '34': { abbr: 'NJ', name: 'New Jersey', region: 'Northeast' },
+  '35': { abbr: 'NM', name: 'New Mexico', region: 'West' },
+  '36': { abbr: 'NY', name: 'New York', region: 'Northeast' },
+  '37': { abbr: 'NC', name: 'North Carolina', region: 'South' },
+  '38': { abbr: 'ND', name: 'North Dakota', region: 'Midwest' },
+  '39': { abbr: 'OH', name: 'Ohio', region: 'Midwest' },
+  '40': { abbr: 'OK', name: 'Oklahoma', region: 'South' },
+  '41': { abbr: 'OR', name: 'Oregon', region: 'West' },
+  '42': { abbr: 'PA', name: 'Pennsylvania', region: 'Northeast' },
+  '44': { abbr: 'RI', name: 'Rhode Island', region: 'Northeast' },
+  '45': { abbr: 'SC', name: 'South Carolina', region: 'South' },
+  '46': { abbr: 'SD', name: 'South Dakota', region: 'Midwest' },
+  '47': { abbr: 'TN', name: 'Tennessee', region: 'South' },
+  '48': { abbr: 'TX', name: 'Texas', region: 'South' },
+  '49': { abbr: 'UT', name: 'Utah', region: 'West' },
+  '50': { abbr: 'VT', name: 'Vermont', region: 'Northeast' },
+  '51': { abbr: 'VA', name: 'Virginia', region: 'South' },
+  '53': { abbr: 'WA', name: 'Washington', region: 'West' },
+  '54': { abbr: 'WV', name: 'West Virginia', region: 'South' },
+  '55': { abbr: 'WI', name: 'Wisconsin', region: 'Midwest' },
+  '56': { abbr: 'WY', name: 'Wyoming', region: 'West' }
 };
+
+// Deterministic prototype hash matching entire_website.html line 1064
+export function hashString(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1e6) / 1e6;
+}
+
+export function getCalculatedStateCoverage(st: string): number {
+  return Math.max(82, Math.min(99.9, 99.6 - hashString('cov' + st) * 9 - (st === '02' ? 6 : 0)));
+}
+
+export const STATE_COVERAGE: Record<string, { name: string; abbr: string; cov: number }> = {};
+Object.entries(STATE_META).forEach(([st, meta]) => {
+  STATE_COVERAGE[st] = {
+    name: meta.name,
+    abbr: meta.abbr,
+    cov: Number(getCalculatedStateCoverage(st).toFixed(1))
+  };
+});
+
+// Color ramp for layer: 'access'
+export const ACCESS_RAMP = ['#C6EAF7', '#7FC6F2', '#3B97E6', '#1F63C6', '#143F86'];
+export const MAP_LOW = '#101B45';
+
+export function computeCoverageScale(values: number[]) {
+  const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
+    d3.interpolateRgb(MAP_LOW, ACCESS_RAMP[0])(0.6),
+    ...ACCESS_RAMP
+  ]);
+  const q = d3.scaleQuantile().domain(values).range(d3.range(7));
+  // bad: 'low' -> flip ramp
+  const tOf = (i: number) => 1 - (i + 0.5) / 7;
+  const fn = (v: number) => interp(tOf(q(v)));
+  const bins = d3.range(7).map(i => interp(tOf(i)));
+  const ext = d3.extent(values) as [number, number];
+  return { fn, bins, ext: ext[0] != null ? ext : [82, 99.9] };
+}
 
 let topoCache: any = null;
 
 export function StateCoverageMap({ height = 360, coverageOverrides, onSelectState }: StateCoverageMapProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const svgRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
+  const d3ContainerRef = useRef<HTMLDivElement>(null);
+  const onSelectStateRef = useRef(onSelectState);
+  onSelectStateRef.current = onSelectState;
 
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
     y: number;
-    name: string;
-    abbr: string;
+    countyName: string;
+    stateName: string;
     cov: number;
   }>({
     visible: false,
     x: 0,
     y: 0,
-    name: '',
-    abbr: '',
+    countyName: '',
+    stateName: '',
     cov: 0
   });
 
-  const [activeStateFips, setActiveStateFips] = useState<string | null>(null);
+  // Calculate coverage for all states
+  const stateCovMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    Object.keys(STATE_META).forEach(st => {
+      map[st] = coverageOverrides?.[st] ?? STATE_COVERAGE[st]?.cov ?? getCalculatedStateCoverage(st);
+    });
+    return map;
+  }, [coverageOverrides]);
+
+  const stateCovMapRef = useRef(stateCovMap);
+  stateCovMapRef.current = stateCovMap;
+
+  const colorScale = useMemo(() => {
+    return computeCoverageScale(Object.values(stateCovMap));
+  }, [stateCovMap]);
+
+  const colorScaleRef = useRef(colorScale);
+  colorScaleRef.current = colorScale;
 
   useEffect(() => {
     let isMounted = true;
 
     async function initMap() {
-      if (!containerRef.current) return;
-      const container = containerRef.current;
+      if (!d3ContainerRef.current) return;
+      const container = d3ContainerRef.current;
       container.innerHTML = '';
 
       if (!topoCache) {
@@ -104,88 +161,92 @@ export function StateCoverageMap({ height = 360, coverageOverrides, onSelectStat
           if (!res.ok) throw new Error('Failed to load map geometry');
           topoCache = await res.json();
         } catch (err) {
-          console.error(err);
+          console.error('[StateCoverageMap] Error loading topojson:', err);
           return;
         }
       }
 
-      if (!isMounted || !topoCache) return;
+      if (!isMounted || !topoCache || !d3ContainerRef.current) return;
 
-      const statesGeo = topojson.feature(topoCache, topoCache.objects.states) as any;
-      const states = statesGeo.features;
+      const pathGen = d3.geoPath();
+      const counties = (topojson.feature(topoCache, topoCache.objects.counties) as any).features;
+      const stateMesh = topojson.mesh(topoCache, topoCache.objects.states, (a: any, b: any) => a !== b);
+      const nationMesh = topojson.mesh(topoCache, topoCache.objects.nation);
 
-      const width = container.clientWidth || 640;
       const svg = d3
         .select(container)
         .append('svg')
+        .attr('class', 'map-svg')
         .attr('viewBox', '0 0 975 610')
         .attr('preserveAspectRatio', 'xMidYMid meet')
-        .attr('class', 'w-full h-full block select-none')
-        .style('background', 'radial-gradient(ellipse at 50% 50%, var(--glow), transparent 75%)');
+        .attr('role', 'img')
+        .attr('aria-label', 'Interactive county map of the United States')
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('display', 'block');
 
-      svgRef.current = svg;
+      const g = svg.append('g');
+      const gC = g.append('g').attr('class', 'counties-group');
+      const gB = g.append('g').attr('class', 'borders-group');
 
-      const g = svg.append('g').attr('class', 'states-group');
-
-      const pathGen = d3.geoPath();
-
-      // Sequential color scale for coverage (80% to 100%)
-      // Deep navy/slate -> vibrant cyan/teal -> bright emerald
-      const colorScale = d3
-        .scaleSequential()
-        .domain([82, 100])
-        .interpolator(d3.interpolateRgbBasis(['#1E293B', '#1D4ED8', '#0284C7', '#06B6D4', '#10B981']));
-
-      // Render State Polygons
-      const paths = g
-        .selectAll<SVGPathElement, any>('path.state-poly')
-        .data(states as any[])
+      // Draw all counties
+      const countyPaths = gC
+        .selectAll<SVGPathElement, any>('path.county')
+        .data(counties, (d: any) => d.id)
         .enter()
         .append('path')
+        .attr('class', 'county')
         .attr('d', (d: any) => pathGen(d) || '')
-        .attr('class', 'state-poly cursor-pointer transition-colors duration-150')
         .attr('fill', (d: any) => {
-          const defaultCov = STATE_COVERAGE[d.id]?.cov ?? 92.0;
-          const covVal = coverageOverrides?.[d.id] ?? defaultCov;
-          return colorScale(covVal);
+          const st = String(d.id).slice(0, 2);
+          const cov = stateCovMapRef.current[st] ?? 92.0;
+          return colorScaleRef.current.fn(cov);
         })
         .attr('stroke', 'var(--map-line)')
-        .attr('stroke-width', 0.9)
+        .attr('stroke-width', 0.45)
         .attr('vector-effect', 'non-scaling-stroke');
 
-      // Zoom configuration
+      // State boundaries
+      gB.append('path')
+        .datum(stateMesh)
+        .attr('class', 'state-b')
+        .attr('d', pathGen as any);
+
+      // Nation boundary
+      gB.append('path')
+        .datum(nationMesh)
+        .attr('class', 'nation-b')
+        .attr('d', pathGen as any);
+
+      // Zoom configuration matching prototype line 1389
       const zoom = d3
         .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.9, 8])
+        .scaleExtent([0.5, 90])
+        .translateExtent([
+          [-200, -200],
+          [1175, 810]
+        ])
         .on('zoom', event => {
           g.attr('transform', event.transform);
         });
 
-      svg.call(zoom);
-      zoomBehaviorRef.current = zoom;
+      svg.call(zoom).on('dblclick.zoom', null);
 
       // Pointer interactions
-      paths
+      countyPaths
         .on('pointerenter', function (event, d: any) {
-          const defaultSt = STATE_COVERAGE[d.id] || {
-            name: d.properties?.name || `State ${d.id}`,
-            abbr: 'US',
-            cov: 92.0
-          };
-          const covVal = coverageOverrides?.[d.id] ?? defaultSt.cov;
-
-          d3.select(this)
-            .attr('stroke', 'var(--cyan)')
-            .attr('stroke-width', 2.2)
-            .raise();
+          const st = String(d.id).slice(0, 2);
+          const stInfo = STATE_META[st] || { name: `State ${st}`, abbr: st };
+          const covVal = stateCovMapRef.current[st] ?? 92.0;
+          const countyName = d.properties?.name ? `${d.properties.name} County` : `FIPS ${d.id}`;
 
           const cRect = container.getBoundingClientRect();
           setTooltip({
             visible: true,
-            x: event.clientX - cRect.left + 14,
-            y: event.clientY - cRect.top - 14,
-            name: defaultSt.name,
-            abbr: defaultSt.abbr,
+            x: event.clientX - cRect.left + 12,
+            y: event.clientY - cRect.top - 12,
+            countyName,
+            stateName: stInfo.name,
             cov: covVal
           });
         })
@@ -193,28 +254,20 @@ export function StateCoverageMap({ height = 360, coverageOverrides, onSelectStat
           const cRect = container.getBoundingClientRect();
           setTooltip(prev => ({
             ...prev,
-            x: event.clientX - cRect.left + 14,
-            y: event.clientY - cRect.top - 14
+            x: event.clientX - cRect.left + 12,
+            y: event.clientY - cRect.top - 12
           }));
         })
-        .on('pointerleave', function (_, d: any) {
-          const isSelected = activeStateFips === d.id;
-          d3.select(this)
-            .attr('stroke', isSelected ? 'var(--cyan)' : 'var(--map-line)')
-            .attr('stroke-width', isSelected ? 2.2 : 0.9);
-
+        .on('pointerleave', function () {
           setTooltip(prev => ({ ...prev, visible: false }));
         })
-        .on('click', function (_, d: any) {
-          const defaultSt = STATE_COVERAGE[d.id] || {
-            name: d.properties?.name || `State ${d.id}`,
-            abbr: 'US',
-            cov: 92.0
-          };
-          const covVal = coverageOverrides?.[d.id] ?? defaultSt.cov;
-          setActiveStateFips(d.id);
-          if (onSelectState) {
-            onSelectState(defaultSt.name, covVal);
+        .on('click', function (event, d: any) {
+          event.stopPropagation();
+          const st = String(d.id).slice(0, 2);
+          const stInfo = STATE_META[st] || { name: `State ${st}`, abbr: st };
+          const covVal = stateCovMapRef.current[st] ?? 92.0;
+          if (onSelectStateRef.current) {
+            onSelectStateRef.current(stInfo.name, covVal);
           }
         });
     }
@@ -223,98 +276,54 @@ export function StateCoverageMap({ height = 360, coverageOverrides, onSelectStat
 
     return () => {
       isMounted = false;
+      if (d3ContainerRef.current) {
+        d3ContainerRef.current.innerHTML = '';
+      }
     };
-  }, [activeStateFips, onSelectState]);
+  }, []); // Only mount once!
 
-  const handleZoomIn = () => {
-    if (svgRef.current && zoomBehaviorRef.current) {
-      svgRef.current.transition().duration(300).call(zoomBehaviorRef.current.scaleBy, 1.4);
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (svgRef.current && zoomBehaviorRef.current) {
-      svgRef.current.transition().duration(300).call(zoomBehaviorRef.current.scaleBy, 0.7);
-    }
-  };
-
-  const handleResetZoom = () => {
-    if (svgRef.current && zoomBehaviorRef.current) {
-      svgRef.current.transition().duration(350).call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
-    }
-  };
+  // Update fills when coverage overrides change
+  useEffect(() => {
+    if (!d3ContainerRef.current) return;
+    d3.select(d3ContainerRef.current)
+      .selectAll<SVGPathElement, any>('path.county')
+      .attr('fill', (d: any) => {
+        const st = String(d.id).slice(0, 2);
+        const cov = stateCovMap[st] ?? 92.0;
+        return colorScale.fn(cov);
+      });
+  }, [stateCovMap, colorScale]);
 
   return (
-    <div className="relative w-full h-full overflow-hidden select-none" style={{ minHeight: `${height}px` }}>
-      <div ref={containerRef} className="w-full h-full" />
+    <div
+      className="relative w-full h-full select-none"
+      style={{ minHeight: `${height}px` }}
+    >
+      {/* Isolated D3 Container - React never manages child DOM nodes inside this container */}
+      <div ref={d3ContainerRef} className="w-full h-full" style={{ position: 'absolute', inset: 0 }} />
 
-      {/* Floating Header Tag */}
-      <div className="absolute top-3.5 left-3.5 z-10 px-3.5 py-2 rounded-xl bg-[var(--surface-solid)]/92 backdrop-blur-md border border-[var(--line-strong)] shadow-md">
-        <h4 className="text-[12.5px] font-bold text-[var(--text)] flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-[var(--teal)] animate-pulse" />
-          <span>Geographic coverage</span>
-        </h4>
-        <p className="text-[11px] text-[var(--muted)]">Share of tracts with complete indicator data, by state</p>
-      </div>
-
-      {/* Zoom Controls */}
-      <div className="absolute top-3.5 right-3.5 z-10 flex flex-col gap-1 rounded-xl bg-[var(--surface-solid)]/90 backdrop-blur-md border border-[var(--line-strong)] p-1 shadow-md">
-        <button
-          onClick={handleZoomIn}
-          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] font-bold text-sm"
-          title="Zoom In"
-        >
-          +
-        </button>
-        <button
-          onClick={handleZoomOut}
-          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] font-bold text-sm"
-          title="Zoom Out"
-        >
-          −
-        </button>
-        <button
-          onClick={handleResetZoom}
-          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--text)] font-bold text-xs"
-          title="Reset View"
-        >
-          ↺
-        </button>
-      </div>
-
-      {/* Floating Legend */}
-      <div className="absolute bottom-3.5 left-3.5 z-10 px-3.5 py-2 rounded-xl bg-[var(--surface-solid)]/92 backdrop-blur-md border border-[var(--line-strong)] shadow-md text-[11px]">
-        <div className="font-bold text-[var(--text)] mb-1 flex items-center justify-between gap-4">
-          <span>Tract data completeness</span>
-          <span className="text-[10px] text-[var(--cyan)] font-semibold">US States</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[var(--faint)]">82%</span>
-          <div
-            className="w-24 h-1.5 rounded-full"
-            style={{
-              background: 'linear-gradient(90deg, #1E293B, #1D4ED8, #0284C7, #06B6D4, #10B981)'
-            }}
-          />
-          <span className="text-[10px] text-[var(--faint)]">100%</span>
-        </div>
-      </div>
-
-      {/* Tooltip */}
+      {/* Floating Tooltip - Sibling of D3 container in React's virtual DOM */}
       {tooltip.visible && (
         <div
-          className="absolute z-20 pointer-events-none px-3.5 py-2 rounded-xl bg-[var(--surface-solid)]/96 backdrop-blur-md border border-[var(--line-strong)] shadow-xl text-[12px] animate-in fade-in zoom-in-95 duration-100"
-          style={{ left: tooltip.x, top: tooltip.y }}
+          className="map-float pointer-events-none"
+          style={{
+            position: 'absolute',
+            zIndex: 20,
+            left: tooltip.x,
+            top: tooltip.y,
+            padding: '8px 12px',
+            fontSize: '12px'
+          }}
         >
-          <div className="font-bold text-[var(--text)] flex items-center justify-between gap-3 mb-0.5">
-            <span>{tooltip.name}</span>
-            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-[var(--cyan)]/20 text-[var(--cyan)]">
-              {tooltip.abbr}
-            </span>
+          <b style={{ display: 'block', fontSize: '13px' }}>{tooltip.stateName}</b>
+          <div className="note" style={{ marginTop: '2px' }}>
+            {tooltip.countyName}
           </div>
-          <div className="flex items-center justify-between gap-3 text-[11.5px] text-[var(--muted)]">
-            <span>Complete tracts:</span>
-            <strong className="text-[var(--teal)] num">{tooltip.cov.toFixed(1)}%</strong>
+          <div style={{ marginTop: '4px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <span style={{ color: 'var(--muted)' }}>Coverage:</span>
+            <span className="num" style={{ fontWeight: 700, color: 'var(--cyan)' }}>
+              {tooltip.cov.toFixed(1)}%
+            </span>
           </div>
         </div>
       )}
