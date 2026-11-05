@@ -101,10 +101,18 @@ function ParticipationTrendsChart({
   series: { name: string; color: string; values: number[] }[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastDrawnKeyRef = useRef<string>('');
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el || series.length === 0) return;
+
+    const currentKey = JSON.stringify(series);
+    if (lastDrawnKeyRef.current === currentKey && el.querySelector('svg')) {
+      return;
+    }
+    lastDrawnKeyRef.current = currentKey;
+
     el.innerHTML = '';
     el.classList.add('chart');
 
@@ -177,7 +185,12 @@ function ParticipationTrendsChart({
 
         svg.append('path')
           .attr('d', area(s.values) || '')
-          .attr('fill', `url(#${gid})`);
+          .attr('fill', `url(#${gid})`)
+          .attr('opacity', 0)
+          .transition()
+          .duration(900)
+          .delay(500)
+          .attr('opacity', 1);
       }
 
       const p = svg.append('path')
@@ -191,8 +204,8 @@ function ParticipationTrendsChart({
       p.attr('stroke-dasharray', `${L} ${L}`)
         .attr('stroke-dashoffset', L)
         .transition()
-        .duration(1200)
-        .delay(si * 150)
+        .duration(1300)
+        .delay(si * 160)
         .ease(d3.easeCubicInOut)
         .attr('stroke-dashoffset', 0);
     });
@@ -257,10 +270,18 @@ function ServiceDonutChart({
   data: { label: string; value: number; color: string }[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastDrawnKeyRef = useRef<string>('');
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el || data.length === 0) return;
+
+    const currentKey = JSON.stringify(data);
+    if (lastDrawnKeyRef.current === currentKey && el.querySelector('svg')) {
+      return;
+    }
+    lastDrawnKeyRef.current = currentKey;
+
     el.innerHTML = '';
     el.classList.add('chart');
 
@@ -298,8 +319,8 @@ function ServiceDonutChart({
       .style('cursor', 'pointer');
 
     p.transition()
-      .duration(1000)
-      .delay((_, i) => i * 80)
+      .duration(1100)
+      .delay((_, i) => i * 90)
       .ease(d3.easeCubicOut)
       .attrTween('d', function (d) {
         const interpolate = d3.interpolate({ startAngle: d.startAngle, endAngle: d.startAngle }, d);
@@ -446,14 +467,23 @@ function ProgramComparisonChart({
   return <div ref={containerRef} style={{ width: '100%', minHeight: '230px' }} />;
 }
 
+// Module-level cache to prevent double-fetch and double-transition
+const tractsCache = new Map<string, CensusTract[]>();
+
 function ProgramUtilizationContent() {
   const router = useRouter();
   const { activeCounty, markWorkflowMilestone } = useSession();
 
   const [activeProg, setActiveProg] = useState<string>('all');
   const [fte, setFte] = useState<number>(6);
-  const [tracts, setTracts] = useState<CensusTract[]>([]);
-  const [, setLoading] = useState<boolean>(true);
+
+  const countyFips = activeCounty?._id || '53033';
+  const countyName = activeCounty?.name || 'King';
+  const stateAbbr = activeCounty?.stateAbbr || 'WA';
+  const stateName = activeCounty?.stateName || 'Washington';
+
+  const [tracts, setTracts] = useState<CensusTract[]>(() => tractsCache.get(countyFips) || []);
+  const [, setLoading] = useState<boolean>(() => !tractsCache.has(countyFips));
   const [selectedTractId, setSelectedTractId] = useState<string | null>(null);
 
   // Finding Modal state
@@ -467,11 +497,6 @@ function ProgramUtilizationContent() {
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const countyFips = activeCounty?._id || '53033';
-  const countyName = activeCounty?.name || 'King';
-  const stateAbbr = activeCounty?.stateAbbr || 'WA';
-  const stateName = activeCounty?.stateName || 'Washington';
-
   // Mark workflow milestone
   useEffect(() => {
     markWorkflowMilestone('layer');
@@ -479,11 +504,20 @@ function ProgramUtilizationContent() {
 
   // Load tracts for active county
   useEffect(() => {
+    const cached = tractsCache.get(countyFips);
+    if (cached && cached.length > 0) {
+      setTracts(cached);
+      if (!selectedTractId) {
+        setSelectedTractId(cached[0]._id);
+      }
+    }
+
     setLoading(true);
     fetch(`/api/tracts?county=${countyFips}`)
       .then(res => (res.ok ? res.json() : { data: [] }))
       .then(json => {
         const data: CensusTract[] = json.data || [];
+        tractsCache.set(countyFips, data);
         setTracts(data);
         if (data.length > 0 && !selectedTractId) {
           setSelectedTractId(data[0]._id);
@@ -589,6 +623,22 @@ function ProgramUtilizationContent() {
 
   const maxGap = topGaps[0]?.gapScore || 1;
 
+  // Animate Largest Coverage Gaps bars matching prototype lines 2418-2419 & line 250
+  useEffect(() => {
+    if (topGaps.length === 0) return;
+    const id1 = requestAnimationFrame(() => {
+      const id2 = requestAnimationFrame(() => {
+        const bars = document.querySelectorAll<HTMLElement>('#pu-gaps .prog i');
+        bars.forEach(i => {
+          const w = i.getAttribute('data-w');
+          if (w) i.style.width = w + '%';
+        });
+      });
+      return () => cancelAnimationFrame(id2);
+    });
+    return () => cancelAnimationFrame(id1);
+  }, [topGaps, maxGap, activeProg]);
+
   // Resource Allocation Simulator (top 6 tracts matching prototype lines 2432-2435)
   const allocRows = useMemo(() => {
     if (tracts.length === 0) return [];
@@ -614,6 +664,7 @@ function ProgramUtilizationContent() {
 
   // Longitudinal Participation Trend Series (2016-2025)
   const trendSeries = useMemo(() => {
+    if (tracts.length === 0) return [];
     const endCounty = kpis.utilRate;
     const endState = kpis.stateMedian;
     return [
@@ -628,16 +679,15 @@ function ProgramUtilizationContent() {
         values: trendFor(stateAbbr + activeProg + 'u', endState, 10, -0.012)
       }
     ];
-  }, [countyFips, activeProg, kpis, countyName, stateName, stateAbbr]);
+  }, [tracts.length, countyFips, activeProg, kpis, countyName, stateName, stateAbbr]);
 
   // Service Distribution Donut Data matching prototype lines 2422-2424
   const serviceDist = useMemo(() => {
+    if (tracts.length === 0) return [];
     const totalPop = tracts.reduce((acc, t) => acc + (t.population || 4000), 0) || 280000;
     return Object.entries(PROGRAMS).map(([pk, meta], i) => {
       const weightedUtil =
-        tracts.length > 0
-          ? tracts.reduce((acc, t) => acc + (t.population || 4000) * getUtil(t, pk), 0) / totalPop
-          : 50;
+        tracts.reduce((acc, t) => acc + (t.population || 4000) * getUtil(t, pk), 0) / totalPop;
       const enrolled = Math.round((totalPop * meta.factor * weightedUtil) / 100);
       return {
         label: meta.name,
@@ -964,26 +1014,8 @@ function ProgramUtilizationContent() {
                   <small style={{ color: 'var(--muted)', fontSize: '11.5px' }}>
                     Vulnerability {g.svi.toFixed(2)}. Utilization {g.util.toFixed(0)}%
                   </small>
-                  <div
-                    className="prog"
-                    style={{
-                      marginTop: '6px',
-                      height: '6px',
-                      borderRadius: '3px',
-                      background: 'var(--surface-2)',
-                      overflow: 'hidden'
-                    }}
-                  >
-                    <i
-                      style={{
-                        display: 'block',
-                        height: '100%',
-                        width: `${Math.min(100, Math.max(5, (g.gapScore / maxGap) * 100))}%`,
-                        background: 'var(--cyan)',
-                        borderRadius: '3px',
-                        transition: 'width 0.6s ease'
-                      }}
-                    />
+                  <div className="prog" style={{ marginTop: '6px' }}>
+                    <i data-w={(g.gapScore / maxGap) * 100} />
                   </div>
                 </span>
                 <span className="num" style={{ fontWeight: 700, fontSize: '14px', flexShrink: 0 }}>
@@ -1029,10 +1061,10 @@ function ProgramUtilizationContent() {
             <ServiceDonutChart data={serviceDist} />
           </div>
           <div className="legend-row" id="pu-dl">
-            {serviceDist.map(d => (
-              <span key={d.label}>
-                <i style={{ background: d.color }}></i>
-                {d.label}
+            {Object.entries(PROGRAMS).map(([pk, meta], i) => (
+              <span key={pk}>
+                <i style={{ background: PALETTE[i % PALETTE.length] }}></i>
+                {meta.name}
               </span>
             ))}
           </div>
