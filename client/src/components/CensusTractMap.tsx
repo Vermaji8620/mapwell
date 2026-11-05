@@ -5,7 +5,7 @@ import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
 import { CensusTract } from '@/types';
 import { TIER_COLORS, TIER_LABELS } from '@/config/metrics';
-import { STATE_META } from '@/utils/countyRepository';
+import { CountyRecord, getCountyRepository, STATE_META } from '@/utils/countyRepository';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 export interface CensusTractMapProps {
@@ -26,6 +26,183 @@ export const MAP_LOW = '#101B45';
 let topoCache: any = null;
 const dynamicTractsCache = new Map<string, CensusTract[]>();
 
+// Deterministic seed PRNG helpers matching prototype (demo folder/entire_website.html lines 975-977)
+function hashStr(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1e6) / 1e6;
+}
+
+function rngGen(seed: number): () => number {
+  let s = Math.floor(seed * 2147483646) + 1;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+function gaussRand(r: () => number): number {
+  return Math.sqrt(-2 * Math.log(r() + 1e-9)) * Math.cos(2 * Math.PI * r());
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+// Prototype color scale generator (lines 1094-1104) with dark navy base #0E2138
+function createVulnColorScale(values: number[]) {
+  const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
+    d3.interpolateRgb('#0E2138', VULN_RAMP[0])(0.6),
+    ...VULN_RAMP
+  ]);
+  const cleanVals = values.length > 0 ? values : [0, 0.2, 0.4, 0.6, 0.8, 1];
+  const qScale = d3.scaleQuantile().domain(cleanVals).range(d3.range(7));
+  const getColor = (v: number) => {
+    const bin = qScale(v);
+    return interp((bin + 0.5) / 7);
+  };
+  const bins = d3.range(7).map(i => interp((i + 0.5) / 7));
+  const extent = (cleanVals.length > 0 ? d3.extent(cleanVals) : [0, 1]) as [number, number];
+  return { getColor, bins, extent, qScale };
+}
+
+// Generate Voronoi seeds strictly tested inside county SVG path via offscreen Canvas
+function generateVoronoiSeeds(
+  countyFeature: any,
+  countyD: string,
+  targetCount: number,
+  countyRecord?: CountyRecord | null,
+  cid?: string
+): [number, number][] {
+  const pathGen = d3.geoPath();
+  const [[x0, y0], [x1, y1]] = pathGen.bounds(countyFeature);
+  const centroid = pathGen.centroid(countyFeature);
+  const width = Math.max(x1 - x0, 2);
+  const height = Math.max(y1 - y0, 2);
+
+  let ctx: CanvasRenderingContext2D | null = null;
+  let path2d: Path2D | null = null;
+  if (typeof document !== 'undefined' && typeof Path2D !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    ctx = canvas.getContext('2d');
+    try {
+      path2d = new Path2D(countyD);
+    } catch {
+      path2d = null;
+    }
+  }
+
+  const pts: [number, number][] = [];
+  const seedStr = 't' + (cid || countyFeature?.id || 'seed');
+  const r = rngGen(hashStr(seedStr));
+  const urban = countyRecord?.urban ?? 0.65;
+  const core: [number, number] = [
+    x0 + width * (0.3 + r() * 0.4),
+    y0 + height * (0.3 + r() * 0.4)
+  ];
+
+  let guard = 0;
+  const maxGuard = Math.max(900, targetCount * 130);
+
+  while (pts.length < targetCount && guard++ < maxGuard) {
+    let x = x0 + r() * width;
+    let y = y0 + r() * height;
+    if (r() < urban * 0.7) {
+      x = core[0] + gaussRand(r) * width * 0.16;
+      y = core[1] + gaussRand(r) * height * 0.16;
+    }
+    if (ctx && path2d) {
+      if (ctx.isPointInPath(path2d, x, y)) {
+        pts.push([x, y]);
+      }
+    } else {
+      pts.push([x, y]);
+    }
+  }
+
+  // Backup grid search if random sampling didn't reach targetCount
+  if (pts.length < targetCount && ctx && path2d) {
+    const steps = 30;
+    const dx = width / steps;
+    const dy = height / steps;
+    const grid: [number, number][] = [];
+    for (let ix = 1; ix < steps; ix++) {
+      for (let iy = 1; iy < steps; iy++) {
+        const gx = x0 + ix * dx + (r() - 0.5) * dx * 0.5;
+        const gy = y0 + iy * dy + (r() - 0.5) * dy * 0.5;
+        if (ctx.isPointInPath(path2d, gx, gy)) {
+          grid.push([gx, gy]);
+        }
+      }
+    }
+    grid.sort(() => r() - 0.5);
+    for (const p of grid) {
+      if (pts.length >= targetCount) break;
+      pts.push(p);
+    }
+  }
+
+  // Safety fallback for Delaunay (needs >= 3 points)
+  if (pts.length === 0) {
+    pts.push([centroid[0], centroid[1]]);
+  }
+  if (pts.length === 1) {
+    pts.push([pts[0][0] + 0.15, pts[0][1] + 0.15]);
+  }
+  if (pts.length === 2) {
+    pts.push([pts[0][0] - 0.15, pts[0][1] + 0.15]);
+  }
+
+  return pts.slice(0, Math.max(targetCount, 3));
+}
+
+// Synthetic tract generator matching prototype demo folder/entire_website.html lines 1113-1165
+function generateSyntheticTracts(targetCid: string, countyRecord?: CountyRecord | null): CensusTract[] {
+  if (dynamicTractsCache.has(targetCid)) {
+    return dynamicTractsCache.get(targetCid)!;
+  }
+
+  const pop = countyRecord?.pop || 80000;
+  const n = clamp(Math.round(Math.sqrt(pop) / 11), 6, 80);
+  const cSvi = countyRecord?.svi ?? 0.4;
+  const cPoverty = countyRecord?.indicators?.poverty ?? 12;
+  const cUninsured = countyRecord?.indicators?.uninsured ?? 8;
+  const cDiabetes = countyRecord?.indicators?.diabetes ?? 9;
+  const cAccess = countyRecord?.indicators?.access ?? 65;
+
+  const tracts: CensusTract[] = [];
+  for (let i = 0; i < n; i++) {
+    const rr = rngGen(hashStr(targetCid + ':' + i));
+    const ln = () => gaussRand(rr);
+    const k = ln() * 0.12;
+
+    const tnum = 100 + i * 2 + Math.floor(rr() * 2);
+    const suffix = rr() < 0.35 ? '.0' + (1 + Math.floor(rr() * 2)) : '';
+    const geoid = targetCid + String(tnum).padStart(4, '0') + (suffix ? suffix.slice(1).padStart(2, '0') : '00');
+
+    const tractSvi = clamp(cSvi + k * 1.1 + ln() * 0.05, 0.01, 0.99);
+    const tier = clamp(Math.floor(tractSvi * 5), 0, 4);
+    const tractPop = Math.round(clamp(2400 + rr() * 4800, 1200, 8200));
+
+    tracts.push({
+      _id: geoid,
+      countyFips: targetCid,
+      name: `Census Tract ${tnum}${suffix}`,
+      population: tractPop,
+      svi: parseFloat(tractSvi.toFixed(2)),
+      tier,
+      indicators: {
+        poverty: parseFloat(clamp(cPoverty * (1 + k * 2.2) + ln() * 2, 1.5, 58).toFixed(1)),
+        uninsured: parseFloat(clamp(cUninsured * (1 + k * 2) + ln() * 1.5, 1, 40).toFixed(1)),
+        diabetes: parseFloat(clamp(cDiabetes * (1 + k * 1.2) + ln() * 0.6, 3.5, 24).toFixed(1)),
+        access: Math.round(clamp(cAccess * (1 - k * 1.1) + ln() * 4, 4, 98)),
+        lifeExp: parseFloat(clamp(78 - k * 9 + ln() * 0.7, 62, 88).toFixed(1))
+      }
+    } as any);
+  }
+
+  dynamicTractsCache.set(targetCid, tracts);
+  return tracts;
+}
+
 export function CensusTractMap({
   countyFips,
   tracts,
@@ -33,15 +210,20 @@ export function CensusTractMap({
   compareTractIds = [],
   onSelectTract,
   onCountySelect,
-  height = 290,
-  showLegend = true
+  height = 300,
+  showLegend = false
 }: CensusTractMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const switchCountyRef = useRef<((targetCid: string) => void) | null>(null);
+
+  // Callbacks and refs kept across component renders
+  const demonstrateCountyRef = useRef<((targetCid: string, animateCamera: boolean) => void) | null>(null);
+  const updateTractsRef = useRef<((newTracts: CensusTract[]) => void) | null>(null);
+  const updateSelectionRef = useRef<((selId?: string | null, cmpIds?: string[]) => void) | null>(null);
   const zoomInRef = useRef<(() => void) | null>(null);
   const zoomOutRef = useRef<(() => void) | null>(null);
   const resetZoomRef = useRef<(() => void) | null>(null);
 
+  const activeCidRef = useRef<string>(countyFips);
   const [activeCountyId, setActiveCountyId] = useState<string>(countyFips);
   const [activeCountyName, setActiveCountyName] = useState<string>('');
 
@@ -52,43 +234,67 @@ export function CensusTractMap({
     bins: string[];
   } | null>(null);
 
+  // Floating rich dark tooltip state matching prototype lines 1228-1232 & 221-225
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
     y: number;
     title: string;
-    subtitle: string;
-    metricLabel: string;
-    metricVal: string;
-    tier?: string;
-    tierColor?: string;
-    pop?: string;
-    isNeighbour?: boolean;
+    rows: [string, string][];
   }>({
     visible: false,
     x: 0,
     y: 0,
     title: '',
-    subtitle: '',
-    metricLabel: '',
-    metricVal: '',
-    isNeighbour: false
+    rows: []
   });
 
-  const compareSet = new Set(compareTractIds);
-
-  // Sync prop changes
-  useEffect(() => {
-    setActiveCountyId(countyFips);
-    if (switchCountyRef.current) {
-      switchCountyRef.current(countyFips);
+  const positionTooltip = useCallback((e: MouseEvent | React.MouseEvent, title: string, rows: [string, string][]) => {
+    const tipWidth = 230;
+    const tipHeight = 120;
+    let x = e.clientX + 16;
+    let y = e.clientY + 14;
+    if (x + tipWidth > window.innerWidth - 8) {
+      x = e.clientX - tipWidth - 16;
     }
-  }, [countyFips]);
+    if (y + tipHeight > window.innerHeight - 8) {
+      y = e.clientY - tipHeight - 14;
+    }
+    setTooltip({
+      visible: true,
+      x,
+      y,
+      title,
+      rows
+    });
+  }, []);
 
+  const moveTooltip = useCallback((e: MouseEvent | React.MouseEvent) => {
+    setTooltip(prev => {
+      if (!prev.visible) return prev;
+      const tipWidth = 230;
+      const tipHeight = 120;
+      let x = e.clientX + 16;
+      let y = e.clientY + 14;
+      if (x + tipWidth > window.innerWidth - 8) {
+        x = e.clientX - tipWidth - 16;
+      }
+      if (y + tipHeight > window.innerHeight - 8) {
+        y = e.clientY - tipHeight - 14;
+      }
+      return { ...prev, x, y };
+    });
+  }, []);
+
+  const hideTooltip = useCallback(() => {
+    setTooltip(prev => ({ ...prev, visible: false }));
+  }, []);
+
+  // Main Map Initializer - Runs once to create SVG canvas and persistent layers
   useEffect(() => {
     let isMounted = true;
 
-    async function renderMap() {
+    async function initMap() {
       if (!containerRef.current) return;
       const container = containerRef.current;
       container.innerHTML = '';
@@ -104,25 +310,14 @@ export function CensusTractMap({
         }
       }
 
-      if (!isMounted || !topoCache) return;
+      const repo = await getCountyRepository();
+      if (!isMounted || !containerRef.current || !topoCache) return;
 
-      const counties = (topojson.feature(topoCache, topoCache.objects.counties) as any).features;
-      const initialTarget =
-        counties.find((c: any) => c.id === countyFips) ||
-        counties.find((c: any) => c.id === '53033') ||
-        counties.find((c: any) => c.id === '21027') ||
-        counties[0];
-
-      if (!initialTarget) return;
-
-      const statePrefix = initialTarget.id ? initialTarget.id.slice(0, 2) : '53';
-      const stateAbbr = STATE_META[statePrefix]?.[0] || 'WA';
-      const stateCounties = counties.filter((c: any) => c.id && c.id.slice(0, 2) === statePrefix);
-
+      const countiesGeo = (topojson.feature(topoCache, topoCache.objects.counties) as any).features;
+      const statesGeo = (topojson.feature(topoCache, topoCache.objects.states) as any).features;
       const pathGen = d3.geoPath();
-      const initialName = `${initialTarget.properties?.name || 'County'} County, ${stateAbbr}`;
-      setActiveCountyName(initialName);
 
+      // Persistent SVG Canvas
       const svg = d3.select(container)
         .append('svg')
         .attr('viewBox', '0 0 975 610')
@@ -131,42 +326,60 @@ export function CensusTractMap({
         .style('background', 'transparent');
 
       const defs = svg.append('defs');
-      const clipId = `ct-clip-active-${Math.random().toString(36).substring(2, 6)}`;
-
+      const clipId = `ct-clip-${Math.random().toString(36).substring(2, 8)}`;
       const clipPathElement = defs.append('clipPath')
         .attr('id', clipId)
         .append('path');
 
       const rootGroup = svg.append('g').attr('class', 'map-root');
 
-      // Layers:
-      // 1. Surrounding Ambient Neighbour Counties
+      // Layer 1: Ambient neighboring counties (.dim-others .county)
       const gSurround = rootGroup.append('g').attr('class', 'surrounding-counties');
-      // 2. Base dark silhouette for demonstrated county
-      const gTargetBase = rootGroup.append('g').attr('class', 'target-county-base');
-      const baseCountyPath = gTargetBase.append('path').attr('fill', '#101B45').attr('opacity', 0.88);
-      // 3. Clipped Tracts Group
-      const gTracts = rootGroup.append('g').attr('class', 'tracts-group').attr('clip-path', `url(#${clipId})`);
-      // 4. Glowing Cyan Boundary of Demonstrated County
-      const gSel = rootGroup.append('g').attr('class', 'target-county-outline');
-      const outlineCountyPath = gSel.append('path')
+
+      // Layer 2: State boundary & coastline (.nation-b)
+      const gStateBorder = rootGroup.append('g').attr('class', 'state-boundary-layer');
+      const stateBorderPath = gStateBorder.append('path')
+        .attr('class', 'nation-b')
         .attr('fill', 'none')
-        .attr('stroke', 'var(--cyan, #37C8CF)')
-        .attr('stroke-width', 2.2)
+        .attr('stroke', '#9CC9EE')
+        .attr('stroke-opacity', 0.95)
+        .attr('stroke-width', 1.2)
         .attr('vector-effect', 'non-scaling-stroke')
-        .style('filter', 'drop-shadow(0 0 8px rgba(55, 200, 207, 0.7))')
         .style('pointer-events', 'none');
 
-      // Active selected tract outline layer
-      const gTractHighlight = rootGroup.append('g').attr('class', 'tract-highlight-layer').style('pointer-events', 'none');
+      // Layer 3: Base silhouette of demonstrated active county
+      const gTargetBase = rootGroup.append('g').attr('class', 'target-county-base');
+      const baseCountyPath = gTargetBase.append('path')
+        .attr('fill', '#101B45')
+        .attr('opacity', 0.95);
 
-      // Zoom behavior
-      let currentTransform = d3.zoomIdentity;
+      // Layer 4: Clipped Census Tracts Group
+      const gTracts = rootGroup.append('g')
+        .attr('class', 'tracts-group')
+        .attr('clip-path', `url(#${clipId})`);
+
+      // Layer 5: Selected Tract Overlay Outline (clipped to active county)
+      const gTractHighlight = rootGroup.append('g')
+        .attr('class', 'tract-highlight-layer')
+        .attr('clip-path', `url(#${clipId})`)
+        .style('pointer-events', 'none');
+
+      // Layer 6: Active county contour border (.sel-outline with stroke #102A4C)
+      const gSel = rootGroup.append('g').attr('class', 'target-county-outline');
+      const outlineCountyPath = gSel.append('path')
+        .attr('class', 'sel-outline')
+        .attr('fill', 'none')
+        .attr('stroke', '#102A4C')
+        .attr('stroke-width', 1.8)
+        .attr('vector-effect', 'non-scaling-stroke')
+        .style('filter', 'none')
+        .style('pointer-events', 'none');
+
+      // Zoom configuration
       const zoom = d3.zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.5, 35])
+        .scaleExtent([0.5, 40])
         .on('zoom', (event) => {
           rootGroup.attr('transform', event.transform);
-          currentTransform = event.transform;
         });
 
       svg.call(zoom).on('dblclick.zoom', null);
@@ -179,295 +392,115 @@ export function CensusTractMap({
         svg.transition().duration(350).call(zoom.scaleBy, 1 / 1.4);
       };
 
-      // Synthetic Tract Generator for any outside clicked county
-      function getOrGenerateTracts(targetCid: string, targetFeature: any): CensusTract[] {
-        if (targetCid === countyFips && tracts.length > 0) {
-          return tracts;
-        }
-        if (dynamicTractsCache.has(targetCid)) {
-          return dynamicTractsCache.get(targetCid)!;
-        }
-
-        const count = 18;
-        let seed = 0;
-        for (let i = 0; i < targetCid.length; i++) seed += targetCid.charCodeAt(i) * (i + 1) * 37;
-        const prng = () => {
-          seed = (seed * 9301 + 49297) % 233280;
-          return seed / 233280;
-        };
-
-        const generated: CensusTract[] = [];
-        for (let i = 0; i < count; i++) {
-          const r1 = prng();
-          const r2 = prng();
-          const sviVal = 0.12 + r1 * 0.84;
-          const tractId = `${targetCid}${String(101 + i).padStart(4, '0')}00`;
-          generated.push({
-            _id: tractId,
-            countyFips: targetCid,
-            name: `Census Tract ${101 + i}`,
-            population: Math.round(2400 + prng() * 4600),
-            svi: Math.round(sviVal * 100) / 100,
-            tier: Math.min(4, Math.floor(sviVal * 5)),
-            indicators: {
-              poverty: Math.round((7.5 + r2 * 18) * 10) / 10,
-              uninsured: Math.round((6.5 + prng() * 11) * 10) / 10,
-              diabetes: Math.round((9 + prng() * 13) * 10) / 10,
-              access: Math.round(45 + prng() * 45),
-              lifeExp: Math.round((74 + prng() * 10) * 10) / 10
-            }
-          } as any);
-        }
-
-        dynamicTractsCache.set(targetCid, generated);
-        return generated;
-      }
-
+      let currentTractCells: { tract: CensusTract; d: string }[] = [];
+      let currentCountyFeature: any = null;
+      let currentCountyD = '';
       let currentCid = countyFips;
-      let tractVoronoiCells: { tract: CensusTract; d: string }[] = [];
 
-      function updateTractHighlight() {
-        gTractHighlight.selectAll('*').remove();
-        if (!selectedTractId) return;
-
-        const found = tractVoronoiCells.find(c => c.tract._id === selectedTractId);
-        if (found) {
-          gTractHighlight.append('path')
-            .attr('d', found.d)
-            .attr('fill', 'none')
-            .attr('stroke', 'var(--cyan, #37C8CF)')
-            .attr('stroke-width', 2.8)
-            .attr('vector-effect', 'non-scaling-stroke')
-            .style('filter', 'drop-shadow(0 0 6px var(--cyan, #37C8CF))');
-        }
-      }
-
-      // Shifts demonstrating county with smooth camera zoom & tract generation
-      async function demonstrateCounty(targetCid: string, animateCamera = true) {
-        currentCid = targetCid;
-        setActiveCountyId(targetCid);
-
-        const targetFeature =
-          counties.find((c: any) => c.id === targetCid) ||
-          initialTarget;
-
-        const countyName = `${targetFeature.properties?.name || 'County'} County, ${stateAbbr}`;
-        setActiveCountyName(countyName);
-
-        const countyD = pathGen(targetFeature) || '';
-        const [[cx0, cy0], [cx1, cy1]] = pathGen.bounds(targetFeature);
-        const cWidth = Math.max(cx1 - cx0, 10);
-        const cHeight = Math.max(cy1 - cy0, 10);
-
-        // 1. Update Clip Path & Target County Outlines
-        clipPathElement.attr('d', countyD);
-        baseCountyPath.attr('d', countyD);
-        outlineCountyPath.attr('d', countyD);
-
-        // 2. Camera Zoom Transition
-        const pad = 0.72;
-        const s = Math.min(26, pad / Math.max(cWidth / 975, cHeight / 610));
-        const targetTransform = d3.zoomIdentity
-          .translate(975 / 2, 610 / 2)
-          .scale(s)
-          .translate(-(cx0 + cx1) / 2, -(cy0 + cy1) / 2);
-
-        resetZoomRef.current = () => {
-          svg.transition().duration(650).ease(d3.easeCubicInOut).call(zoom.transform, targetTransform);
-        };
-
-        if (animateCamera) {
-          svg.transition('camera-zoom')
-            .duration(850)
-            .ease(d3.easeCubicInOut)
-            .call(zoom.transform, targetTransform);
-        } else {
-          svg.call(zoom.transform, targetTransform);
-        }
-
-        // 3. Render Ambient Neighbour Counties
-        const ambientCounties = stateCounties.filter((c: any) => c.id !== targetCid);
-        const surroundSelection = gSurround.selectAll<SVGPathElement, any>('path.county-ambient')
-          .data(ambientCounties, (d: any) => d.id);
-
-        surroundSelection.exit().remove();
-
-        const enterAmbient = surroundSelection.enter()
-          .append('path')
-          .attr('class', 'county-ambient')
-          .attr('d', (d: any) => pathGen(d))
-          .attr('fill', '#dbeafe')
-          .attr('opacity', 0.42)
-          .attr('stroke', '#ffffff')
-          .attr('stroke-width', 0.8)
-          .attr('vector-effect', 'non-scaling-stroke')
-          .style('cursor', 'pointer')
-          .style('transition', 'fill 0.2s ease, opacity 0.2s ease, stroke 0.2s ease');
-
-        const allAmbient = enterAmbient.merge(surroundSelection as any);
-
-        allAmbient
-          .attr('d', (d: any) => pathGen(d))
-          .attr('fill', '#dbeafe')
-          .attr('opacity', 0.42)
-          .attr('stroke', '#ffffff')
-          .attr('stroke-width', 0.8)
-          .on('pointerenter', function (event, d: any) {
-            d3.select(this)
-              .attr('fill', 'rgba(56, 189, 248, 0.28)')
-              .attr('opacity', 0.88)
-              .attr('stroke', '#38BDF8')
-              .attr('stroke-width', 1.6);
-
-            const cRect = container.getBoundingClientRect();
-            const hoverName = `${d.properties?.name || 'County'} County, ${stateAbbr}`;
-
-            setTooltip({
-              visible: true,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14,
-              title: hoverName,
-              subtitle: 'Neighbour Region',
-              metricLabel: 'Action',
-              metricVal: 'Click to demonstrate region',
-              isNeighbour: true
-            });
+      // Update tract selection & comparison highlights
+      function updateTractHighlights(selId?: string | null, cmpIds: string[] = []) {
+        const cmpSet = new Set(cmpIds);
+        gTracts.selectAll<SVGPathElement, CensusTract>('path.tract')
+          .classed('sel', t => {
+            const id = t._id || (t as any).id;
+            return id === selId;
           })
-          .on('pointermove', function (event) {
-            const cRect = container.getBoundingClientRect();
-            setTooltip(prev => ({
-              ...prev,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14
-            }));
+          .classed('cmp', t => {
+            const id = t._id || (t as any).id;
+            return cmpSet.has(id);
           })
-          .on('pointerleave', function () {
-            d3.select(this)
-              .attr('fill', '#dbeafe')
-              .attr('opacity', 0.42)
-              .attr('stroke', '#ffffff')
-              .attr('stroke-width', 0.8);
-
-            setTooltip(prev => ({ ...prev, visible: false }));
+          .attr('stroke', t => {
+            const id = t._id || (t as any).id;
+            if (id === selId) return '#102A4C';
+            if (cmpSet.has(id)) return '#F2B33D';
+            return 'rgba(255, 255, 255, 0.55)';
           })
-          .on('click', function (event, d: any) {
-            event.stopPropagation();
-            demonstrateCounty(d.id, true);
-            if (onCountySelect) {
-              onCountySelect(d.id);
-            }
+          .attr('stroke-width', t => {
+            const id = t._id || (t as any).id;
+            if (id === selId) return 2.2;
+            if (cmpSet.has(id)) return 2.0;
+            return 0.7;
           });
 
-        // 4. Load or Generate Census Tracts for Demonstrated Region
-        let activeTracts = getOrGenerateTracts(targetCid, targetFeature);
+        gTractHighlight.selectAll('*').remove();
+        if (selId) {
+          gTracts.selectAll<SVGPathElement, CensusTract>('path.tract')
+            .filter(t => (t._id || (t as any).id) === selId)
+            .raise();
 
-        // Fetch server tracts asynchronously if not yet cached
-        if (targetCid !== countyFips && !dynamicTractsCache.has(targetCid)) {
-          fetch(`/api/tracts?county=${targetCid}`)
-            .then(res => (res.ok ? res.json() : null))
-            .then(json => {
-              if (json && Array.isArray(json.data) && json.data.length > 0) {
-                dynamicTractsCache.set(targetCid, json.data);
-                if (currentCid === targetCid) {
-                  renderTractCells(json.data, targetFeature, cx0, cy0, cWidth, cHeight);
-                }
-              }
-            })
-            .catch(() => {});
+          const found = currentTractCells.find(c => (c.tract._id || (c.tract as any).id) === selId);
+          if (found) {
+            gTractHighlight.append('path')
+              .attr('d', found.d)
+              .attr('fill', 'none')
+              .attr('stroke', '#102A4C')
+              .attr('stroke-width', 2.2)
+              .attr('vector-effect', 'non-scaling-stroke')
+              .style('pointer-events', 'none')
+              .style('filter', 'none');
+          }
         }
-
-        renderTractCells(activeTracts, targetFeature, cx0, cy0, cWidth, cHeight);
       }
+      updateSelectionRef.current = updateTractHighlights;
 
-      function renderTractCells(
-        activeTracts: CensusTract[],
-        targetFeature: any,
-        cx0: number,
-        cy0: number,
-        cWidth: number,
-        cHeight: number
-      ) {
+      // Render tracts into gTracts using Voronoi and clipPath
+      function renderTracts(activeTracts: CensusTract[], targetFeature: any, targetD: string, cid: string) {
         gTracts.selectAll('*').remove();
         if (activeTracts.length === 0) return;
 
-        // Color scale: SVI quantile scale with prototype vuln ramp & dark baseline
-        const sviVals = activeTracts.map(t => t.svi || 0);
-        const extent = d3.extent(sviVals) as [number, number];
-        const minVal = extent[0] ?? 0;
-        const maxVal = extent[1] ?? 1;
+        const countyRecord = repo.countyById.get(cid);
+        const [[cx0, cy0], [cx1, cy1]] = pathGen.bounds(targetFeature);
 
-        const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
-          d3.interpolateRgb(MAP_LOW, VULN_RAMP[0])(0.6),
-          ...VULN_RAMP
-        ]);
-        const qScale = d3.scaleQuantile().domain(sviVals).range(d3.range(7));
-
-        const getColor = (v: number) => {
-          const bin = qScale(v);
-          const t = (bin + 0.5) / 7;
-          return interp(t);
-        };
-
-        const binColors = d3.range(7).map(i => interp((i + 0.5) / 7));
+        // Quantile color scale for vulnerability
+        const sviVals = activeTracts.map(t => t.svi ?? 0);
+        const tractScale = createVulnColorScale(sviVals);
 
         setLegendInfo({
           title: 'Tract vulnerability',
-          loText: minVal.toFixed(2),
-          hiText: maxVal.toFixed(2),
-          bins: binColors
+          loText: tractScale.extent[0].toFixed(2),
+          hiText: tractScale.extent[1].toFixed(2),
+          bins: tractScale.bins
         });
 
-        // Voronoi Cell Generation
-        const points: [number, number][] = [];
-        let seed = 0;
-        for (let i = 0; i < currentCid.length; i++) seed += currentCid.charCodeAt(i) * (i + 1) * 37;
-        const prng = () => {
-          seed = (seed * 9301 + 49297) % 233280;
-          return seed / 233280;
-        };
+        // Generate seeds tested strictly inside county boundary
+        const pts = generateVoronoiSeeds(targetFeature, targetD, activeTracts.length, countyRecord, cid);
+        const voronoi = d3.Delaunay.from(pts).voronoi([cx0 - 8, cy0 - 8, cx1 + 8, cy1 + 8]);
 
-        for (let i = 0; i < activeTracts.length; i++) {
-          const r1 = prng();
-          const r2 = prng();
-          const px = cx0 + cWidth * (0.12 + r1 * 0.76);
-          const py = cy0 + cHeight * (0.12 + r2 * 0.76);
-          points.push([px, py]);
-        }
-
-        if (points.length < 3) {
-          points.push([cx0 + cWidth * 0.5, cy0 + cHeight * 0.5], [cx0 + 1, cy0 + 1], [cx0 + cWidth - 1, cy0 + cHeight - 1]);
-        }
-
-        const delaunay = d3.Delaunay.from(points);
-        const voronoi = delaunay.voronoi([cx0 - 20, cy0 - 20, cx0 + cWidth + 20, cy0 + cHeight + 20]);
-
-        tractVoronoiCells = activeTracts.map((tract, i) => ({
+        currentTractCells = activeTracts.map((tract, i) => ({
           tract,
           d: voronoi.renderCell(i) || ''
         }));
 
-        // Render Tract Polygons
-        const paths = gTracts.selectAll<SVGPathElement, CensusTract>('path.tract-cell')
+        const cmpSet = new Set(compareTractIds);
+
+        const paths = gTracts.selectAll<SVGPathElement, CensusTract>('path.tract')
           .data(activeTracts)
           .enter()
           .append('path')
-          .attr('d', (_, i) => voronoi.renderCell(i) || '')
-          .attr('data-id', t => t._id)
-          .attr('fill', t => getColor(t.svi || 0))
-          .attr('stroke', t => {
-            if (t._id === selectedTractId) return 'var(--cyan, #37C8CF)';
-            if (compareSet.has(t._id)) return '#FFB648';
-            return 'rgba(255, 255, 255, 0.45)';
+          .attr('class', t => {
+            const id = t._id || (t as any).id;
+            return `tract ${id === selectedTractId ? 'sel' : ''} ${cmpSet.has(id) ? 'cmp' : ''}`;
           })
-          .attr('stroke-width', t => (t._id === selectedTractId ? 2.5 : compareSet.has(t._id) ? 2.0 : 0.8))
-          .attr('vector-effect', 'non-scaling-stroke')
-          .attr('class', t => `tract-cell cursor-pointer transition-colors duration-150 hover:brightness-125 ${compareSet.has(t._id) ? 'cmp' : ''}`)
-          .classed('sel', t => t._id === selectedTractId);
+          .attr('d', (_, i) => currentTractCells[i]?.d || '')
+          .attr('fill', t => tractScale.getColor(t.svi ?? 0))
+          .attr('stroke', t => {
+            const id = t._id || (t as any).id;
+            if (id === selectedTractId) return '#102A4C';
+            if (cmpSet.has(id)) return '#F2B33D';
+            return 'rgba(255, 255, 255, 0.55)';
+          })
+          .attr('stroke-width', t => {
+            const id = t._id || (t as any).id;
+            if (id === selectedTractId) return 2.2;
+            if (cmpSet.has(id)) return 2.0;
+            return 0.7;
+          })
+          .attr('vector-effect', 'non-scaling-stroke');
 
-        // Animate entrance
+        // Entrance boundary draw / sweep animation matching prototype
         paths.attr('opacity', 0)
           .transition('tin')
-          .delay((_, i) => 120 + i * 12)
+          .delay((_, i) => 100 + i * 10)
           .duration(380)
           .attr('opacity', 1);
 
@@ -475,103 +508,321 @@ export function CensusTractMap({
           .on('pointerenter', function (event, tract) {
             d3.select(this)
               .attr('stroke', '#ffffff')
-              .attr('stroke-width', 2.0)
+              .attr('stroke-width', 1.6)
               .raise();
 
-            const cRect = container.getBoundingClientRect();
-            setTooltip({
-              visible: true,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14,
-              title: tract.name || `Tract ${tract._id}`,
-              subtitle: `GEOID ${tract._id}`,
-              metricLabel: 'SVI Vulnerability',
-              metricVal: tract.svi.toFixed(2),
-              tier: TIER_LABELS[tract.tier],
-              tierColor: TIER_COLORS[tract.tier],
-              pop: `${(tract.population || 0).toLocaleString()} residents`,
-              isNeighbour: false
-            });
+            const geoid = tract._id || (tract as any).id || '';
+            const sviVal = (tract.svi ?? 0).toFixed(2);
+            const tierIdx = tract.tier ?? Math.min(4, Math.floor((tract.svi ?? 0) * 5));
+            const tierName = TIER_LABELS[tierIdx] || 'Moderate';
+            const popVal = Number(tract.population || (tract as any).pop || 0).toLocaleString();
+
+            positionTooltip(event, tract.name || `Census Tract ${geoid}`, [
+              ['GEOID', geoid],
+              ['Vulnerability', sviVal],
+              ['Vulnerability tier', tierName],
+              ['Population', popVal]
+            ]);
           })
           .on('pointermove', function (event) {
-            const cRect = container.getBoundingClientRect();
-            setTooltip(prev => ({
-              ...prev,
-              x: event.clientX - cRect.left + 14,
-              y: event.clientY - cRect.top - 14
-            }));
+            moveTooltip(event);
           })
-          .on('pointerleave', function (_, tract) {
+          .on('pointerleave', function () {
             d3.select(this)
               .attr('stroke', (t: any) => {
-                if (t._id === selectedTractId) return 'var(--cyan, #37C8CF)';
-                if (compareSet.has(t._id)) return '#FFB648';
-                return 'rgba(255, 255, 255, 0.45)';
+                const id = t._id || t.id;
+                if (id === selectedTractId) return '#102A4C';
+                if (cmpSet.has(id)) return '#F2B33D';
+                return 'rgba(255, 255, 255, 0.55)';
               })
-              .attr('stroke-width', (t: any) => (t._id === selectedTractId ? 2.5 : compareSet.has(t._id) ? 2.0 : 0.8));
+              .attr('stroke-width', (t: any) => {
+                const id = t._id || t.id;
+                if (id === selectedTractId) return 2.2;
+                if (cmpSet.has(id)) return 2.0;
+                return 0.7;
+              });
 
-            setTooltip(prev => ({ ...prev, visible: false }));
+            hideTooltip();
           })
           .on('click', function (event, tract) {
             event.stopPropagation();
-            paths.classed('sel', (t: any) => t._id === tract._id)
-              .attr('stroke', (t: any) => (t._id === tract._id ? 'var(--cyan, #37C8CF)' : compareSet.has(t._id) ? '#FFB648' : 'rgba(255, 255, 255, 0.45)'))
-              .attr('stroke-width', (t: any) => (t._id === tract._id ? 2.5 : compareSet.has(t._id) ? 2.0 : 0.8));
-
-            updateTractHighlight();
-
+            hideTooltip();
+            d3.select(this).raise();
+            updateTractHighlights(tract._id || (tract as any).id, compareTractIds);
             if (onSelectTract) {
               onSelectTract(tract);
             }
           });
 
-        updateTractHighlight();
+        updateTractHighlights(selectedTractId, compareTractIds);
       }
-
-      switchCountyRef.current = (cid: string) => {
-        if (cid !== currentCid) {
-          demonstrateCounty(cid, true);
+      updateTractsRef.current = (newTracts: CensusTract[]) => {
+        if (currentCountyFeature && currentCountyD) {
+          renderTracts(newTracts, currentCountyFeature, currentCountyD, currentCid);
         }
       };
+
+      // Demonstrate County: Direct Camera Glide (850ms, d3.easeCubicInOut) without destroying canvas
+      function demonstrateCounty(targetCid: string, animateCamera = true) {
+        currentCid = targetCid;
+        activeCidRef.current = targetCid;
+        setActiveCountyId(targetCid);
+
+        const targetFeature =
+          countiesGeo.find((c: any) => c.id === targetCid) ||
+          countiesGeo.find((c: any) => c.id === '53033') ||
+          countiesGeo[0];
+
+        if (!targetFeature) return;
+
+        currentCountyFeature = targetFeature;
+        const targetD = pathGen(targetFeature) || '';
+        currentCountyD = targetD;
+
+        const statePrefix = targetFeature.id ? targetFeature.id.slice(0, 2) : '53';
+        const stateMeta = STATE_META[statePrefix] || ['WA', 'Washington', 'West'];
+        const stateAbbr = stateMeta[0];
+        const stateName = stateMeta[1];
+
+        const countyRecord = repo.countyById.get(targetCid);
+        const displayName = countyRecord
+          ? `${countyRecord.name} ${statePrefix === '22' ? 'Parish' : statePrefix === '02' ? 'Borough' : 'County'}, ${stateAbbr}`
+          : `${targetFeature.properties?.name || 'County'} County, ${stateAbbr}`;
+
+        setActiveCountyName(displayName);
+
+        // 1. Update Clip Path & Target County Outlines
+        clipPathElement.attr('d', targetD);
+        baseCountyPath.attr('d', targetD);
+        outlineCountyPath.attr('d', targetD);
+
+        // 2. State Outer Boundary Line (.nation-b) tracing coastline
+        const stateFeature = statesGeo.find((s: any) => s.id === statePrefix);
+        const stateD = stateFeature ? pathGen(stateFeature) || '' : '';
+        stateBorderPath.attr('d', stateD);
+
+        // 3. Camera Glide Transition with Zoom Padding 0.78
+        const [[cx0, cy0], [cx1, cy1]] = pathGen.bounds(targetFeature);
+        const cWidth = Math.max(cx1 - cx0, 10);
+        const cHeight = Math.max(cy1 - cy0, 10);
+        const pad = 0.78;
+        const s = Math.min(36, pad / Math.max(cWidth / 975, cHeight / 610));
+        const targetTransform = d3.zoomIdentity
+          .translate(975 / 2, 610 / 2)
+          .scale(s)
+          .translate(-(cx0 + cx1) / 2, -(cy0 + cy1) / 2);
+
+        resetZoomRef.current = () => {
+          svg.transition('camera-reset')
+            .duration(650)
+            .ease(d3.easeCubicInOut)
+            .call(zoom.transform, targetTransform);
+        };
+
+        if (animateCamera) {
+          svg.transition('camera-glide')
+            .duration(850)
+            .ease(d3.easeCubicInOut)
+            .call(zoom.transform, targetTransform);
+        } else {
+          svg.call(zoom.transform, targetTransform);
+        }
+
+        // 4. Colorize Surrounding Ambient Counties by active SVI metric
+        const stateCounties = repo.countiesByState.get(statePrefix) || [];
+        const stateSvis = stateCounties.map(c => c.svi || c.indicators?.svi || 0);
+        const countyScale = createVulnColorScale(stateSvis);
+
+        const ambientCounties = stateCounties.filter(c => c.id !== targetCid);
+        const surroundSelection = gSurround.selectAll<SVGPathElement, CountyRecord>('path.county')
+          .data(ambientCounties, d => d.id);
+
+        surroundSelection.exit().remove();
+
+        const enterAmbient = surroundSelection.enter()
+          .append('path')
+          .attr('class', 'county county-ambient')
+          .attr('vector-effect', 'non-scaling-stroke')
+          .style('cursor', 'pointer');
+
+        const allAmbient = enterAmbient.merge(surroundSelection);
+
+        allAmbient
+          .attr('d', d => pathGen(d.feature) || '')
+          .attr('fill', d => countyScale.getColor(d.svi || d.indicators?.svi || 0))
+          .attr('fill-opacity', 0.28)
+          .attr('stroke', 'rgba(141, 170, 200, 0.45)')
+          .attr('stroke-width', 0.75)
+          .attr('vector-effect', 'non-scaling-stroke')
+          .on('pointerenter', function (event, d) {
+            d3.select(this)
+              .attr('fill-opacity', 0.75)
+              .attr('stroke', '#ffffff')
+              .attr('stroke-width', 1.6)
+              .raise();
+
+            const cName = `${d.name} ${d.st === '22' ? 'Parish' : d.st === '02' ? 'Borough' : 'County'}, ${d.stateAbbr}`;
+            positionTooltip(event, cName, [
+              ['GEOID', d.id],
+              ['Vulnerability', (d.svi || d.indicators?.svi || 0).toFixed(2)],
+              ['Population', Number(d.pop || 0).toLocaleString()],
+              ['Action', 'Click to switch county']
+            ]);
+          })
+          .on('pointermove', function (event) {
+            moveTooltip(event);
+          })
+          .on('pointerleave', function () {
+            d3.select(this)
+              .attr('fill-opacity', 0.28)
+              .attr('stroke', 'rgba(141, 170, 200, 0.45)')
+              .attr('stroke-width', 0.75);
+            hideTooltip();
+          })
+          .on('click', function (event, d) {
+            event.stopPropagation();
+            hideTooltip();
+            demonstrateCounty(d.id, true);
+            if (onCountySelect) {
+              onCountySelect(d.id);
+            }
+          });
+
+        // 5. Load or Generate Census Tracts for Demonstrated Region
+        let activeTracts: CensusTract[] = [];
+        if (targetCid === countyFips && tracts.length > 0) {
+          activeTracts = tracts;
+        } else {
+          activeTracts = generateSyntheticTracts(targetCid, countyRecord);
+        }
+
+        renderTracts(activeTracts, targetFeature, targetD, targetCid);
+      }
+      demonstrateCountyRef.current = demonstrateCounty;
 
       // Initial demonstration
       demonstrateCounty(countyFips, false);
     }
 
-    renderMap();
+    initMap();
 
     return () => {
       isMounted = false;
     };
-  }, [countyFips, tracts, height]);
+  }, []); // Initialize canvas and layers once
 
-  // Update selection highlight when selectedTractId prop changes
+  // React to county changes: smooth direct camera glide without recreating canvas
   useEffect(() => {
-    if (!containerRef.current) return;
-    const svg = d3.select(containerRef.current).select('svg');
-    if (svg.empty()) return;
+    if (countyFips && countyFips !== activeCidRef.current && demonstrateCountyRef.current) {
+      demonstrateCountyRef.current(countyFips, true);
+    }
+  }, [countyFips]);
 
-    svg.selectAll<SVGPathElement, CensusTract>('path.tract-cell')
-      .classed('sel', t => t._id === selectedTractId)
-      .attr('stroke', t => {
-        if (t._id === selectedTractId) return 'var(--cyan, #37C8CF)';
-        if (compareSet.has(t._id)) return '#FFB648';
-        return 'rgba(255, 255, 255, 0.45)';
-      })
-      .attr('stroke-width', t => (t._id === selectedTractId ? 2.5 : compareSet.has(t._id) ? 2.0 : 0.8));
-  }, [selectedTractId, compareSet]);
+  // React to tracts prop update for current county
+  useEffect(() => {
+    if (tracts && tracts.length > 0 && updateTractsRef.current && countyFips === activeCidRef.current) {
+      updateTractsRef.current(tracts);
+    }
+  }, [tracts, countyFips]);
+
+  // React to selectedTractId or compareTractIds prop changes
+  useEffect(() => {
+    if (updateSelectionRef.current) {
+      updateSelectionRef.current(selectedTractId, compareTractIds);
+    }
+  }, [selectedTractId, compareTractIds]);
 
   return (
-    <div className="relative w-full h-full overflow-hidden" style={{ minHeight: `${height}px` }}>
+    <div
+      className="census-tract-map-wrapper relative w-full h-full overflow-hidden select-none"
+      style={{
+        minHeight: `${height}px`,
+        background: 'radial-gradient(ellipse at 50% 40%, rgba(55, 217, 245, 0.08), transparent 70%), #07111F'
+      }}
+    >
+      {/* Scoped styles strictly enforcing target prototype rules */}
+      <style jsx global>{`
+        .census-tract-map-wrapper .map-svg {
+          width: 100%;
+          height: 100%;
+          display: block;
+          touch-action: none;
+        }
+        .census-tract-map-wrapper .map-svg .county {
+          stroke: rgba(141, 170, 200, 0.45) !important;
+          stroke-width: 0.75px !important;
+          vector-effect: non-scaling-stroke;
+          transition: fill-opacity 0.2s ease, stroke 0.2s ease;
+        }
+        .census-tract-map-wrapper .map-svg .county:hover {
+          stroke: #ffffff !important;
+          stroke-width: 1.6px !important;
+          fill-opacity: 0.75 !important;
+        }
+        .census-tract-map-wrapper .map-svg .county.sel {
+          stroke: #102A4C !important;
+          stroke-width: 1.8px !important;
+        }
+        .census-tract-map-wrapper .map-svg.dim-others .county:not(.sel) {
+          fill-opacity: 0.28;
+        }
+        .census-tract-map-wrapper .map-svg .nation-b {
+          fill: none;
+          stroke: #9CC9EE !important;
+          stroke-opacity: 0.95 !important;
+          stroke-width: 1.2px !important;
+          vector-effect: non-scaling-stroke;
+          pointer-events: none;
+        }
+        .census-tract-map-wrapper .map-svg .sel-outline {
+          fill: none;
+          stroke: #102A4C !important;
+          stroke-width: 1.8px !important;
+          vector-effect: non-scaling-stroke;
+          filter: none !important;
+          pointer-events: none;
+        }
+        .census-tract-map-wrapper .map-svg .tract {
+          stroke: rgba(255, 255, 255, 0.55);
+          stroke-width: 0.7px;
+          vector-effect: non-scaling-stroke;
+          cursor: pointer;
+          transition: stroke 0.15s ease;
+        }
+        .census-tract-map-wrapper .map-svg .tract:hover {
+          stroke: #ffffff !important;
+          stroke-width: 1.6px !important;
+        }
+        .census-tract-map-wrapper .map-svg .tract.sel {
+          stroke: #102A4C !important;
+          stroke-width: 2.2px !important;
+        }
+        .census-tract-map-wrapper .map-svg .tract.cmp {
+          stroke: #F2B33D !important;
+          stroke-width: 2px !important;
+        }
+      `}</style>
+
+      {/* SVG Map Container */}
       <div ref={containerRef} className="w-full h-full" />
 
       {/* Floating Zoom & Pan HUD Controls (Top Right) */}
-      <div className="absolute top-3 right-3 z-20 flex flex-col gap-1 bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] rounded-xl p-1 shadow-md">
+      <div
+        className="absolute top-3 right-3 z-20 flex flex-col gap-1 p-1"
+        style={{
+          background: 'rgba(11, 28, 50, 0.92)',
+          border: '1px solid rgba(141, 170, 200, 0.25)',
+          borderRadius: '12px',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          boxShadow: '0 12px 30px -10px rgba(0,0,0,0.5)'
+        }}
+      >
         <button
           onClick={() => zoomInRef.current?.()}
           aria-label="Zoom in"
           title="Zoom In"
-          className="w-6 h-6 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors"
         >
           <ZoomIn className="w-3.5 h-3.5" />
         </button>
@@ -579,7 +830,7 @@ export function CensusTractMap({
           onClick={() => zoomOutRef.current?.()}
           aria-label="Zoom out"
           title="Zoom Out"
-          className="w-6 h-6 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors"
         >
           <ZoomOut className="w-3.5 h-3.5" />
         </button>
@@ -587,50 +838,80 @@ export function CensusTractMap({
           onClick={() => resetZoomRef.current?.()}
           aria-label="Reset zoom"
           title="Reset to Full County"
-          className="w-6 h-6 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors"
         >
-          <RotateCcw className="w-3 h-3" />
+          <RotateCcw className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* Floating Legend (Bottom Left matching prototype) */}
+      {/* Optional In-Map Floating Legend (Bottom Left matching prototype line 2084) */}
       {showLegend && legendInfo && (
-        <div className="absolute left-3 bottom-3 z-20 px-3 py-2 rounded-xl bg-[var(--surface-solid)]/95 backdrop-blur-md border border-[var(--line-strong)] shadow-md text-[10.5px] min-w-[170px]">
-          <span className="font-bold text-[var(--text)] block mb-1">{legendInfo.title}</span>
+        <div
+          className="map-float legend pointer-events-none absolute left-3 bottom-3 z-20 px-3 py-2 text-[10.5px] min-w-[175px]"
+          style={{
+            background: 'rgba(11, 28, 50, 0.92)',
+            border: '1px solid rgba(141, 170, 200, 0.25)',
+            borderRadius: '12px',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            boxShadow: '0 12px 30px -10px rgba(0,0,0,0.5)'
+          }}
+        >
+          <div className="flex justify-between items-center font-bold text-white mb-1.5 text-[11px]">
+            <span>{legendInfo.title}</span>
+          </div>
           <div className="flex h-2 rounded overflow-hidden mb-1">
             {legendInfo.bins.map((c, i) => (
               <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
             ))}
           </div>
-          <div className="flex justify-between items-center text-[9.5px] text-[var(--faint)]">
+          <div className="flex justify-between items-center text-[10px] text-[rgba(141,170,200,0.85)] font-mono">
             <span>{legendInfo.loText}</span>
-            <span>Tiers</span>
+            <span className="font-sans text-[9px] uppercase tracking-wider text-[rgba(141,170,200,0.6)]">Tiers</span>
             <span>{legendInfo.hiText}</span>
           </div>
         </div>
       )}
 
-      {/* Hover Floating Tooltip */}
+      {/* Rich Dark Floating Tooltip Card matching prototype lines 221-225 & 1228-1232 */}
       {tooltip.visible && (
         <div
-          className="absolute z-50 pointer-events-none px-3 py-2 rounded-xl bg-[var(--surface-solid)] border border-[var(--line-strong)] shadow-xl text-left text-[11px] animate-in fade-in duration-100"
-          style={{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }}
+          className="pointer-events-none fixed z-50 text-left transition-opacity duration-100 ease-out"
+          style={{
+            left: `${tooltip.x}px`,
+            top: `${tooltip.y}px`,
+            minWidth: '200px',
+            maxWidth: '280px',
+            background: 'rgba(11, 28, 50, 0.95)',
+            border: '1px solid rgba(141, 170, 200, 0.25)',
+            borderRadius: '12px',
+            padding: '10px 12px',
+            fontSize: '12.5px',
+            boxShadow: '0 18px 50px -20px rgba(0, 0, 0, 0.6)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)'
+          }}
         >
-          <div className="font-bold text-[var(--text)] text-[12px] flex items-center gap-1.5">
-            {tooltip.tierColor && (
-              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: tooltip.tierColor }} />
-            )}
-            <span>{tooltip.title}</span>
-          </div>
-          {tooltip.subtitle && (
-            <div className="text-[10px] text-[var(--faint)] font-mono mt-0.5">{tooltip.subtitle}</div>
-          )}
-          {tooltip.pop && (
-            <div className="text-[10px] text-[var(--muted)] mt-0.5">{tooltip.pop}</div>
-          )}
-          <div className="flex items-center justify-between gap-3 mt-1 pt-1 border-t border-[var(--line)]">
-            <span className="text-[var(--faint)]">{tooltip.metricLabel}:</span>
-            <span className="font-bold text-[var(--cyan)] num">{tooltip.metricVal}</span>
+          <b style={{ display: 'block', fontSize: '13.5px', fontWeight: 600, color: '#ffffff', marginBottom: '5px' }}>
+            {tooltip.title}
+          </b>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            {tooltip.rows.map(([label, val], idx) => (
+              <div
+                key={idx}
+                className="tv"
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: '14px',
+                  color: 'rgba(141, 170, 200, 0.85)',
+                  fontSize: '12px'
+                }}
+              >
+                <span>{label}</span>
+                <span style={{ color: '#ffffff', fontWeight: 700 }}>{val}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

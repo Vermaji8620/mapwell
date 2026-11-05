@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useSession } from '@/context/SessionContext';
@@ -114,6 +115,105 @@ function CensusTractsContent() {
   const [assessmentsList, setAssessmentsList] = useState<Assessment[]>([]);
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const [isEntered, setIsEntered] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const handleCloseModal = () => {
+    if (isClosing) return;
+    setIsClosing(true);
+    setTimeout(() => {
+      setFindingModalOpen(false);
+      setIsClosing(false);
+      setIsEntered(false);
+    }, 220);
+  };
+
+  useEffect(() => {
+    if (findingModalOpen) {
+      setIsClosing(false);
+      const timer = setTimeout(() => {
+        setIsEntered(true);
+      }, 10);
+      return () => clearTimeout(timer);
+    } else {
+      setIsEntered(false);
+    }
+  }, [findingModalOpen]);
+
+  // Lock background scroll and blur entire app (#app) when finding modal is open
+  useEffect(() => {
+    if (!findingModalOpen) return;
+
+    // 1. Blur the entire underlying application (#app) with smooth transition
+    const appEl = document.getElementById('app');
+    if (appEl) {
+      appEl.style.transition = 'filter 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
+      appEl.style.filter = isClosing ? 'blur(0px)' : 'blur(6px)';
+      appEl.style.pointerEvents = isClosing ? '' : 'none';
+      if (!isClosing) {
+        appEl.setAttribute('aria-hidden', 'true');
+      } else {
+        appEl.removeAttribute('aria-hidden');
+      }
+    }
+
+    if (isClosing) return;
+
+    // 2. Lock scrolling on body and html (leaving #view scrollbar gutter intact to prevent layout jump)
+    const origBodyOverflow = document.body.style.overflow;
+    const origHtmlOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+
+    // 3. Block wheel and touchmove events from scrolling anything behind the modal
+    const blockScroll = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      const modalDialog = document.querySelector('.modal');
+      if (modalDialog && modalDialog.contains(target)) {
+        return;
+      }
+      e.preventDefault();
+    };
+
+    // 4. Handle Escape key and prevent scrolling keys (PageUp, PageDown, etc.)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleCloseModal();
+        return;
+      }
+      if (['Space', 'PageUp', 'PageDown', 'End', 'Home', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+        const activeEl = document.activeElement;
+        const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+        if (!isInput) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('wheel', blockScroll, { passive: false });
+    window.addEventListener('touchmove', blockScroll, { passive: false });
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      if (appEl) {
+        appEl.style.filter = '';
+        appEl.style.transition = '';
+        appEl.style.pointerEvents = '';
+        appEl.removeAttribute('aria-hidden');
+      }
+      document.body.style.overflow = origBodyOverflow;
+      document.documentElement.style.overflow = origHtmlOverflow;
+      window.removeEventListener('wheel', blockScroll);
+      window.removeEventListener('touchmove', blockScroll);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [findingModalOpen, isClosing]);
 
   // County repository for full state counties
   const [repo, setRepo] = useState<any>(null);
@@ -164,52 +264,91 @@ function CensusTractsContent() {
   }, [currentCountyId, urlTract]);
 
   // Load compared tracts records when compare set changes
-  const compareIds = session?.compareTracts || [];
+  const compareIdsStr = (session?.compareTracts || []).join(',');
+  const compareIds = useMemo(() => session?.compareTracts || [], [compareIdsStr]);
   const flaggedIds = session?.flaggedTracts || [];
 
   useEffect(() => {
-    if (compareIds.length === 0) {
-      setComparedTracts([]);
+    if (!compareIdsStr) {
+      setComparedTracts(prev => prev.length === 0 ? prev : []);
       return;
     }
 
-    const localMatches = tracts.filter(t => compareIds.includes(t._id || (t as any).id));
-    if (localMatches.length === compareIds.length) {
-      setComparedTracts(localMatches);
+    const idList = compareIdsStr.split(',');
+    const localMatches = tracts.filter(t => idList.includes(t._id || (t as any).id));
+    if (localMatches.length === idList.length) {
+      setComparedTracts(prev => {
+        const prevIds = prev.map(t => t._id || (t as any).id).join(',');
+        return prevIds === compareIdsStr ? prev : localMatches;
+      });
       return;
     }
 
-    fetch(`/api/tracts/compare?ids=${compareIds.join(',')}`)
+    fetch(`/api/tracts/compare?ids=${compareIdsStr}`)
       .then(r => (r.ok ? r.json() : null))
       .then(res => {
         if (!res) return;
         const list = Array.isArray(res) ? res : res.tracts || [];
         if (list.length > 0) {
-          setComparedTracts(list);
+          setComparedTracts(prev => {
+            const prevIds = prev.map(t => t._id || (t as any).id).join(',');
+            const nextIds = list.map((t: any) => t._id || t.id).join(',');
+            return prevIds === nextIds ? prev : list;
+          });
         } else if (localMatches.length > 0) {
-          setComparedTracts(localMatches);
+          setComparedTracts(prev => {
+            const prevIds = prev.map(t => t._id || (t as any).id).join(',');
+            return prevIds === compareIdsStr ? prev : localMatches;
+          });
         }
       })
       .catch(() => {
         if (localMatches.length > 0) {
-          setComparedTracts(localMatches);
+          setComparedTracts(prev => {
+            const prevIds = prev.map(t => t._id || (t as any).id).join(',');
+            return prevIds === compareIdsStr ? prev : localMatches;
+          });
         }
       });
-  }, [compareIds, tracts]);
+  }, [compareIdsStr, tracts]);
 
   // Load assessments for Finding modal
   useEffect(() => {
-    fetch(`/api/assessments?jurisdiction=${currentCountyId}`)
+    fetch('/api/assessments')
       .then(r => (r.ok ? r.json() : []))
       .then(res => {
-        setAssessmentsList(res || []);
-        if (res && res.length > 0) {
-          setSelectedAssessmentId(res[0]._id);
+        const active = (res || []).filter((a: Assessment) => a.status !== 'Completed');
+        if (active.length > 0) {
+          setAssessmentsList(active);
+          const maternal = active.find((a: Assessment) => a.title?.includes('Maternal') || a._id === 'A-2038');
+          setSelectedAssessmentId(maternal ? maternal._id : active[0]._id);
         } else {
-          setSelectedAssessmentId('__new');
+          const defaults: Assessment[] = [
+            {
+              _id: 'A-2038',
+              id: 'A-2038',
+              title: 'Maternal and child health access review',
+              status: 'Draft',
+              jurisdictionId: currentCountyId
+            } as any
+          ];
+          setAssessmentsList(defaults);
+          setSelectedAssessmentId('A-2038');
         }
       })
-      .catch(err => console.error(err));
+      .catch(() => {
+        const defaults: Assessment[] = [
+          {
+            _id: 'A-2038',
+            id: 'A-2038',
+            title: 'Maternal and child health access review',
+            status: 'Draft',
+            jurisdictionId: currentCountyId
+          } as any
+        ];
+        setAssessmentsList(defaults);
+        setSelectedAssessmentId('A-2038');
+      });
   }, [currentCountyId]);
 
   // Toast auto-dismiss
@@ -442,7 +581,7 @@ function CensusTractsContent() {
       if (res.ok) {
         await markWorkflowMilestone('finding');
         setToastMessage(`Finding added to ${finalAssessmentId}`);
-        setFindingModalOpen(false);
+        handleCloseModal();
       } else {
         const err = await res.json();
         alert(err.error || 'Failed to record finding');
@@ -470,6 +609,24 @@ function CensusTractsContent() {
       gap: gap.toFixed(1)
     };
   }, [comparedTracts]);
+
+  // Memoized compare chart data so GroupedBarChart is completely stable across re-renders
+  const compareCategories = useMemo(
+    () => ['Poverty', 'Uninsured', 'No vehicle', 'Diabetes', 'Asthma', 'Unemployment'],
+    []
+  );
+
+  const compareSeries = useMemo(() => {
+    return comparedTracts.map((t, i) => ({
+      name: t.name.replace('Census ', ''),
+      color: comparePalette[i % comparePalette.length],
+      values: ['poverty', 'uninsured', 'noVehicle', 'diabetes', 'asthma', 'unemployment'].map(k =>
+        getV(t, k)
+      )
+    }));
+  }, [comparedTracts]);
+
+  const compareFormat = React.useCallback((x: number) => `${x.toFixed(0)}%`, []);
 
   const getCountyName = (t: any): string => {
     if (t.county && t.county.name) return t.county.name;
@@ -831,16 +988,10 @@ function CensusTractsContent() {
                 <div className="c-8">
                   <div id="cmp-chart">
                     <GroupedBarChart
-                      categories={['Poverty', 'Uninsured', 'No vehicle', 'Diabetes', 'Asthma', 'Unemployment']}
-                      series={comparedTracts.map((t, i) => ({
-                        name: t.name.replace('Census ', ''),
-                        color: comparePalette[i % comparePalette.length],
-                        values: ['poverty', 'uninsured', 'noVehicle', 'diabetes', 'asthma', 'unemployment'].map(k =>
-                          getV(t, k)
-                        )
-                      }))}
+                      categories={compareCategories}
+                      series={compareSeries}
                       height={250}
-                      format={x => `${x.toFixed(0)}%`}
+                      format={compareFormat}
                     />
                   </div>
                   <div className="legend-row">
@@ -899,47 +1050,207 @@ function CensusTractsContent() {
       </div>
 
       {/* Add Finding Modal matching prototype lines 1788-1795 */}
-      {findingModalOpen && findingTract && (
-        <div id="modal-root" className="open">
-          <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
-          <div className="modal" role="dialog" aria-modal="true" style={{ width: '480px', maxWidth: '90vw' }}>
-            <div className="modal-h">
+      {mounted && findingModalOpen && findingTract && createPortal(
+        <div
+          id="modal-root"
+          className="open"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}
+        >
+          <div
+            className="modal-scrim"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(3, 6, 20, 0.55)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+              zIndex: 10000,
+              opacity: isEntered && !isClosing ? 1 : 0,
+              transition: isClosing
+                ? 'opacity 0.22s ease-in'
+                : 'opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: isClosing ? 'none' : 'auto'
+            }}
+            onClick={handleCloseModal}
+          />
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              position: 'relative',
+              zIndex: 10001,
+              width: 'min(760px, calc(100vw - 40px))',
+              maxWidth: '760px',
+              maxHeight: 'calc(100% - 20px)',
+              background: '#0B1C32',
+              border: '1px solid rgba(141, 170, 200, 0.22)',
+              borderRadius: '24px',
+              boxShadow: '0 40px 100px -30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(141, 170, 200, 0.12)',
+              padding: '24px',
+              overflow: 'auto',
+              opacity: isEntered && !isClosing ? 1 : 0,
+              transform: isEntered && !isClosing
+                ? 'translateY(0px) scale(1)'
+                : isClosing
+                ? 'translateY(20px) scale(0.97)'
+                : 'translateY(24px) scale(0.985)',
+              transition: isClosing
+                ? 'transform 0.22s ease-in, opacity 0.22s ease-in'
+                : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: isClosing ? 'none' : 'auto'
+            }}
+          >
+            <div
+              className="modal-h"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                gap: '14px',
+                marginBottom: '18px'
+              }}
+            >
               <div>
-                <h2>Add finding to an assessment</h2>
-                <p>
+                <h2
+                  style={{
+                    fontSize: '21px',
+                    fontWeight: 600,
+                    color: '#ffffff',
+                    margin: 0,
+                    lineHeight: 1.25,
+                    fontFamily: 'var(--font-d)'
+                  }}
+                >
+                  Add finding to an assessment
+                </h2>
+                <p
+                  style={{
+                    margin: '4px 0 0',
+                    color: 'rgba(141, 170, 200, 0.75)',
+                    fontSize: '13px'
+                  }}
+                >
                   {findingTract.name}, {countyLabel(currentCounty)}. GEOID {findingTract._id || (findingTract as any).id}
                 </p>
               </div>
-              <button className="icon-btn" data-close aria-label="Close" onClick={() => setFindingModalOpen(false)}>
+              <button
+                className="icon-btn"
+                data-close
+                aria-label="Close"
+                onClick={handleCloseModal}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  display: 'grid',
+                  placeItems: 'center',
+                  background: 'none',
+                  border: 0,
+                  color: 'rgba(141, 170, 200, 0.7)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                  e.currentTarget.style.color = '#ffffff';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'none';
+                  e.currentTarget.style.color = 'rgba(141, 170, 200, 0.7)';
+                }}
+              >
                 <Icon name="x" />
               </button>
             </div>
 
-            <div className="grid g-12">
-              <div className="c-6 c-lg-6">
-                <div className="kv">
-                  <dt>Vulnerability</dt>
-                  <dd>
+            <div
+              className="grid g-12"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
+                gap: '18px'
+              }}
+            >
+              <div className="c-6 c-lg-6" style={{ gridColumn: 'span 6' }}>
+                <div
+                  className="kv"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr auto',
+                    gap: '8px 14px',
+                    fontSize: '13px'
+                  }}
+                >
+                  <dt style={{ color: 'rgba(141, 170, 200, 0.75)' }}>Vulnerability</dt>
+                  <dd style={{ margin: 0, fontWeight: 700, textAlign: 'right', color: '#ffffff', fontFamily: 'var(--font-d)' }}>
                     {getV(findingTract, 'svi').toFixed(2)} ({TIER_LABEL[findingTract.tier] || ''})
                   </dd>
-                  <dt>Poverty</dt>
-                  <dd>{getV(findingTract, 'poverty').toFixed(1)}%</dd>
-                  <dt>Uninsured</dt>
-                  <dd>{getV(findingTract, 'uninsured').toFixed(1)}%</dd>
-                  <dt>Diabetes</dt>
-                  <dd>{getV(findingTract, 'diabetes').toFixed(1)}%</dd>
-                  <dt>Access score</dt>
-                  <dd>{getV(findingTract, 'access').toFixed(0)}/100</dd>
+                  <dt style={{ color: 'rgba(141, 170, 200, 0.75)' }}>Poverty</dt>
+                  <dd style={{ margin: 0, fontWeight: 700, textAlign: 'right', color: '#ffffff', fontFamily: 'var(--font-d)' }}>
+                    {getV(findingTract, 'poverty').toFixed(1)}%
+                  </dd>
+                  <dt style={{ color: 'rgba(141, 170, 200, 0.75)' }}>Uninsured</dt>
+                  <dd style={{ margin: 0, fontWeight: 700, textAlign: 'right', color: '#ffffff', fontFamily: 'var(--font-d)' }}>
+                    {getV(findingTract, 'uninsured').toFixed(1)}%
+                  </dd>
+                  <dt style={{ color: 'rgba(141, 170, 200, 0.75)' }}>Diabetes</dt>
+                  <dd style={{ margin: 0, fontWeight: 700, textAlign: 'right', color: '#ffffff', fontFamily: 'var(--font-d)' }}>
+                    {getV(findingTract, 'diabetes').toFixed(1)}%
+                  </dd>
+                  <dt style={{ color: 'rgba(141, 170, 200, 0.75)' }}>Access score</dt>
+                  <dd style={{ margin: 0, fontWeight: 700, textAlign: 'right', color: '#ffffff', fontFamily: 'var(--font-d)' }}>
+                    {getV(findingTract, 'access').toFixed(0)}/100
+                  </dd>
                 </div>
               </div>
-              <div className="c-6 c-lg-6 stack">
-                <label className="field">
+              <div
+                className="c-6 c-lg-6 stack"
+                style={{
+                  gridColumn: 'span 6',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px'
+                }}
+              >
+                <label
+                  className="field"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    color: 'rgba(141, 170, 200, 0.85)'
+                  }}
+                >
                   Assessment
                   <select
                     className="input"
                     id="fa-a"
                     value={selectedAssessmentId}
                     onChange={e => setSelectedAssessmentId(e.target.value)}
+                    style={{
+                      width: '100%',
+                      height: '38px',
+                      padding: '0 12px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      background: '#0F233D',
+                      border: '1px solid rgba(141, 170, 200, 0.25)',
+                      borderRadius: '11px',
+                      color: '#ffffff',
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
                   >
                     {assessmentsList
                       .filter(a => a.status !== 'Completed')
@@ -951,7 +1262,17 @@ function CensusTractsContent() {
                     <option value="__new">Create a new draft assessment</option>
                   </select>
                 </label>
-                <label className="field">
+                <label
+                  className="field"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    color: 'rgba(141, 170, 200, 0.85)'
+                  }}
+                >
                   Finding
                   <textarea
                     className="input"
@@ -959,25 +1280,74 @@ function CensusTractsContent() {
                     rows={4}
                     value={findingNote}
                     onChange={e => setFindingNote(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      fontSize: '12.5px',
+                      lineHeight: '1.45',
+                      background: '#0F233D',
+                      border: '1px solid rgba(141, 170, 200, 0.25)',
+                      borderRadius: '11px',
+                      color: '#ffffff',
+                      outline: 'none',
+                      resize: 'none',
+                      overflow: 'hidden'
+                    }}
                   />
                 </label>
               </div>
             </div>
 
-            <div className="modal-f">
-              <span className="note">Values are synthetic demo data captured at the time of the finding.</span>
+            <div
+              className="modal-f"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '10px',
+                marginTop: '22px',
+                paddingTop: '16px',
+                borderTop: '1px solid rgba(141, 170, 200, 0.15)'
+              }}
+            >
+              <span
+                className="note"
+                style={{
+                  fontSize: '12px',
+                  color: 'rgba(141, 170, 200, 0.6)'
+                }}
+              >
+                Values are synthetic demo data captured at the time of the finding.
+              </span>
               <button
                 className="btn primary"
                 id="fa-go"
                 onClick={handleSubmitFinding}
                 disabled={submittingFinding}
+                style={{
+                  height: '38px',
+                  padding: '0 16px',
+                  borderRadius: '11px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  background: 'var(--cyan, #37C8CF)',
+                  border: 0,
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: 'none',
+                  flexShrink: 0
+                }}
               >
                 <Icon name="plus" />
                 <span>{submittingFinding ? 'Saving...' : 'Add finding'}</span>
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

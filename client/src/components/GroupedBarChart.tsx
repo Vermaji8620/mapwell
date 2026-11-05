@@ -16,13 +16,16 @@ export interface GroupedBarChartProps {
   format?: (v: number) => string;
 }
 
-export function GroupedBarChart({
+function GroupedBarChartComponent({
   categories,
   series,
   height = 250,
   format = (v: number) => `${v.toFixed(0)}%`
 }: GroupedBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const prevDataKeyRef = useRef<string>('');
+  const dataKey = JSON.stringify({ categories, series, height });
+
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
@@ -44,6 +47,13 @@ export function GroupedBarChart({
   useEffect(() => {
     if (!containerRef.current || series.length === 0 || categories.length === 0) return;
     const container = containerRef.current;
+
+    // Preserve existing graph if data has not changed
+    if (prevDataKeyRef.current === dataKey && container.querySelector('svg')) {
+      return;
+    }
+    prevDataKeyRef.current = dataKey;
+
     container.innerHTML = '';
 
     const W = container.clientWidth || 550;
@@ -196,3 +206,5 @@ export function GroupedBarChart({
     </div>
   );
 }
+
+export const GroupedBarChart = React.memo(GroupedBarChartComponent);
