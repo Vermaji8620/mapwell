@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
+import { useRouter } from 'next/navigation';
 import * as d3 from 'd3';
 import { useSession } from '@/context/SessionContext';
 import { METRICS_CONFIG } from '@/config/metrics';
@@ -151,13 +152,19 @@ function RegionalBarChart({
       .attr('fill', 'var(--surface-2)')
       .attr('width', Math.max(10, W - lw - 64));
 
-    // Fill bar
-    rows.append('rect')
+    // Fill bar with transition matching prototype lines 1459-1460
+    const bars = rows.append('rect')
       .attr('x', lw)
       .attr('y', rowH / 2 - 3)
       .attr('height', 6)
       .attr('rx', 1)
       .attr('fill', 'var(--cyan)')
+      .attr('width', 0);
+
+    bars.transition()
+      .duration(900)
+      .delay((_, i) => i * 60)
+      .ease(d3.easeCubicOut)
       .attr('width', d => Math.max(2, x(d.value)));
 
     rows.append('text')
@@ -269,16 +276,41 @@ function TimeTrendsChart({
 
         svg.append('path')
           .attr('d', area(s.values) || '')
-          .attr('fill', `url(#${gid})`);
+          .attr('fill', `url(#${gid})`)
+          .attr('opacity', 0)
+          .transition()
+          .duration(900)
+          .delay(500)
+          .attr('opacity', 1);
       }
 
-      svg.append('path')
+      const p = svg.append('path')
         .attr('d', line(s.values) || '')
         .attr('fill', 'none')
         .attr('stroke', s.color)
         .attr('stroke-width', s.width || 2.4)
         .attr('stroke-dasharray', s.dash || null)
         .attr('stroke-linecap', 'round');
+
+      const node = p.node();
+      if (node) {
+        if (!s.dash) {
+          const L = node.getTotalLength();
+          p.attr('stroke-dasharray', `${L} ${L}`)
+            .attr('stroke-dashoffset', L)
+            .transition()
+            .duration(1300)
+            .delay(si * 160)
+            .ease(d3.easeCubicInOut)
+            .attr('stroke-dashoffset', 0);
+        } else {
+          p.attr('opacity', 0)
+            .transition()
+            .duration(900)
+            .delay(si * 160)
+            .attr('opacity', 1);
+        }
+      }
     });
 
     // Mark line at active year index
@@ -425,16 +457,41 @@ function IliChart({
 
         svg.append('path')
           .attr('d', area(s.values) || '')
-          .attr('fill', `url(#${gid})`);
+          .attr('fill', `url(#${gid})`)
+          .attr('opacity', 0)
+          .transition()
+          .duration(900)
+          .delay(500)
+          .attr('opacity', 1);
       }
 
-      svg.append('path')
+      const p = svg.append('path')
         .attr('d', line(s.values) || '')
         .attr('fill', 'none')
         .attr('stroke', s.color)
         .attr('stroke-width', s.width || 2.4)
         .attr('stroke-dasharray', s.dash || null)
         .attr('stroke-linecap', 'round');
+
+      const node = p.node();
+      if (node) {
+        if (!s.dash) {
+          const L = node.getTotalLength();
+          p.attr('stroke-dasharray', `${L} ${L}`)
+            .attr('stroke-dashoffset', L)
+            .transition()
+            .duration(1300)
+            .delay(si * 160)
+            .ease(d3.easeCubicInOut)
+            .attr('stroke-dashoffset', 0);
+        } else {
+          p.attr('opacity', 0)
+            .transition()
+            .duration(900)
+            .delay(si * 160)
+            .attr('opacity', 1);
+        }
+      }
     });
 
     // Hover crosshair and interactive overlay
@@ -489,6 +546,7 @@ function IliChart({
 }
 
 function DiseaseIncidenceContent() {
+  const router = useRouter();
   const { activeCounty, markWorkflowMilestone } = useSession();
 
   const [repo, setRepo] = useState<{
@@ -1099,7 +1157,10 @@ function DiseaseIncidenceContent() {
                       key={r.county.id}
                       className={`clickable ${isSelected ? 'sel' : ''}`}
                       data-c={r.county.id}
-                      onClick={() => setSelectedCountyId(r.county.id)}
+                      onClick={() => {
+                        setSelectedCountyId(r.county.id);
+                        router.push(`/health-map?county=${r.county.id}`);
+                      }}
                     >
                       <td>
                         <b>{r.county.name}</b>
