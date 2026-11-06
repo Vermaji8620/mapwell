@@ -13,6 +13,7 @@ interface SessionContextType {
   setActiveJurisdiction: (fips: CountyFips) => Promise<void>;
   toggleFlagTract: (geoid: TractGeoid) => Promise<void>;
   toggleCompareTract: (geoid: TractGeoid) => Promise<void>;
+  clearCompareTracts: () => Promise<void>;
   markWorkflowMilestone: (milestoneId: string) => Promise<void>;
   resetWorkflow: () => Promise<void>;
   workflowDrawerOpen: boolean;
@@ -199,6 +200,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const clearCompareTracts = async () => {
+    try {
+      setSession(prev => prev ? { ...prev, compareTracts: [] } : null);
+      const res = await fetch('/api/session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ compareTracts: [] })
+      });
+      if (res.ok) {
+        const updatedSession = await res.json();
+        setSession(updatedSession);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const markWorkflowMilestone = async (milestoneId: string) => {
     try {
       const current = session?.workflowMilestones || {};
@@ -308,6 +326,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setActiveJurisdiction,
         toggleFlagTract,
         toggleCompareTract,
+        clearCompareTracts,
         markWorkflowMilestone,
         resetWorkflow,
         workflowDrawerOpen,

@@ -90,6 +90,7 @@ function CensusTractsContent() {
     session,
     toggleFlagTract,
     toggleCompareTract,
+    clearCompareTracts,
     markWorkflowMilestone
   } = useSession();
 
@@ -477,13 +478,9 @@ function CensusTractsContent() {
   };
 
   // Clear comparison matching prototype line 2141
-  const handleClearCompare = () => {
-    fetch('/api/session', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ compareTracts: [] })
-    }).catch(() => {});
+  const handleClearCompare = async () => {
     setComparedTracts([]);
+    await clearCompareTracts();
   };
 
   // CSV Export matching prototype line 2147
@@ -829,7 +826,7 @@ function CensusTractsContent() {
         {/* Right Column: c-4 stack matching prototype lines 2083-2086 */}
         <div className="c-4 stack" style={{ gap: '18px' }}>
           {/* Map Panel */}
-          <section className="panel" style={{ padding: 0, overflow: 'hidden', height: '300px', position: 'relative' }}>
+          <section className="panel map-shell" style={{ padding: 0, overflow: 'hidden', height: '300px', position: 'relative' }}>
             <div id="ct-map-el" style={{ position: 'absolute', inset: 0 }}>
               <CensusTractMap
                 countyFips={currentCountyId}

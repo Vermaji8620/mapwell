@@ -6,6 +6,7 @@ import * as topojson from 'topojson-client';
 import { CensusTract } from '@/types';
 import { TIER_COLORS, TIER_LABELS } from '@/config/metrics';
 import { CountyRecord, getCountyRepository, STATE_META } from '@/utils/countyRepository';
+import { useSession } from '@/context/SessionContext';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 export interface CensusTractMapProps {
@@ -17,6 +18,7 @@ export interface CensusTractMapProps {
   onCountySelect?: (countyFips: string) => void;
   height?: number;
   showLegend?: boolean;
+  theme?: 'light' | 'dark';
 }
 
 // Official Vulnerability Layer Ramp matching local prototype (line 1085: layer 'vuln')
@@ -47,10 +49,11 @@ function gaussRand(r: () => number): number {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-// Prototype color scale generator (lines 1094-1104) with dark navy base #0E2138
-function createVulnColorScale(values: number[]) {
+// Prototype color scale generator (lines 1094-1104) with dark navy base #0E2138 for dark mode
+function createVulnColorScale(values: number[], isDark: boolean = true) {
+  const lowColor = isDark ? '#0E2138' : '#F0F7FD';
   const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
-    d3.interpolateRgb('#0E2138', VULN_RAMP[0])(0.6),
+    d3.interpolateRgb(lowColor, VULN_RAMP[0])(0.6),
     ...VULN_RAMP
   ]);
   const cleanVals = values.length > 0 ? values : [0, 0.2, 0.4, 0.6, 0.8, 1];
@@ -62,6 +65,21 @@ function createVulnColorScale(values: number[]) {
   const bins = d3.range(7).map(i => interp((i + 0.5) / 7));
   const extent = (cleanVals.length > 0 ? d3.extent(cleanVals) : [0, 1]) as [number, number];
   return { getColor, bins, extent, qScale };
+}
+
+// Light mode surrounding counties matching Image 3: soft pastel blue palette
+function createAmbientScale(values: number[], isDark: boolean = true) {
+  if (isDark) {
+    return createVulnColorScale(values, true);
+  }
+  const cleanVals = values.length > 0 ? values : [0, 0.2, 0.4, 0.6, 0.8, 1];
+  const qScale = d3.scaleQuantile().domain(cleanVals).range(d3.range(5));
+  const lightRamp = ['#EBF4FD', '#D7ECFC', '#C8E2FA', '#B9D7F6', '#A3CBF3'];
+  const getColor = (v: number) => {
+    const bin = qScale(v);
+    return lightRamp[bin] || '#D7ECFC';
+  };
+  return { getColor };
 }
 
 // Generate Voronoi seeds strictly tested inside county SVG path via offscreen Canvas
@@ -211,9 +229,15 @@ export function CensusTractMap({
   onSelectTract,
   onCountySelect,
   height = 300,
-  showLegend = false
+  showLegend = false,
+  theme: customTheme
 }: CensusTractMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sessionCtx = useSession();
+  const activeTheme = customTheme || sessionCtx?.theme || 'light';
+  const isDark = activeTheme === 'dark';
+  const isDarkRef = useRef(isDark);
+  isDarkRef.current = isDark;
 
   // Callbacks and refs kept across component renders
   const demonstrateCountyRef = useRef<((targetCid: string, animateCamera: boolean) => void) | null>(null);
@@ -350,7 +374,7 @@ export function CensusTractMap({
       // Layer 3: Base silhouette of demonstrated active county
       const gTargetBase = rootGroup.append('g').attr('class', 'target-county-base');
       const baseCountyPath = gTargetBase.append('path')
-        .attr('fill', '#101B45')
+        .attr('fill', isDarkRef.current ? '#101B45' : '#D7ECFC')
         .attr('opacity', 0.95);
 
       // Layer 4: Clipped Census Tracts Group
@@ -453,7 +477,7 @@ export function CensusTractMap({
 
         // Quantile color scale for vulnerability
         const sviVals = activeTracts.map(t => t.svi ?? 0);
-        const tractScale = createVulnColorScale(sviVals);
+        const tractScale = createVulnColorScale(sviVals, isDarkRef.current);
 
         setLegendInfo({
           title: 'Tract vulnerability',
@@ -593,7 +617,9 @@ export function CensusTractMap({
 
         // 1. Update Clip Path & Target County Outlines
         clipPathElement.attr('d', targetD);
-        baseCountyPath.attr('d', targetD);
+        baseCountyPath
+          .attr('d', targetD)
+          .attr('fill', isDarkRef.current ? '#101B45' : '#D7ECFC');
         outlineCountyPath.attr('d', targetD);
 
         // 2. State Outer Boundary Line (.nation-b) tracing coastline
@@ -631,7 +657,9 @@ export function CensusTractMap({
         // 4. Colorize Surrounding Ambient Counties by active SVI metric
         const stateCounties = repo.countiesByState.get(statePrefix) || [];
         const stateSvis = stateCounties.map(c => c.svi || c.indicators?.svi || 0);
-        const countyScale = createVulnColorScale(stateSvis);
+        const isDark = isDarkRef.current;
+        const countyScale = createVulnColorScale(stateSvis, isDark);
+        const ambientScale = createAmbientScale(stateSvis, isDark);
 
         const ambientCounties = stateCounties.filter(c => c.id !== targetCid);
         const surroundSelection = gSurround.selectAll<SVGPathElement, CountyRecord>('path.county')
@@ -649,15 +677,15 @@ export function CensusTractMap({
 
         allAmbient
           .attr('d', d => pathGen(d.feature) || '')
-          .attr('fill', d => countyScale.getColor(d.svi || d.indicators?.svi || 0))
-          .attr('fill-opacity', 0.28)
-          .attr('stroke', 'rgba(141, 170, 200, 0.45)')
-          .attr('stroke-width', 0.75)
+          .attr('fill', d => isDark ? countyScale.getColor(d.svi || d.indicators?.svi || 0) : ambientScale.getColor(d.svi || d.indicators?.svi || 0))
+          .attr('fill-opacity', isDark ? 0.28 : 0.95)
+          .attr('stroke', isDark ? 'rgba(141, 170, 200, 0.45)' : '#ffffff')
+          .attr('stroke-width', isDark ? 0.75 : 0.8)
           .attr('vector-effect', 'non-scaling-stroke')
           .on('pointerenter', function (event, d) {
             d3.select(this)
-              .attr('fill-opacity', 0.75)
-              .attr('stroke', '#ffffff')
+              .attr('fill-opacity', isDark ? 0.75 : 1)
+              .attr('stroke', isDark ? '#ffffff' : '#2584EB')
               .attr('stroke-width', 1.6)
               .raise();
 
@@ -674,9 +702,9 @@ export function CensusTractMap({
           })
           .on('pointerleave', function () {
             d3.select(this)
-              .attr('fill-opacity', 0.28)
-              .attr('stroke', 'rgba(141, 170, 200, 0.45)')
-              .attr('stroke-width', 0.75);
+              .attr('fill-opacity', isDark ? 0.28 : 0.95)
+              .attr('stroke', isDark ? 'rgba(141, 170, 200, 0.45)' : '#ffffff')
+              .attr('stroke-width', isDark ? 0.75 : 0.8);
             hideTooltip();
           })
           .on('click', function (event, d) {
@@ -718,6 +746,13 @@ export function CensusTractMap({
     }
   }, [countyFips]);
 
+  // React to theme changes (light/dark switch)
+  useEffect(() => {
+    if (demonstrateCountyRef.current) {
+      demonstrateCountyRef.current(activeCidRef.current, false);
+    }
+  }, [isDark]);
+
   // React to tracts prop update for current county
   useEffect(() => {
     if (tracts && tracts.length > 0 && updateTractsRef.current && countyFips === activeCidRef.current) {
@@ -734,10 +769,12 @@ export function CensusTractMap({
 
   return (
     <div
-      className="census-tract-map-wrapper relative w-full h-full overflow-hidden select-none"
+      className={`census-tract-map-wrapper relative w-full h-full overflow-hidden select-none ${isDark ? 'dark' : 'light'}`}
       style={{
         minHeight: `${height}px`,
-        background: 'radial-gradient(ellipse at 50% 40%, rgba(55, 217, 245, 0.08), transparent 70%), #07111F'
+        background: isDark
+          ? 'radial-gradient(ellipse at 50% 40%, rgba(55, 217, 245, 0.08), transparent 70%), #07111F'
+          : '#F3F9FE'
       }}
     >
       {/* Scoped styles strictly enforcing target prototype rules */}
@@ -748,23 +785,37 @@ export function CensusTractMap({
           display: block;
           touch-action: none;
         }
-        .census-tract-map-wrapper .map-svg .county {
+        .census-tract-map-wrapper.dark .map-svg .county {
           stroke: rgba(141, 170, 200, 0.45) !important;
           stroke-width: 0.75px !important;
           vector-effect: non-scaling-stroke;
           transition: fill-opacity 0.2s ease, stroke 0.2s ease;
         }
-        .census-tract-map-wrapper .map-svg .county:hover {
+        .census-tract-map-wrapper.dark .map-svg .county:hover {
           stroke: #ffffff !important;
           stroke-width: 1.6px !important;
           fill-opacity: 0.75 !important;
         }
+        .census-tract-map-wrapper.dark .map-svg.dim-others .county:not(.sel) {
+          fill-opacity: 0.28 !important;
+        }
+        .census-tract-map-wrapper.light .map-svg .county {
+          stroke: #ffffff !important;
+          stroke-width: 0.8px !important;
+          vector-effect: non-scaling-stroke;
+          transition: fill-opacity 0.2s ease, stroke 0.2s ease;
+        }
+        .census-tract-map-wrapper.light .map-svg .county:hover {
+          stroke: #2584EB !important;
+          stroke-width: 1.6px !important;
+          fill-opacity: 1 !important;
+        }
+        .census-tract-map-wrapper.light .map-svg.dim-others .county:not(.sel) {
+          fill-opacity: 0.95 !important;
+        }
         .census-tract-map-wrapper .map-svg .county.sel {
           stroke: #102A4C !important;
           stroke-width: 1.8px !important;
-        }
-        .census-tract-map-wrapper .map-svg.dim-others .county:not(.sel) {
-          fill-opacity: 0.28;
         }
         .census-tract-map-wrapper .map-svg .nation-b {
           fill: none;
@@ -809,20 +860,35 @@ export function CensusTractMap({
       {/* Floating Zoom & Pan HUD Controls (Top Right) */}
       <div
         className="absolute top-3 right-3 z-20 flex flex-col gap-1 p-1"
-        style={{
-          background: 'rgba(11, 28, 50, 0.92)',
-          border: '1px solid rgba(141, 170, 200, 0.25)',
-          borderRadius: '12px',
-          backdropFilter: 'blur(10px)',
-          WebkitBackdropFilter: 'blur(10px)',
-          boxShadow: '0 12px 30px -10px rgba(0,0,0,0.5)'
-        }}
+        style={
+          isDark
+            ? {
+                background: 'rgba(11, 28, 50, 0.92)',
+                border: '1px solid rgba(141, 170, 200, 0.25)',
+                borderRadius: '12px',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                boxShadow: '0 12px 30px -10px rgba(0,0,0,0.5)'
+              }
+            : {
+                background: 'rgba(255, 255, 255, 0.92)',
+                border: '1px solid #DCEAF5',
+                borderRadius: '12px',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                boxShadow: '0 10px 30px -18px rgba(37,100,180,.35)'
+              }
+        }
       >
         <button
           onClick={() => zoomInRef.current?.()}
           aria-label="Zoom in"
           title="Zoom In"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors"
+          className={
+            isDark
+              ? 'w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors'
+              : 'w-7 h-7 rounded-lg flex items-center justify-center text-[#56628A] hover:text-[#102A4C] hover:bg-[#F0F7FD] transition-colors'
+          }
         >
           <ZoomIn className="w-3.5 h-3.5" />
         </button>
@@ -830,7 +896,11 @@ export function CensusTractMap({
           onClick={() => zoomOutRef.current?.()}
           aria-label="Zoom out"
           title="Zoom Out"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors"
+          className={
+            isDark
+              ? 'w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors'
+              : 'w-7 h-7 rounded-lg flex items-center justify-center text-[#56628A] hover:text-[#102A4C] hover:bg-[#F0F7FD] transition-colors'
+          }
         >
           <ZoomOut className="w-3.5 h-3.5" />
         </button>
@@ -838,7 +908,11 @@ export function CensusTractMap({
           onClick={() => resetZoomRef.current?.()}
           aria-label="Reset zoom"
           title="Reset to Full County"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors"
+          className={
+            isDark
+              ? 'w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors'
+              : 'w-7 h-7 rounded-lg flex items-center justify-center text-[#56628A] hover:text-[#102A4C] hover:bg-[#F0F7FD] transition-colors'
+          }
         >
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
@@ -848,16 +922,27 @@ export function CensusTractMap({
       {showLegend && legendInfo && (
         <div
           className="map-float legend pointer-events-none absolute left-3 bottom-3 z-20 px-3 py-2 text-[10.5px] min-w-[175px]"
-          style={{
-            background: 'rgba(11, 28, 50, 0.92)',
-            border: '1px solid rgba(141, 170, 200, 0.25)',
-            borderRadius: '12px',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)',
-            boxShadow: '0 12px 30px -10px rgba(0,0,0,0.5)'
-          }}
+          style={
+            isDark
+              ? {
+                  background: 'rgba(11, 28, 50, 0.92)',
+                  border: '1px solid rgba(141, 170, 200, 0.25)',
+                  borderRadius: '12px',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  boxShadow: '0 12px 30px -10px rgba(0,0,0,0.5)'
+                }
+              : {
+                  background: 'rgba(255, 255, 255, 0.92)',
+                  border: '1px solid #DCEAF5',
+                  borderRadius: '12px',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                  boxShadow: '0 10px 30px -18px rgba(37,100,180,.35)'
+                }
+          }
         >
-          <div className="flex justify-between items-center font-bold text-white mb-1.5 text-[11px]">
+          <div className={`flex justify-between items-center font-bold mb-1.5 text-[11px] ${isDark ? 'text-white' : 'text-[#0B1438]'}`}>
             <span>{legendInfo.title}</span>
           </div>
           <div className="flex h-2 rounded overflow-hidden mb-1">
@@ -865,7 +950,7 @@ export function CensusTractMap({
               <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />
             ))}
           </div>
-          <div className="flex justify-between items-center text-[10px] text-[rgba(141,170,200,0.85)] font-mono">
+          <div className={`flex justify-between items-center text-[10px] font-mono ${isDark ? 'text-[rgba(141,170,200,0.85)]' : 'text-[#56628A]'}`}>
             <span>{legendInfo.loText}</span>
             <span className="font-sans text-[9px] uppercase tracking-wider text-[rgba(141,170,200,0.6)]">Tiers</span>
             <span>{legendInfo.hiText}</span>
@@ -873,26 +958,51 @@ export function CensusTractMap({
         </div>
       )}
 
-      {/* Rich Dark Floating Tooltip Card matching prototype lines 221-225 & 1228-1232 */}
+      {/* Rich Floating Tooltip Card matching prototype lines 221-225 & 1228-1232 */}
       {tooltip.visible && (
         <div
           className="pointer-events-none fixed z-50 text-left transition-opacity duration-100 ease-out"
-          style={{
-            left: `${tooltip.x}px`,
-            top: `${tooltip.y}px`,
-            minWidth: '200px',
-            maxWidth: '280px',
-            background: 'rgba(11, 28, 50, 0.95)',
-            border: '1px solid rgba(141, 170, 200, 0.25)',
-            borderRadius: '12px',
-            padding: '10px 12px',
-            fontSize: '12.5px',
-            boxShadow: '0 18px 50px -20px rgba(0, 0, 0, 0.6)',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)'
-          }}
+          style={
+            isDark
+              ? {
+                  left: `${tooltip.x}px`,
+                  top: `${tooltip.y}px`,
+                  minWidth: '200px',
+                  maxWidth: '280px',
+                  background: 'rgba(11, 28, 50, 0.95)',
+                  border: '1px solid rgba(141, 170, 200, 0.25)',
+                  borderRadius: '12px',
+                  padding: '10px 12px',
+                  fontSize: '12.5px',
+                  boxShadow: '0 18px 50px -20px rgba(0, 0, 0, 0.6)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)'
+                }
+              : {
+                  left: `${tooltip.x}px`,
+                  top: `${tooltip.y}px`,
+                  minWidth: '200px',
+                  maxWidth: '280px',
+                  background: '#ffffff',
+                  border: '1px solid #DCEAF5',
+                  borderRadius: '12px',
+                  padding: '10px 12px',
+                  fontSize: '12.5px',
+                  boxShadow: '0 10px 30px -18px rgba(37,100,180,.35)',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)'
+                }
+          }
         >
-          <b style={{ display: 'block', fontSize: '13.5px', fontWeight: 600, color: '#ffffff', marginBottom: '5px' }}>
+          <b
+            style={{
+              display: 'block',
+              fontSize: '13.5px',
+              fontWeight: 600,
+              color: isDark ? '#ffffff' : '#0B1438',
+              marginBottom: '5px'
+            }}
+          >
             {tooltip.title}
           </b>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -904,12 +1014,12 @@ export function CensusTractMap({
                   display: 'flex',
                   justifyContent: 'space-between',
                   gap: '14px',
-                  color: 'rgba(141, 170, 200, 0.85)',
+                  color: isDark ? 'rgba(141, 170, 200, 0.85)' : '#56628A',
                   fontSize: '12px'
                 }}
               >
                 <span>{label}</span>
-                <span style={{ color: '#ffffff', fontWeight: 700 }}>{val}</span>
+                <span style={{ color: isDark ? '#ffffff' : '#0B1438', fontWeight: 700 }}>{val}</span>
               </div>
             ))}
           </div>

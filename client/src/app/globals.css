@@ -203,7 +203,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .map-svg .county{stroke:var(--map-line);stroke-width:0.5px;vector-effect:non-scaling-stroke;transition:opacity 0.4s ease}
 .map-svg .county:hover{stroke:var(--cyan);stroke-width:1.5px}
 .map-svg .county.sel{stroke:var(--cyan);stroke-width:2.2px}
-.map-svg.dim-others .county:not(.sel){opacity:1 !important;fill-opacity:0.28 !important;stroke:rgba(141,170,200,0.45) !important;stroke-width:0.75px !important}
+:root[data-theme="dark"] .map-svg.dim-others .county:not(.sel){opacity:1 !important;fill-opacity:0.28 !important;stroke:rgba(141,170,200,0.45) !important;stroke-width:0.75px !important}
+:root:not([data-theme="dark"]) .map-svg.dim-others .county:not(.sel){opacity:1;fill-opacity:0.95;stroke:#ffffff;stroke-width:0.8px}
 .map-svg .state-b{fill:none;stroke:var(--map-state);stroke-width:.9;vector-effect:non-scaling-stroke;pointer-events:none}
 .map-svg .nation-b{fill:none;stroke:var(--map-state, rgba(190, 215, 240, 0.45));stroke-width:1.1px;vector-effect:non-scaling-stroke;pointer-events:none}
 
@@ -899,7 +900,8 @@ h1,h2,h3,h4{font-family:var(--font-u);letter-spacing:-.02em}
 .map-svg .county{stroke:var(--map-line);stroke-width:0.5px;vector-effect:non-scaling-stroke;transition:opacity 0.4s ease}
 .map-svg .county:hover{stroke:var(--cyan);stroke-width:1.6px}
 .map-svg .county.sel{stroke:#102A4C;stroke-width:1.8px}
-.map-svg.dim-others .county:not(.sel){opacity:1 !important;fill-opacity:0.28 !important;stroke:rgba(141,170,200,0.45) !important;stroke-width:0.75px !important}
+:root[data-theme="dark"] .map-svg.dim-others .county:not(.sel){opacity:1 !important;fill-opacity:0.28 !important;stroke:rgba(141,170,200,0.45) !important;stroke-width:0.75px !important}
+:root:not([data-theme="dark"]) .map-svg.dim-others .county:not(.sel){opacity:1;fill-opacity:0.95;stroke:#ffffff;stroke-width:0.8px}
 .map-svg .state-b{stroke-width:1.1}
 .map-svg .nation-b{fill:none;stroke:var(--map-state, #9CC9EE);stroke-width:1.2px;vector-effect:non-scaling-stroke;pointer-events:none;filter:none}
 .map-svg .sel-outline{fill:none;stroke:#102A4C;stroke-width:1.8px;vector-effect:non-scaling-stroke;filter:none;pointer-events:none}
