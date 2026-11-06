@@ -485,7 +485,7 @@ const tractsCache = new Map<string, CensusTract[]>();
 
 function ProgramUtilizationContent() {
   const router = useRouter();
-  const { activeCounty, markWorkflowMilestone } = useSession();
+  const { activeCounty, markWorkflowMilestone, theme } = useSession();
 
   const [activeProg, setActiveProg] = useState<string>('all');
   const [fte, setFte] = useState<number>(6);
@@ -1047,7 +1047,7 @@ function ProgramUtilizationContent() {
       {/* Main Grid matching prototype lines 2382-2398 */}
       <div className="grid g-12">
         {/* Panel 1: Bivariate Map (c-7) */}
-        <section className="panel c-7" style={{ padding: 0, overflow: 'hidden', minHeight: '440px', position: 'relative' }}>
+        <section className="panel c-7 map-shell" style={{ padding: 0, overflow: 'hidden', minHeight: '440px', position: 'relative' }}>
           <div style={{ position: 'absolute', inset: 0 }} id="pu-map">
             <BivariateMap
               countyFips={countyFips}
@@ -1058,6 +1058,7 @@ function ProgramUtilizationContent() {
               selectedTractId={selectedTractId}
               onSelectTract={handleSelectTract}
               height={440}
+              theme={theme}
             />
           </div>
 

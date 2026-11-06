@@ -4,7 +4,9 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
 import { CensusTract } from '@/types';
-import { STATE_META } from '@/utils/countyRepository';
+import { STATE_META, getCountyRepository } from '@/utils/countyRepository';
+import { useSession } from '@/context/SessionContext';
+import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 export interface BivariateMapProps {
   countyFips: string;
@@ -16,6 +18,7 @@ export interface BivariateMapProps {
   onSelectTract?: (tract: CensusTract) => void;
   onCountySelect?: (countyFips: string) => void;
   height?: number;
+  theme?: 'light' | 'dark';
 }
 
 // 3x3 Bivariate Matrix Palette: [Need (0=Low, 1=Mid, 2=High)][Low Utilization (0=High Util, 1=Mid Util, 2=Low Util)]
@@ -67,9 +70,21 @@ export const BivariateMap = React.memo(function BivariateMap({
   selectedTractId,
   onSelectTract,
   onCountySelect,
-  height = 440
+  height = 440,
+  theme
 }: BivariateMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sessionCtx = useSession();
+  const activeTheme = theme || sessionCtx?.theme || 'light';
+  const isDark = activeTheme === 'dark';
+  const isDarkRef = useRef(isDark);
+  isDarkRef.current = isDark;
+
+  const zoomInRef = useRef<(() => void) | null>(null);
+  const zoomOutRef = useRef<(() => void) | null>(null);
+  const resetZoomRef = useRef<(() => void) | null>(null);
+  const currentTransformRef = useRef<d3.ZoomTransform | null>(null);
+
   const switchCountyRef = useRef<((targetCid: string) => void) | null>(null);
   const onSelectTractRef = useRef(onSelectTract);
   onSelectTractRef.current = onSelectTract;
@@ -111,13 +126,13 @@ export const BivariateMap = React.memo(function BivariateMap({
         const isSelected = t._id === selectedTractId;
         const isHot = d3.select(this).classed('hotspot-tract');
         d3.select(this)
-          .attr('stroke', isSelected || isHot ? 'var(--cyan)' : 'rgba(255, 255, 255, 0.65)')
+          .attr('stroke', isSelected || isHot ? 'var(--cyan)' : isDark ? 'rgba(255, 255, 255, 0.65)' : '#ffffff')
           .attr('stroke-width', isSelected ? 2.6 : isHot ? 2.0 : 0.75);
         if (isSelected) {
           d3.select(this).raise();
         }
       });
-  }, [selectedTractId]);
+  }, [selectedTractId, isDark]);
 
   useEffect(() => {
     let isMounted = true;
@@ -127,18 +142,12 @@ export const BivariateMap = React.memo(function BivariateMap({
       const container = containerRef.current;
       container.innerHTML = '';
 
-      if (!topoCache) {
-        try {
-          const res = await fetch('/us-counties.json');
-          if (!res.ok) throw new Error('Failed to load county map data');
-          topoCache = await res.json();
-        } catch (e) {
-          console.error(e);
-          return;
-        }
-      }
+      const [repo] = await Promise.all([
+        getCountyRepository(),
+        topoCache ? Promise.resolve() : fetch('/us-counties.json').then(r => r.json()).then(j => { topoCache = j; })
+      ]);
 
-      if (!isMounted || !topoCache) return;
+      if (!isMounted || !topoCache || !containerRef.current) return;
 
       const counties = (topojson.feature(topoCache, topoCache.objects.counties) as any).features;
       const initialTarget =
@@ -202,22 +211,36 @@ export const BivariateMap = React.memo(function BivariateMap({
 
       svg.call(zoom).on('dblclick.zoom', null);
 
+      zoomInRef.current = () => {
+        svg.transition().duration(300).call(zoom.scaleBy, 1.4);
+      };
+      zoomOutRef.current = () => {
+        svg.transition().duration(300).call(zoom.scaleBy, 0.7);
+      };
+      resetZoomRef.current = () => {
+        if (currentTransformRef.current) {
+          svg.transition().duration(600).ease(d3.easeCubicInOut).call(zoom.transform, currentTransformRef.current);
+        }
+      };
+
       // Layers:
       // 1. Ambient surrounding counties
       const gSurround = rootGroup.append('g').attr('class', 'surrounding-counties');
-      // 2. Base dark silhouette of demonstrated county
+      // 2. Base silhouette of demonstrated county
       const gTargetBase = rootGroup.append('g').attr('class', 'target-county-base');
-      const baseCountyPath = gTargetBase.append('path').attr('fill', '#101B45').attr('opacity', 0.85);
+      const baseCountyPath = gTargetBase.append('path')
+        .attr('fill', isDark ? '#101B45' : '#D7ECFC')
+        .attr('opacity', 0.95);
       // 3. Clipped Tracts Group
       const gTracts = rootGroup.append('g').attr('class', 'tracts-group').attr('clip-path', `url(#${clipId})`);
-      // 4. Glowing Cyan Boundary
+      // 4. Boundary Contour
       const gSel = rootGroup.append('g').attr('class', 'target-county-outline');
       const outlineCountyPath = gSel.append('path')
         .attr('fill', 'none')
-        .attr('stroke', '#0284c7')
-        .attr('stroke-width', 2.0)
+        .attr('stroke', isDark ? 'var(--cyan)' : '#102A4C')
+        .attr('stroke-width', isDark ? 2.2 : 1.8)
         .attr('vector-effect', 'non-scaling-stroke')
-        .style('filter', 'drop-shadow(0 0 8px rgba(56, 189, 248, 0.7))')
+        .style('filter', isDark ? 'drop-shadow(0 0 6px var(--cyan))' : 'none')
         .style('pointer-events', 'none');
 
       // Synthetic Tract Generator for outside counties
@@ -289,8 +312,20 @@ export const BivariateMap = React.memo(function BivariateMap({
 
         // 1. Update Clip Path & Target County Outlines
         clipPathElement.attr('d', countyD);
-        baseCountyPath.attr('d', countyD);
-        outlineCountyPath.attr('d', countyD);
+        baseCountyPath.attr('d', countyD).attr('fill', isDark ? '#101B45' : '#D7ECFC');
+        if (isDark) {
+          outlineCountyPath
+            .attr('d', countyD)
+            .attr('stroke', 'var(--cyan)')
+            .attr('stroke-width', 2.2)
+            .style('filter', 'drop-shadow(0 0 6px var(--cyan))');
+        } else {
+          outlineCountyPath
+            .attr('d', countyD)
+            .attr('stroke', '#102A4C')
+            .attr('stroke-width', 1.8)
+            .style('filter', 'none');
+        }
 
         // 2. Camera Zoom Transition
         const pad = 0.68;
@@ -299,6 +334,8 @@ export const BivariateMap = React.memo(function BivariateMap({
           .translate(975 / 2, 610 / 2)
           .scale(s)
           .translate(-(cx0 + cx1) / 2, -(cy0 + cy1) / 2);
+
+        currentTransformRef.current = targetTransform;
 
         if (animateCamera) {
           svg
@@ -317,14 +354,22 @@ export const BivariateMap = React.memo(function BivariateMap({
 
         surroundSelection.exit().remove();
 
+        const getAmbientFill = (d: any) => {
+          const cRec = repo.countyById.get(d.id);
+          const svi = cRec?.svi ?? 0.5;
+          const util = cRec?.indicators?.utilization ?? 50;
+          return computeBivColor(util, svi, [40, 60], [0.33, 0.66]);
+        };
+
         const enterAmbient = surroundSelection.enter()
           .append('path')
           .attr('class', 'county-ambient')
           .attr('d', (d: any) => pathGen(d) || '')
-          .attr('fill', '#dbeafe')
-          .attr('opacity', 0.42)
-          .attr('stroke', '#ffffff')
-          .attr('stroke-width', 0.8)
+          .attr('fill', getAmbientFill)
+          .attr('fill-opacity', isDark ? 0.32 : 1)
+          .attr('opacity', isDark ? 1 : 0.28)
+          .attr('stroke', isDark ? 'rgba(141, 170, 200, 0.45)' : 'rgba(255, 255, 255, 0.75)')
+          .attr('stroke-width', isDark ? 0.6 : 0.5)
           .attr('vector-effect', 'non-scaling-stroke')
           .style('cursor', 'pointer')
           .style('transition', 'fill 0.2s ease, opacity 0.2s ease, stroke 0.2s ease');
@@ -333,22 +378,30 @@ export const BivariateMap = React.memo(function BivariateMap({
 
         allAmbient
           .attr('d', (d: any) => pathGen(d) || '')
-          .attr('fill', '#dbeafe')
-          .attr('opacity', 0.42)
-          .attr('stroke', '#ffffff')
-          .attr('stroke-width', 0.8)
+          .attr('fill', getAmbientFill)
+          .attr('fill-opacity', isDark ? 0.32 : 1)
+          .attr('opacity', isDark ? 1 : 0.28)
+          .attr('stroke', isDark ? 'rgba(141, 170, 200, 0.45)' : 'rgba(255, 255, 255, 0.75)')
+          .attr('stroke-width', isDark ? 0.6 : 0.5)
           .on('pointerenter', function (event: MouseEvent, d: any) {
+            const cRec = repo.countyById.get(d.id);
+            const svi = cRec?.svi ?? 0.5;
+            const util = cRec?.indicators?.utilization ?? 50;
             d3.select(this)
-              .attr('fill', 'rgba(56, 189, 248, 0.28)')
-              .attr('opacity', 0.88)
-              .attr('stroke', '#38BDF8')
+              .attr('fill-opacity', isDark ? 0.85 : 1)
+              .attr('opacity', isDark ? 1 : 0.85)
+              .attr('stroke', 'var(--cyan)')
               .attr('stroke-width', 1.6);
 
-            const hoverName = `${d.properties?.name || 'County'} County, ${stateAbbr}`;
+            const hoverName = cRec
+              ? `${cRec.name} ${cRec.st === '22' ? 'Parish' : cRec.st === '02' ? 'Borough' : 'County'}, ${stateAbbr}`
+              : `${d.properties?.name || 'County'} County, ${stateAbbr}`;
+
             showTip(
               `<b>${hoverName}</b>${tipRows([
                 ['Status', 'Adjacent county'],
-                ['State', stateAbbr]
+                ['Vulnerability (SVI)', svi.toFixed(2)],
+                ['Program utilization', `${Math.round(util)}%`]
               ])}<div class="note" style="margin-top:5px">Click to demonstrate county</div>`,
               event
             );
@@ -358,10 +411,10 @@ export const BivariateMap = React.memo(function BivariateMap({
           })
           .on('pointerleave', function () {
             d3.select(this)
-              .attr('fill', '#dbeafe')
-              .attr('opacity', 0.42)
-              .attr('stroke', '#ffffff')
-              .attr('stroke-width', 0.8);
+              .attr('fill-opacity', isDark ? 0.32 : 1)
+              .attr('opacity', isDark ? 1 : 0.28)
+              .attr('stroke', isDark ? 'rgba(141, 170, 200, 0.45)' : 'rgba(255, 255, 255, 0.75)')
+              .attr('stroke-width', isDark ? 0.6 : 0.5);
             hideTip();
           })
           .on('click', function (event, d: any) {
@@ -467,7 +520,7 @@ export const BivariateMap = React.memo(function BivariateMap({
           .attr('stroke', t => {
             if (t._id === selectedTractId) return 'var(--cyan)';
             if (topGapIds.has(t._id)) return 'var(--cyan)';
-            return 'rgba(255, 255, 255, 0.65)';
+            return isDark ? 'rgba(255, 255, 255, 0.65)' : '#ffffff';
           })
           .attr('stroke-width', t => {
             if (t._id === selectedTractId) return 2.6;
@@ -538,7 +591,7 @@ export const BivariateMap = React.memo(function BivariateMap({
             const isSelected = tract._id === selectedTractId;
 
             d3.select(this)
-              .attr('stroke', isSelected || isHot ? 'var(--cyan)' : 'rgba(255, 255, 255, 0.65)')
+              .attr('stroke', isSelected || isHot ? 'var(--cyan)' : isDark ? 'rgba(255, 255, 255, 0.65)' : '#ffffff')
               .attr('stroke-width', isSelected ? 2.6 : isHot ? 2.0 : 0.75);
 
             if (isHot || isSelected) {
@@ -571,13 +624,77 @@ export const BivariateMap = React.memo(function BivariateMap({
         d3.select(containerRef.current).selectAll('*').interrupt();
       }
     };
-  }, [countyFips, tracts, programKey, height]);
+  }, [countyFips, tracts, programKey, height, isDark]);
 
   return (
     <div
       ref={containerRef}
-      className="w-full h-full select-none"
-      style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
-    />
+      className="w-full h-full select-none relative"
+      style={{
+        position: 'absolute',
+        inset: 0,
+        overflow: 'hidden',
+        background: isDark ? '#07111F' : '#F3F9FE'
+      }}
+    >
+      {/* Floating Zoom Controls matching CensusTractMap & prototype */}
+      <div
+        className="map-float absolute right-3 top-3 z-20 flex flex-col gap-1 p-1.5"
+        style={
+          isDark
+            ? {
+                background: 'rgba(11, 28, 50, 0.92)',
+                border: '1px solid rgba(141, 170, 200, 0.25)',
+                borderRadius: '12px',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)'
+              }
+            : {
+                background: 'rgba(255, 255, 255, 0.92)',
+                border: '1px solid #DCEAF5',
+                borderRadius: '12px',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)'
+              }
+        }
+      >
+        <button
+          onClick={() => zoomInRef.current?.()}
+          aria-label="Zoom in"
+          title="Zoom In"
+          className={
+            isDark
+              ? 'w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors'
+              : 'w-7 h-7 rounded-lg flex items-center justify-center text-[#56628A] hover:text-[#102A4C] hover:bg-[#F0F7FD] transition-colors'
+          }
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => zoomOutRef.current?.()}
+          aria-label="Zoom out"
+          title="Zoom Out"
+          className={
+            isDark
+              ? 'w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors'
+              : 'w-7 h-7 rounded-lg flex items-center justify-center text-[#56628A] hover:text-[#102A4C] hover:bg-[#F0F7FD] transition-colors'
+          }
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => resetZoomRef.current?.()}
+          aria-label="Reset zoom"
+          title="Reset to County"
+          className={
+            isDark
+              ? 'w-7 h-7 rounded-lg flex items-center justify-center text-[rgba(141,170,200,0.9)] hover:text-white hover:bg-white/10 transition-colors'
+              : 'w-7 h-7 rounded-lg flex items-center justify-center text-[#56628A] hover:text-[#102A4C] hover:bg-[#F0F7FD] transition-colors'
+          }
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
   );
 });
