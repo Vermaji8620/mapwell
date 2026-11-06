@@ -58,7 +58,7 @@ function hideTip() {
 const tipRows = (rows: [string, string][]) =>
   rows.map(([a, b]) => `<div class="tv"><span>${a}</span><span>${b}</span></div>`).join('');
 
-export function BivariateMap({
+export const BivariateMap = React.memo(function BivariateMap({
   countyFips,
   countyName = 'County',
   tracts,
@@ -71,10 +71,12 @@ export function BivariateMap({
 }: BivariateMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const switchCountyRef = useRef<((targetCid: string) => void) | null>(null);
-
-  const [, setActiveCountyId] = useState<string>(countyFips);
-  const [, setActiveCountyName] = useState<string>(countyName);
-  const [, setPrimaryCountyName] = useState<string>(countyName);
+  const onSelectTractRef = useRef(onSelectTract);
+  onSelectTractRef.current = onSelectTract;
+  const onCountySelectRef = useRef(onCountySelect);
+  onCountySelectRef.current = onCountySelect;
+  const selectedTractIdRef = useRef(selectedTractId);
+  selectedTractIdRef.current = selectedTractId;
 
   const getTractUtil = (t: CensusTract, key: string): number => {
     if (key === 'all') {
@@ -93,13 +95,29 @@ export function BivariateMap({
     return BIV_MATRIX[nb][ub];
   };
 
-  // Sync prop changes
+  // Sync prop changes for county switching
   useEffect(() => {
-    setActiveCountyId(countyFips);
     if (switchCountyRef.current) {
       switchCountyRef.current(countyFips);
     }
   }, [countyFips]);
+
+  // Lightweight stroke update when selectedTractId changes without re-rendering the whole map
+  useEffect(() => {
+    if (!containerRef.current) return;
+    d3.select(containerRef.current)
+      .selectAll<SVGPathElement, CensusTract>('path.tract-cell')
+      .each(function (t) {
+        const isSelected = t._id === selectedTractId;
+        const isHot = d3.select(this).classed('hotspot-tract');
+        d3.select(this)
+          .attr('stroke', isSelected || isHot ? 'var(--cyan)' : 'rgba(255, 255, 255, 0.65)')
+          .attr('stroke-width', isSelected ? 2.6 : isHot ? 2.0 : 0.75);
+        if (isSelected) {
+          d3.select(this).raise();
+        }
+      });
+  }, [selectedTractId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -136,9 +154,6 @@ export function BivariateMap({
       const stateCounties = counties.filter((c: any) => c.id && c.id.slice(0, 2) === statePrefix);
 
       const pathGen = d3.geoPath();
-      const initialName = `${initialTarget.properties?.name || countyName} County, ${stateAbbr}`;
-      setPrimaryCountyName(initialName);
-      setActiveCountyName(initialName);
 
       const svg = d3.select(container)
         .append('svg')
@@ -173,6 +188,19 @@ export function BivariateMap({
       `);
 
       const rootGroup = svg.append('g').attr('class', 'map-root');
+
+      // Interactive Zoom Behavior (Wheel zoom in/out with preventDefault, drag pan)
+      const zoom = d3.zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.5, 90])
+        .translateExtent([[-200, -200], [1175, 810]])
+        .on('zoom', (event) => {
+          rootGroup.attr('transform', event.transform);
+          if (event.sourceEvent && event.sourceEvent.type === 'wheel') {
+            hideTip();
+          }
+        });
+
+      svg.call(zoom).on('dblclick.zoom', null);
 
       // Layers:
       // 1. Ambient surrounding counties
@@ -249,14 +277,10 @@ export function BivariateMap({
 
       async function demonstrateCounty(targetCid: string, animateCamera = true) {
         currentCid = targetCid;
-        setActiveCountyId(targetCid);
 
         const targetFeature =
           counties.find((c: any) => c.id === targetCid) ||
           initialTarget;
-
-        const cName = `${targetFeature.properties?.name || 'County'} County, ${stateAbbr}`;
-        setActiveCountyName(cName);
 
         const countyD = pathGen(targetFeature) || '';
         const [[cx0, cy0], [cx1, cy1]] = pathGen.bounds(targetFeature);
@@ -277,13 +301,13 @@ export function BivariateMap({
           .translate(-(cx0 + cx1) / 2, -(cy0 + cy1) / 2);
 
         if (animateCamera) {
-          rootGroup
+          svg
             .transition('camera-zoom')
             .duration(850)
             .ease(d3.easeCubicInOut)
-            .attr('transform', targetTransform.toString());
+            .call(zoom.transform, targetTransform);
         } else {
-          rootGroup.attr('transform', targetTransform.toString());
+          svg.call(zoom.transform, targetTransform);
         }
 
         // 3. Render Ambient Surrounding Counties
@@ -343,8 +367,8 @@ export function BivariateMap({
           .on('click', function (event, d: any) {
             event.stopPropagation();
             demonstrateCounty(d.id, true);
-            if (onCountySelect) {
-              onCountySelect(d.id);
+            if (onCountySelectRef.current) {
+              onCountySelectRef.current(d.id);
             }
           });
 
@@ -524,8 +548,8 @@ export function BivariateMap({
             hideTip();
           })
           .on('click', function (_, tract) {
-            if (onSelectTract) {
-              onSelectTract(tract);
+            if (onSelectTractRef.current) {
+              onSelectTractRef.current(tract);
             }
           });
       }
@@ -543,8 +567,11 @@ export function BivariateMap({
     return () => {
       isMounted = false;
       hideTip();
+      if (containerRef.current) {
+        d3.select(containerRef.current).selectAll('*').interrupt();
+      }
     };
-  }, [countyFips, tracts, programKey, selectedTractId, onSelectTract, onCountySelect, height]);
+  }, [countyFips, tracts, programKey, height]);
 
   return (
     <div
@@ -553,4 +580,4 @@ export function BivariateMap({
       style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
     />
   );
-}
+});

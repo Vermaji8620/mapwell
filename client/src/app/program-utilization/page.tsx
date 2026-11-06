@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { useSession } from '@/context/SessionContext';
 import { CensusTract, Assessment } from '@/types';
 import { TIER_LABELS } from '@/config/metrics';
@@ -265,9 +266,11 @@ function ParticipationTrendsChart({
 
 // Component 2: Service Distribution Donut Chart (Prototype donut lines 1535-1548)
 function ServiceDonutChart({
-  data
+  data,
+  activeProg
 }: {
   data: { label: string; value: number; color: string }[];
+  activeProg?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastDrawnKeyRef = useRef<string>('');
@@ -276,7 +279,7 @@ function ServiceDonutChart({
     const el = containerRef.current;
     if (!el || data.length === 0) return;
 
-    const currentKey = JSON.stringify(data);
+    const currentKey = `${JSON.stringify(data)}-${activeProg || 'all'}`;
     if (lastDrawnKeyRef.current === currentKey && el.querySelector('svg')) {
       return;
     }
@@ -364,7 +367,7 @@ function ServiceDonutChart({
     return () => {
       hideTip();
     };
-  }, [data]);
+  }, [data, activeProg]);
 
   return <div ref={containerRef} style={{ width: '100%', minHeight: '210px' }} />;
 }
@@ -372,16 +375,26 @@ function ServiceDonutChart({
 // Component 3: Program Comparison Grouped Bars (Prototype groupedBars lines 1481-1498)
 function ProgramComparisonChart({
   cats,
-  series
+  series,
+  activeProg
 }: {
   cats: string[];
   series: { name: string; color: string; values: number[] }[];
+  activeProg?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastDrawnKeyRef = useRef<string>('');
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el || series.length === 0 || cats.length === 0) return;
+
+    const currentKey = `${JSON.stringify(series)}-${activeProg || 'all'}`;
+    if (lastDrawnKeyRef.current === currentKey && el.querySelector('svg')) {
+      return;
+    }
+    lastDrawnKeyRef.current = currentKey;
+
     el.innerHTML = '';
     el.classList.add('chart');
 
@@ -462,7 +475,7 @@ function ProgramComparisonChart({
     return () => {
       hideTip();
     };
-  }, [cats, series]);
+  }, [cats, series, activeProg]);
 
   return <div ref={containerRef} style={{ width: '100%', minHeight: '230px' }} />;
 }
@@ -496,6 +509,116 @@ function ProgramUtilizationContent() {
   const [assessmentsList, setAssessmentsList] = useState<Assessment[]>([]);
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const [mounted, setMounted] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const [isEntered, setIsEntered] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const handleCloseModal = () => {
+    if (isClosing) return;
+    setIsClosing(true);
+    setTimeout(() => {
+      setFindingModalOpen(false);
+      setIsClosing(false);
+      setIsEntered(false);
+    }, 220);
+  };
+
+  useEffect(() => {
+    if (findingModalOpen) {
+      setIsClosing(false);
+      const timer = setTimeout(() => {
+        setIsEntered(true);
+      }, 10);
+      return () => clearTimeout(timer);
+    } else {
+      setIsEntered(false);
+    }
+  }, [findingModalOpen]);
+
+  // Lock background scroll and blur entire app (#app) when finding modal is open
+  useEffect(() => {
+    if (!findingModalOpen) return;
+
+    // 1. Blur the entire underlying application (#app) with smooth transition
+    const appEl = document.getElementById('app');
+    if (appEl) {
+      appEl.style.transition = 'filter 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
+      appEl.style.filter = isClosing ? 'blur(0px)' : 'blur(6px)';
+      appEl.style.pointerEvents = isClosing ? '' : 'none';
+      if (!isClosing) {
+        appEl.setAttribute('aria-hidden', 'true');
+      } else {
+        appEl.removeAttribute('aria-hidden');
+      }
+    }
+
+    if (isClosing) return;
+
+    // 2. Lock scrolling on body, html, and #view
+    const origBodyOverflow = document.body.style.overflow;
+    const origHtmlOverflow = document.documentElement.style.overflow;
+    const viewEl = document.getElementById('view');
+    const origViewOverflow = viewEl ? viewEl.style.overflow : '';
+
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    if (viewEl) {
+      viewEl.style.overflow = 'hidden';
+    }
+
+    // 3. Block wheel and touchmove events from scrolling anything behind the modal
+    const blockScroll = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      const modalDialog = document.querySelector('.modal');
+      if (modalDialog && modalDialog.contains(target)) {
+        return;
+      }
+      e.preventDefault();
+    };
+
+    // 4. Handle Escape key and prevent scrolling keys (PageUp, PageDown, etc.)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleCloseModal();
+        return;
+      }
+      if (['Space', 'PageUp', 'PageDown', 'End', 'Home', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+        const activeEl = document.activeElement;
+        const isInput =
+          activeEl &&
+          (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+        if (!isInput) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('wheel', blockScroll, { passive: false });
+    window.addEventListener('touchmove', blockScroll, { passive: false });
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      if (appEl) {
+        appEl.style.filter = '';
+        appEl.style.transition = '';
+        appEl.style.pointerEvents = '';
+        appEl.removeAttribute('aria-hidden');
+      }
+      document.body.style.overflow = origBodyOverflow;
+      document.documentElement.style.overflow = origHtmlOverflow;
+      if (viewEl) {
+        viewEl.style.overflow = origViewOverflow;
+      }
+      window.removeEventListener('wheel', blockScroll);
+      window.removeEventListener('touchmove', blockScroll);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [findingModalOpen, isClosing]);
 
   // Mark workflow milestone
   useEffect(() => {
@@ -730,6 +853,14 @@ function ProgramUtilizationContent() {
     ];
   }, [tracts, countyName, stateAbbr]);
 
+  // Tract selection navigation
+  const handleSelectTract = useCallback(
+    (t: CensusTract) => {
+      router.push(`/census-tracts?county=${countyFips}&tract=${t._id}`);
+    },
+    [router, countyFips]
+  );
+
   // Add Top Gap to Assessment Modal Trigger
   const handleOpenAddTopGap = () => {
     if (!topGaps[0]) return;
@@ -781,7 +912,7 @@ function ProgramUtilizationContent() {
       if (res.ok) {
         await markWorkflowMilestone('finding');
         setToastMessage(`Finding added to Assessment`);
-        setFindingModalOpen(false);
+        handleCloseModal();
         setTimeout(() => setToastMessage(null), 4000);
       } else {
         const err = await res.json();
@@ -925,12 +1056,12 @@ function ProgramUtilizationContent() {
               programKey={activeProg}
               programLabel={activeProg === 'all' ? 'Average program' : (PROGRAMS[activeProg]?.name || activeProg)}
               selectedTractId={selectedTractId}
-              onSelectTract={t => router.push(`/census-tracts?county=${countyFips}&tract=${t._id}`)}
+              onSelectTract={handleSelectTract}
               height={440}
             />
           </div>
 
-          <div className="map-float" style={{ left: '14px', top: '14px', padding: '12px 14px' }}>
+          <div className="map-float" style={{ left: '14px', top: '14px', padding: '12px 14px', pointerEvents: 'none' }}>
             <b style={{ fontSize: '12.5px' }}>Community coverage gaps</b>
             <div className="note">Tract need against program utilization</div>
           </div>
@@ -943,7 +1074,8 @@ function ProgramUtilizationContent() {
               padding: '10px 14px',
               display: 'flex',
               gap: '6px',
-              alignItems: 'center'
+              alignItems: 'center',
+              pointerEvents: 'none'
             }}
           >
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -1058,7 +1190,7 @@ function ProgramUtilizationContent() {
             </div>
           </div>
           <div id="pu-donut">
-            <ServiceDonutChart data={serviceDist} />
+            <ServiceDonutChart data={serviceDist} activeProg={activeProg} />
           </div>
           <div className="legend-row" id="pu-dl">
             {Object.entries(PROGRAMS).map(([pk, meta], i) => (
@@ -1167,7 +1299,7 @@ function ProgramUtilizationContent() {
             </div>
           </div>
           <div id="pu-cmp">
-            <ProgramComparisonChart cats={comparisonCategories} series={comparisonSeries} />
+            <ProgramComparisonChart cats={comparisonCategories} series={comparisonSeries} activeProg={activeProg} />
           </div>
           <div className="legend-row">
             <span>
@@ -1186,11 +1318,66 @@ function ProgramUtilizationContent() {
         </section>
       </div>
 
-      {/* Add Finding Modal matching prototype lines 1210-1230 & 2442 */}
-      {findingModalOpen && findingTract && (
-        <div id="modal-root" className="open">
-          <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
-          <div className="modal" role="dialog" aria-modal="true" style={{ width: '560px', maxWidth: '92vw' }}>
+      {/* Add Finding Modal matching prototype lines 1788-1795 & 2442 */}
+      {mounted && findingModalOpen && findingTract && createPortal(
+        <div
+          id="modal-root"
+          className="open"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}
+        >
+          <div
+            className="modal-scrim"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(3, 6, 20, 0.55)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+              zIndex: 10000,
+              opacity: isEntered && !isClosing ? 1 : 0,
+              transition: isClosing
+                ? 'opacity 0.22s ease-in'
+                : 'opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: isClosing ? 'none' : 'auto'
+            }}
+            onClick={handleCloseModal}
+          />
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              position: 'relative',
+              zIndex: 10001,
+              width: 'min(760px, 100%)',
+              maxWidth: '760px',
+              maxHeight: 'calc(100% - 20px)',
+              background: 'var(--surface-solid, #0B1C32)',
+              border: '1px solid var(--line-strong, rgba(141, 170, 200, 0.22))',
+              borderRadius: '24px',
+              boxShadow: '0 40px 100px -30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(141, 170, 200, 0.12)',
+              padding: '24px',
+              overflow: 'auto',
+              opacity: isEntered && !isClosing ? 1 : 0,
+              transform: isEntered && !isClosing
+                ? 'translateY(0px) scale(1)'
+                : isClosing
+                ? 'translateY(20px) scale(0.97)'
+                : 'translateY(24px) scale(0.985)',
+              transition: isClosing
+                ? 'transform 0.22s ease-in, opacity 0.22s ease-in'
+                : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: isClosing ? 'none' : 'auto'
+            }}
+          >
             <div className="modal-h">
               <div>
                 <h2>Add finding to an assessment</h2>
@@ -1198,7 +1385,7 @@ function ProgramUtilizationContent() {
                   {findingTract.name}, {countyName}. GEOID {findingTract._id}
                 </p>
               </div>
-              <button className="icon-btn" onClick={() => setFindingModalOpen(false)} aria-label="Close">
+              <button className="icon-btn" onClick={handleCloseModal} aria-label="Close">
                 <Icon name="x" size={16} />
               </button>
             </div>
@@ -1263,7 +1450,8 @@ function ProgramUtilizationContent() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
