@@ -713,6 +713,12 @@ function ReportsContent() {
                         focusTractIds={focusTractIds}
                         height={280}
                         onScaleReady={setScaleInfo}
+                        onCountySelect={(fips) => {
+                          const matching = reports.find(r => r.jurisdictionId === fips);
+                          if (matching) {
+                            setOpenId(matching._id);
+                          }
+                        }}
                       />
                     </div>
                     {scaleInfo && (
