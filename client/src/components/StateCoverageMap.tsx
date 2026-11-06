@@ -436,8 +436,6 @@ export function StateCoverageMap({
         .attr('class', (d: CountyRecord) => `county ${d.id === selectedCidRef.current ? 'sel' : ''}`)
         .attr('data-id', (d: CountyRecord) => d.id)
         .attr('d', (d: CountyRecord) => d.d || pathGen(d.feature) || '')
-        .attr('stroke', 'var(--map-line)')
-        .attr('stroke-width', 0.45)
         .attr('vector-effect', 'non-scaling-stroke')
         .attr('fill', 'var(--map-low)')
         .attr('opacity', isRM ? 1 : 0);
@@ -624,6 +622,89 @@ export function StateCoverageMap({
         className="w-full h-full"
         style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
       />
+
+      {/* Scoped style: Crisp white lines between counties in light mode for data management, preserving dark mode */}
+      <style>{`
+        #dm-map .map-svg .county {
+          stroke: rgba(255, 255, 255, 0.95) !important;
+          stroke-width: 0.5px !important;
+        }
+        #dm-map .map-svg .county:hover {
+          stroke: #ffffff !important;
+          stroke-width: 1.6px !important;
+        }
+        #dm-map .map-svg .county.sel {
+          stroke: #102A4C !important;
+          stroke-width: 1.8px !important;
+        }
+        #dm-map .map-svg .sel-outline {
+          fill: none;
+          stroke: #102A4C !important;
+          stroke-width: 1.8px !important;
+          filter: none;
+          pointer-events: none;
+        }
+        #dm-map .map-svg .state-b {
+          fill: none !important;
+          stroke: #ffffff !important;
+          stroke-width: 1.1px !important;
+        }
+        #dm-map .map-svg .nation-b {
+          fill: none !important;
+          stroke: #9cc9ee !important;
+          stroke-width: 1.1px !important;
+        }
+        @media (prefers-color-scheme: dark) {
+          :root:not([data-theme="light"]) #dm-map .map-svg .county {
+            stroke: var(--map-line) !important;
+            stroke-width: 0.5px !important;
+          }
+          :root:not([data-theme="light"]) #dm-map .map-svg .county:hover {
+            stroke: var(--cyan) !important;
+            stroke-width: 1.5px !important;
+          }
+          :root:not([data-theme="light"]) #dm-map .map-svg .county.sel {
+            stroke: var(--cyan) !important;
+            stroke-width: 2.2px !important;
+          }
+          :root:not([data-theme="light"]) #dm-map .map-svg .sel-outline {
+            stroke: var(--cyan) !important;
+            filter: drop-shadow(0 0 4px var(--cyan)) !important;
+          }
+          :root:not([data-theme="light"]) #dm-map .map-svg .state-b {
+            stroke: var(--map-state) !important;
+            stroke-width: 0.9px !important;
+          }
+          :root:not([data-theme="light"]) #dm-map .map-svg .nation-b {
+            stroke: var(--map-state, rgba(190, 215, 240, 0.45)) !important;
+            stroke-width: 1.1px !important;
+          }
+        }
+        :root[data-theme="dark"] #dm-map .map-svg .county {
+          stroke: var(--map-line) !important;
+          stroke-width: 0.5px !important;
+        }
+        :root[data-theme="dark"] #dm-map .map-svg .county:hover {
+          stroke: var(--cyan) !important;
+          stroke-width: 1.5px !important;
+        }
+        :root[data-theme="dark"] #dm-map .map-svg .county.sel {
+          stroke: var(--cyan) !important;
+          stroke-width: 2.2px !important;
+        }
+        :root[data-theme="dark"] #dm-map .map-svg .sel-outline {
+          stroke: var(--cyan) !important;
+          filter: drop-shadow(0 0 4px var(--cyan)) !important;
+        }
+        :root[data-theme="dark"] #dm-map .map-svg .state-b {
+          stroke: var(--map-state) !important;
+          stroke-width: 0.9px !important;
+        }
+        :root[data-theme="dark"] #dm-map .map-svg .nation-b {
+          stroke: var(--map-state, rgba(190, 215, 240, 0.45)) !important;
+          stroke-width: 1.1px !important;
+        }
+      `}</style>
 
       {/* Floating Zoom & Camera Reset Controls (optional, hidden by default to match prototype) */}
       {showControls && (

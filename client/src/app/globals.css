@@ -206,6 +206,89 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .map-svg.dim-others .county:not(.sel){opacity:1 !important;fill-opacity:0.28 !important;stroke:rgba(141,170,200,0.45) !important;stroke-width:0.75px !important}
 .map-svg .state-b{fill:none;stroke:var(--map-state);stroke-width:.9;vector-effect:non-scaling-stroke;pointer-events:none}
 .map-svg .nation-b{fill:none;stroke:var(--map-state, rgba(190, 215, 240, 0.45));stroke-width:1.1px;vector-effect:non-scaling-stroke;pointer-events:none}
+
+/* Data management map: White county and state boundaries in light mode */
+#dm-map .map-svg .county {
+  stroke: rgba(255, 255, 255, 0.95) !important;
+  stroke-width: 0.5px !important;
+}
+#dm-map .map-svg .county:hover {
+  stroke: #ffffff !important;
+  stroke-width: 1.6px !important;
+}
+#dm-map .map-svg .county.sel {
+  stroke: #102A4C !important;
+  stroke-width: 1.8px !important;
+}
+#dm-map .map-svg .sel-outline {
+  fill: none;
+  stroke: #102A4C !important;
+  stroke-width: 1.8px !important;
+  filter: none;
+  pointer-events: none;
+}
+#dm-map .map-svg .state-b {
+  fill: none !important;
+  stroke: #ffffff !important;
+  stroke-width: 1.1px !important;
+}
+#dm-map .map-svg .nation-b {
+  fill: none !important;
+  stroke: #9cc9ee !important;
+  stroke-width: 1.1px !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #dm-map .map-svg .county {
+    stroke: var(--map-line) !important;
+    stroke-width: 0.5px !important;
+  }
+  :root:not([data-theme="light"]) #dm-map .map-svg .county:hover {
+    stroke: var(--cyan) !important;
+    stroke-width: 1.5px !important;
+  }
+  :root:not([data-theme="light"]) #dm-map .map-svg .county.sel {
+    stroke: var(--cyan) !important;
+    stroke-width: 2.2px !important;
+  }
+  :root:not([data-theme="light"]) #dm-map .map-svg .sel-outline {
+    stroke: var(--cyan) !important;
+    filter: drop-shadow(0 0 4px var(--cyan)) !important;
+  }
+  :root:not([data-theme="light"]) #dm-map .map-svg .state-b {
+    stroke: var(--map-state) !important;
+    stroke-width: 0.9px !important;
+  }
+  :root:not([data-theme="light"]) #dm-map .map-svg .nation-b {
+    stroke: var(--map-state, rgba(190, 215, 240, 0.45)) !important;
+    stroke-width: 1.1px !important;
+  }
+}
+
+:root[data-theme="dark"] #dm-map .map-svg .county {
+  stroke: var(--map-line) !important;
+  stroke-width: 0.5px !important;
+}
+:root[data-theme="dark"] #dm-map .map-svg .county:hover {
+  stroke: var(--cyan) !important;
+  stroke-width: 1.5px !important;
+}
+:root[data-theme="dark"] #dm-map .map-svg .county.sel {
+  stroke: var(--cyan) !important;
+  stroke-width: 2.2px !important;
+}
+:root[data-theme="dark"] #dm-map .map-svg .sel-outline {
+  stroke: var(--cyan) !important;
+  filter: drop-shadow(0 0 4px var(--cyan)) !important;
+}
+:root[data-theme="dark"] #dm-map .map-svg .state-b {
+  stroke: var(--map-state) !important;
+  stroke-width: 0.9px !important;
+}
+:root[data-theme="dark"] #dm-map .map-svg .nation-b {
+  stroke: var(--map-state, rgba(190, 215, 240, 0.45)) !important;
+  stroke-width: 1.1px !important;
+}
 .map-svg .tract{stroke:rgba(255,255,255,.55);stroke-width:.7;vector-effect:non-scaling-stroke;cursor:pointer}
 .map-svg .tract:hover{stroke:#fff;stroke-width:1.6}
 .map-svg .tract.sel{stroke:var(--cyan);stroke-width:2.6}
@@ -665,7 +748,7 @@ h1,h2,h3,h4{letter-spacing:-.02em}
   --line:#DCEAF5;--line-strong:#C8DCEE;--text:#102A4C;--muted:#71869E;--faint:#93A5B9;
   --cyan:#2584EB;--teal:#37C8CF;--violet:#66B6F5;--rose:#F06A75;--amber:#F2B33D;--green:#22B07D;
   --glow:rgba(37,132,235,.14);--shadow:0 10px 30px -18px rgba(37,100,180,.35);--shadow-lg:0 24px 50px -24px rgba(37,100,180,.35);
-  --map-low:#E4ECFA;--map-line:rgba(20,40,120,.18);--map-state:rgba(20,40,120,.55);--map-shell-bg:#F3F9FE;--grid:#E6F0F9;
+  --map-low:#F0F7FD;--map-line:rgba(255,255,255,.95);--map-state:#FFFFFF;--map-shell-bg:#F3F9FE;--grid:#E6F0F9;
   --r-lg:18px;--r-md:12px;--r-sm:8px;color-scheme:light;
 }
 :root[data-theme="dark"]{--font-d:"Inter",sans-serif;--font-u:"Inter",sans-serif;--font-m:"Inter",sans-serif;--map-low:#0E2138;--map-line:rgba(141, 170, 200, 0.45);--map-state:#9CC9EE;--map-shell-bg:transparent;--shadow-lg:0 24px 50px -24px rgba(0,0,0,.6);--r-lg:18px}
