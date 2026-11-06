@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { useSession } from '@/context/SessionContext';
 import { Assessment, CensusTract, Finding, Jurisdiction } from '@/types';
 import { Icon } from '@/components/Icons';
@@ -207,7 +208,7 @@ function AssessmentsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramOpen = searchParams.get('open');
-  const paramCreate = searchParams.get('create');
+  const paramCreate = searchParams.get('create') || searchParams.get('new');
 
   const { activeCounty, jurisdictions, session, markWorkflowMilestone } = useSession();
 
@@ -247,8 +248,28 @@ function AssessmentsContent() {
   useEffect(() => {
     if (paramCreate) {
       setNewModalOpen(true);
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/assessments');
+      }
     }
   }, [paramCreate]);
+
+  // Sync modal open state to document body (for page blur & non-scrollable) and #modal-root
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const modalRoot = document.getElementById('modal-root');
+    if (newModalOpen) {
+      document.body.classList.add('modal-open');
+      modalRoot?.classList.add('open');
+    } else {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    };
+  }, [newModalOpen]);
 
   // Mark workflow milestone on load
   useEffect(() => {
@@ -1074,106 +1095,108 @@ function AssessmentsContent() {
       </div>
 
       {/* Create Assessment Modal matching prototype lines 2454-2470 */}
-      {newModalOpen && (
-        <div id="modal-root" className="open">
-          <div className="modal-scrim" onClick={() => setNewModalOpen(false)} />
-          <div className="modal" role="dialog" aria-modal="true" style={{ width: '560px', maxWidth: '92vw' }}>
-            <div className="modal-h">
-              <div>
-                <h2>Create assessment</h2>
-                <p>Set the scope and starting indicators. You can change them later.</p>
+      {newModalOpen && typeof document !== 'undefined' && document.getElementById('modal-root') &&
+        createPortal(
+          <>
+            <div className="modal-scrim" onClick={() => setNewModalOpen(false)} />
+            <div className="modal" role="dialog" aria-modal="true">
+              <div className="modal-h">
+                <div>
+                  <h2>Create assessment</h2>
+                  <p>Set the scope and starting indicators. You can change them later.</p>
+                </div>
+                <button
+                  className="icon-btn"
+                  onClick={() => setNewModalOpen(false)}
+                  aria-label="Close"
+                >
+                  <Icon name="x" size={16} />
+                </button>
               </div>
-              <button
-                className="icon-btn"
-                onClick={() => setNewModalOpen(false)}
-                aria-label="Close"
-              >
-                <Icon name="x" size={16} />
-              </button>
-            </div>
 
-            <div className="stack" style={{ padding: '16px 20px', gap: '14px' }}>
-              <label className="field">
-                Assessment name
-                <input
-                  className="input"
-                  id="na-t"
-                  value={modalTitle}
-                  onChange={e => setModalTitle(e.target.value)}
-                />
-              </label>
-
-              <div className="grid g-12" style={{ gap: '12px' }}>
-                <label className="field c-6 c-lg-6">
-                  Jurisdiction
-                  <select
-                    className="input"
-                    id="na-j"
-                    value={modalJur}
-                    onChange={e => setModalJur(e.target.value)}
-                  >
-                    {jurisdictions.map(c => (
-                      <option key={c._id} value={c._id}>
-                        {c.name} County, {c.stateAbbr}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field c-6 c-lg-6">
-                  Due date
+              <div className="stack">
+                <label className="field">
+                  Assessment name
                   <input
-                    type="date"
                     className="input"
-                    id="na-d"
-                    value={modalDue}
-                    onChange={e => setModalDue(e.target.value)}
+                    id="na-t"
+                    value={modalTitle}
+                    onChange={e => setModalTitle(e.target.value)}
                   />
                 </label>
-              </div>
 
-              <div className="field">
-                <span>Starting template</span>
-                <div
-                  className="grid"
-                  style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}
-                >
-                  {Object.entries(TEMPLATES).map(([k, meta]) => (
-                    <label key={k} className="check">
-                      <input
-                        type="radio"
-                        name="na-tp"
-                        value={k}
-                        checked={modalTemplate === k}
-                        onChange={() => setModalTemplate(k as any)}
-                      />
-                      <span>
-                        {meta.name}
-                        <small>{meta.indicators.length} indicators</small>
-                      </span>
-                    </label>
-                  ))}
+                <div className="grid g-12" style={{ gap: '12px' }}>
+                  <label className="field c-6 c-lg-6">
+                    Jurisdiction
+                    <select
+                      className="input"
+                      id="na-j"
+                      value={modalJur}
+                      onChange={e => setModalJur(e.target.value)}
+                    >
+                      {jurisdictions.map(c => (
+                        <option key={c._id} value={c._id}>
+                          {c.name} County, {c.stateAbbr}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field c-6 c-lg-6">
+                    Due date
+                    <input
+                      type="date"
+                      className="input"
+                      id="na-d"
+                      value={modalDue}
+                      onChange={e => setModalDue(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="field">
+                  <span>Starting template</span>
+                  <div
+                    className="grid"
+                    style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}
+                  >
+                    {Object.entries(TEMPLATES).map(([k, meta]) => (
+                      <label key={k} className="check">
+                        <input
+                          type="radio"
+                          name="na-tp"
+                          value={k}
+                          checked={modalTemplate === k}
+                          onChange={() => setModalTemplate(k as any)}
+                        />
+                        <span>
+                          {meta.name}
+                          <small>{meta.indicators.length} indicators</small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="modal-f">
-              <button className="btn ghost" onClick={() => setNewModalOpen(false)}>
-                Cancel
-              </button>
-              <button
-                className="btn primary"
-                id="na-go"
-                onClick={handleCreateAssessment}
-                disabled={submittingModal}
-              >
-                <Icon name="plus" size={14} />
-                Create draft
-              </button>
+              <div className="modal-f">
+                <button className="btn ghost" onClick={() => setNewModalOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="btn primary"
+                  id="na-go"
+                  onClick={handleCreateAssessment}
+                  disabled={submittingModal}
+                >
+                  <Icon name="plus" size={14} />
+                  Create draft
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </>,
+          document.getElementById('modal-root')!
+        )}
     </>
   );
 }

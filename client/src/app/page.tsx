@@ -362,7 +362,7 @@ export default function DashboardPage() {
           >
             <span className="dot"></span>Synthetic demo data
           </span>
-          <Link href="/assessments?new=1" className="btn">
+          <Link href="/assessments?create=true" className="btn">
             <Icon name="plus" />
             <span>New assessment</span>
           </Link>

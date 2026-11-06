@@ -178,35 +178,37 @@ function InnerShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div
-      id="app"
-      className={`${collapsed ? 'collapsed' : ''} ${mobileMenuOpen ? 'mobile-open' : ''}`}
-    >
-      <Backdrop />
-      <Sidebar
-        collapsed={collapsed}
-        setCollapsed={setCollapsed}
-        onCloseMobile={() => setMobileMenuOpen(false)}
-      />
-      <div id="scrim-side" onClick={() => setMobileMenuOpen(false)} />
-      <div id="main">
-        <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <div id="view-wrap">
-          <main
-            id="view"
-            key={`${pathname}-${navCount}`}
-            className={isFlush ? 'flush' : ''}
-            tabIndex={-1}
-          >
-            {children}
-          </main>
+    <>
+      <div
+        id="app"
+        className={`${collapsed ? 'collapsed' : ''} ${mobileMenuOpen ? 'mobile-open' : ''}`}
+      >
+        <Backdrop />
+        <Sidebar
+          collapsed={collapsed}
+          setCollapsed={setCollapsed}
+          onCloseMobile={() => setMobileMenuOpen(false)}
+        />
+        <div id="scrim-side" onClick={() => setMobileMenuOpen(false)} />
+        <div id="main">
+          <Topbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+          <div id="view-wrap">
+            <main
+              id="view"
+              key={`${pathname}-${navCount}`}
+              className={isFlush ? 'flush' : ''}
+              tabIndex={-1}
+            >
+              {children}
+            </main>
+          </div>
         </div>
+        <WorkflowDrawer />
       </div>
-      <WorkflowDrawer />
       <div id="modal-root" />
       <div id="toasts" aria-live="polite" />
       <div id="tooltip" role="tooltip" />
-    </div>
+    </>
   );
 }
 

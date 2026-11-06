@@ -409,7 +409,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .hm-sheet-handle svg{width:18px;height:18px;vertical-align:-4px;margin-right:6px}
 
 /* modal + drawer + toast */
-#modal-root{position:fixed;inset:0;z-index:150;display:none;align-items:center;justify-content:center;padding:20px}
+#modal-root{position:fixed;inset:0;z-index:999;display:none;align-items:center;justify-content:center;padding:20px}
 #modal-root.open{display:flex}
 .modal-scrim{position:absolute;inset:0;background:rgba(3,6,20,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .modal{position:relative;width:min(760px,100%);max-height:calc(100% - 20px);overflow:auto;background:var(--surface-solid);border:1px solid var(--line-strong);border-radius:24px;box-shadow:0 40px 100px -30px rgba(0,0,0,.7);padding:24px}
@@ -418,6 +418,10 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .modal-h h2{font-size:21px}
 .modal-h p{margin:4px 0 0;color:var(--muted);font-size:13px}
 .modal-f{display:flex;justify-content:space-between;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+
+body.modal-open{overflow:hidden!important}
+body.modal-open #app{filter:blur(5px);pointer-events:none;user-select:none;transition:filter .15s ease}
+body.modal-open #view{overflow:hidden!important}
 #drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,100%);z-index:140;background:var(--surface-solid);border-left:1px solid var(--line-strong);box-shadow:var(--shadow);transform:translateX(105%);transition:transform .45s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
 #drawer.open{transform:none}
 #drawer .dh{padding:20px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
