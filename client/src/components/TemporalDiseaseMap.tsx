@@ -217,6 +217,22 @@ export function TemporalDiseaseMap({
       svg.call(zoom).on('dblclick.zoom', null);
       zoomBehaviorRef.current = zoom;
 
+      function zoomToCounty(d: CountyRecord, dur = 550) {
+        if (!svgRef.current || !zoomBehaviorRef.current || !d) return;
+        const targetFeature = d.feature || (repo.countyById?.get(d.id)?.feature);
+        if (!targetFeature) return;
+        const b = path.bounds(targetFeature);
+        const [[x0, y0], [x1, y1]] = b;
+        if (isNaN(x0) || isNaN(y0) || isNaN(x1) || isNaN(y1)) return;
+        const pad = 0.7;
+        const s = Math.min(90, pad / Math.max((x1 - x0) / 975, (y1 - y0) / 610));
+        const t = d3.zoomIdentity
+          .translate(975 / 2, 610 / 2)
+          .scale(s)
+          .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+        svgRef.current.transition().duration(dur).ease(d3.easeCubicInOut).call(zoomBehaviorRef.current.transform, t);
+      }
+
       function attachEvents(sel: d3.Selection<SVGPathElement, CountyRecord, any, any>) {
         sel
           .on('pointerenter', (e: MouseEvent, d: CountyRecord) => {
@@ -246,6 +262,11 @@ export function TemporalDiseaseMap({
             if (onSelectCountyRef.current) {
               onSelectCountyRef.current(d);
             }
+            zoomToCounty(d);
+            gSel.selectAll('*').remove();
+            gSel.append('path').attr('class', 'sel-outline').attr('d', d.d || path(d.feature));
+            gC.selectAll('path.county').classed('sel', (c: any) => c.id === d.id);
+
             const activeYi = yearIndexRef.current;
             const activeCond = conditionRef.current;
             const t = countyTrendsRef.current.get(d.id);
@@ -294,18 +315,14 @@ export function TemporalDiseaseMap({
           gB.append('path').attr('class', 'nation-b').attr('d', geoData.nationD);
         }
 
-        // Render County Paths with transitions
+        // Render County Paths with fast smooth transitions
         const curYi = yearIndexRef.current;
         const curCond = conditionRef.current;
 
         const countiesSel = gC.selectAll<SVGPathElement, CountyRecord>('path.county')
           .data(pool, (d: any) => d.id);
 
-        countiesSel.exit()
-          .transition()
-          .duration(400)
-          .attr('opacity', 0)
-          .remove();
+        countiesSel.exit().remove();
 
         const entering = countiesSel.enter()
           .append('path')
@@ -316,27 +333,25 @@ export function TemporalDiseaseMap({
             const t = countyTrendsRef.current.get(d.id);
             const val = t ? t[curYi] : (d.indicators as any)[curCond] ?? 10;
             return getColor(val);
-          })
-          .attr('opacity', 0);
+          });
 
         attachEvents(entering);
 
-        entering
-          .transition('in')
-          .duration(600)
-          .delay((d: any) => (((d.cx || 400) / 975) * 700))
-          .ease(d3.easeCubicOut)
-          .attr('opacity', 1);
+        if (!isFirst) {
+          entering
+            .attr('opacity', 0)
+            .transition()
+            .duration(300)
+            .ease(d3.easeCubicOut)
+            .attr('opacity', 1);
 
-        countiesSel
-          .transition('fill')
-          .duration(520)
-          .delay((d: any) => (((d.cx || 400) / 975) * 650))
-          .attr('fill', (d: CountyRecord) => {
-            const t = countyTrendsRef.current.get(d.id);
-            const val = t ? t[curYi] : (d.indicators as any)[curCond] ?? 10;
-            return getColor(val);
-          });
+          countiesSel
+            .attr('fill', (d: CountyRecord) => {
+              const t = countyTrendsRef.current.get(d.id);
+              const val = t ? t[curYi] : (d.indicators as any)[curCond] ?? 10;
+              return getColor(val);
+            });
+        }
 
         // Pulse markers
         gM.selectAll('*').remove();
@@ -350,7 +365,7 @@ export function TemporalDiseaseMap({
           .map((c: any) => {
             const centroid = path.centroid(c.feature);
             if (!centroid || isNaN(centroid[0])) return null;
-            return { x: centroid[0], y: centroid[1] };
+            return { x: centroid[0], y: centroid[1], county: c };
           })
           .filter(Boolean);
 
@@ -359,7 +374,34 @@ export function TemporalDiseaseMap({
           .enter()
           .append('g')
           .attr('class', 'pulse-m')
-          .attr('transform', (d: any) => `translate(${d.x},${d.y}) scale(${1 / currentK})`);
+          .attr('transform', (d: any) => `translate(${d.x},${d.y}) scale(${1 / currentK})`)
+          .style('cursor', 'pointer')
+          .style('pointer-events', 'all')
+          .on('click', (e: MouseEvent, d: any) => {
+            e.stopPropagation();
+            if (d.county) {
+              if (onSelectCountyRef.current) {
+                onSelectCountyRef.current(d.county);
+              }
+              zoomToCounty(d.county);
+              gSel.selectAll('*').remove();
+              gSel.append('path').attr('class', 'sel-outline').attr('d', d.county.d || path(d.county.feature));
+              gC.selectAll('path.county').classed('sel', (c: any) => c.id === d.county.id);
+
+              const activeYi = yearIndexRef.current;
+              const activeCond = conditionRef.current;
+              const t = countyTrendsRef.current.get(d.county.id);
+              const val = t ? t[activeYi] : (d.county.indicators as any)[activeCond] ?? 10;
+              const meta = METRICS_CONFIG[activeCond] || { short: activeCond, unit: '%' };
+              const label = `${d.county.name} ${d.county.st === '22' ? 'Parish' : d.county.st === '02' ? 'Borough' : 'County'}, ${d.county.stateAbbr}`;
+              showToast(`${label}: ${val.toFixed(1)}${meta.unit || '%'} in ${years[activeYi]}`, {
+                label: 'Open in map',
+                fn: () => {
+                  window.location.href = `/health-map?county=${d.county.id}`;
+                }
+              });
+            }
+          });
 
         m.append('circle').attr('class', 'ring').attr('r', 7);
         m.append('circle').attr('class', 'ring r2').attr('r', 7);
@@ -375,14 +417,14 @@ export function TemporalDiseaseMap({
           if (isFirst) {
             svg.call(zoom.transform, t);
           } else {
-            svg.transition().duration(900).ease(d3.easeCubicInOut).call(zoom.transform, t);
+            svg.transition().duration(550).ease(d3.easeCubicInOut).call(zoom.transform, t);
           }
         } else {
-          // Changing to the Country (United States): subtle smooth zoom transition
+          // Changing to the Country (United States): smooth zoom transition
           if (isFirst) {
             svg.call(zoom.transform, d3.zoomIdentity);
           } else {
-            svg.transition().duration(900).ease(d3.easeCubicInOut).call(zoom.transform, d3.zoomIdentity);
+            svg.transition().duration(550).ease(d3.easeCubicInOut).call(zoom.transform, d3.zoomIdentity);
           }
         }
       }
@@ -449,7 +491,7 @@ export function TemporalDiseaseMap({
         .map(c => {
           const centroid = path.centroid(c.feature);
           if (!centroid || isNaN(centroid[0])) return null;
-          return { x: centroid[0], y: centroid[1] };
+          return { x: centroid[0], y: centroid[1], county: c };
         })
         .filter(Boolean);
 
@@ -461,7 +503,38 @@ export function TemporalDiseaseMap({
         .enter()
         .append('g')
         .attr('class', 'pulse-m')
-        .attr('transform', (d: any) => `translate(${d.x},${d.y}) scale(${1 / currentK})`);
+        .attr('transform', (d: any) => `translate(${d.x},${d.y}) scale(${1 / currentK})`)
+        .style('cursor', 'pointer')
+        .style('pointer-events', 'all')
+        .on('click', (e: MouseEvent, d: any) => {
+          e.stopPropagation();
+          if (d.county && svgRef.current && zoomBehaviorRef.current) {
+            if (onSelectCountyRef.current) {
+              onSelectCountyRef.current(d.county);
+            }
+            const targetFeature = d.county.feature || (repoRef.current?.countyById?.get(d.county.id)?.feature);
+            if (targetFeature) {
+              const b = path.bounds(targetFeature);
+              const [[x0, y0], [x1, y1]] = b;
+              if (!isNaN(x0) && !isNaN(y0) && !isNaN(x1) && !isNaN(y1)) {
+                const pad = 0.7;
+                const s = Math.min(90, pad / Math.max((x1 - x0) / 975, (y1 - y0) / 610));
+                const t = d3.zoomIdentity
+                  .translate(975 / 2, 610 / 2)
+                  .scale(s)
+                  .translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+                svgRef.current.transition().duration(550).ease(d3.easeCubicInOut).call(zoomBehaviorRef.current.transform, t);
+              }
+            }
+            if (gSelRef.current) {
+              gSelRef.current.selectAll('*').remove();
+              gSelRef.current.append('path').attr('class', 'sel-outline').attr('d', d.county.d || path(d.county.feature));
+            }
+            if (gCountiesRef.current) {
+              gCountiesRef.current.selectAll('path.county').classed('sel', (c: any) => c.id === d.county.id);
+            }
+          }
+        });
 
       m.append('circle').attr('class', 'ring').attr('r', 7);
       m.append('circle').attr('class', 'ring r2').attr('r', 7);

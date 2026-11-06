@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import * as d3 from 'd3';
 import { useSession } from '@/context/SessionContext';
@@ -94,6 +95,17 @@ function moveTip(e: MouseEvent) {
 function hideTip() {
   const t = TIP.el || (TIP.el = document.getElementById('tooltip'));
   if (t) t.classList.remove('on');
+}
+
+function showGlobalToast(msg: string) {
+  const container = document.getElementById('toasts');
+  if (!container) return;
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.setAttribute('role', 'status');
+  t.innerHTML = `<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span>${msg}</span>`;
+  container.appendChild(t);
+  setTimeout(() => { t.remove(); }, 4200);
 }
 
 // Geographic Distribution Horizontal Bar Chart matching prototype barChart lines 1538-1552
@@ -347,7 +359,7 @@ function TimeTrendsChart({
       .attr('width', W - m.l - m.r)
       .attr('height', H - m.t - m.b)
       .attr('fill', 'transparent')
-      .style('cursor', 'crosshair')
+      .style('cursor', 'default')
       .on('pointermove', (e: MouseEvent) => {
         const [mx] = d3.pointer(e);
         const step = x.step();
@@ -516,7 +528,7 @@ function IliChart({
       .attr('width', W - m.l - m.r)
       .attr('height', H - m.t - m.b)
       .attr('fill', 'transparent')
-      .style('cursor', 'crosshair')
+      .style('cursor', 'default')
       .on('pointermove', (e: MouseEvent) => {
         const [mx] = d3.pointer(e);
         const step = x.step();
@@ -563,8 +575,37 @@ function DiseaseIncidenceContent() {
     activeCounty?._id || '27053'
   );
   const [filterQuery, setFilterQuery] = useState<string>('');
+  const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
+  const [exportCsvData, setExportCsvData] = useState<string>('');
 
   const playTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Sync export modal open state to body blur & overflow
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const modalRoot = document.getElementById('modal-root');
+    if (exportModalOpen) {
+      document.body.classList.add('modal-open');
+      modalRoot?.classList.add('open');
+    } else {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    };
+  }, [exportModalOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && exportModalOpen) {
+        setExportModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [exportModalOpen]);
 
   // Load county repository
   useEffect(() => {
@@ -866,10 +907,13 @@ function DiseaseIncidenceContent() {
     };
   }, [poolCounties, countyTrends]);
 
-  // CSV Export Handler matching prototype line 2458
+  // CSV Export Dialog Handler matching prototype line 2458 & downloadFile modal
   const handleExportTable = () => {
     if (!poolCounties.length) return;
-    const q = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const q = (v: any) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
     const cols = [
       ['fips', 'id'],
       ['county', (c: CountyRecord) => `${c.name} ${c.st === '22' ? 'Parish' : c.st === '02' ? 'Borough' : 'County'}, ${c.stateAbbr}`],
@@ -884,15 +928,22 @@ function DiseaseIncidenceContent() {
       )
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `${condition}-prevalence-by-county.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    setExportCsvData(csvContent);
+    setExportModalOpen(true);
+  };
+
+  const handleCopyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(exportCsvData);
+      showGlobalToast('Copied to clipboard');
+    } catch (e) {
+      const ta = document.getElementById('di-export-textarea') as HTMLTextAreaElement | null;
+      if (ta) {
+        ta.select();
+        document.execCommand('copy');
+      }
+      showGlobalToast('Copied to clipboard');
+    }
   };
 
   const activeYear = YEARS[yearIndex];
@@ -1219,6 +1270,46 @@ function DiseaseIncidenceContent() {
           </div>
         </section>
       </div>
+
+      {/* Export Table Dialog matching prototype downloadFile modal */}
+      {exportModalOpen && typeof document !== 'undefined' && document.getElementById('modal-root') &&
+        createPortal(
+          <>
+            <div className="modal-scrim" onClick={() => setExportModalOpen(false)} />
+            <div className="modal" role="dialog" aria-modal="true">
+              <div className="modal-h">
+                <div>
+                  <h2>Export {condition}-prevalence-by-county.csv</h2>
+                  <p>
+                    File saving isn&apos;t available in this view, so the export is shown below. Copy it into a file named <b>{condition}-prevalence-by-county.csv</b>.
+                  </p>
+                </div>
+                <button
+                  className="icon-btn"
+                  onClick={() => setExportModalOpen(false)}
+                  aria-label="Close"
+                >
+                  <Icon name="x" size={16} />
+                </button>
+              </div>
+              <textarea
+                id="di-export-textarea"
+                className="input"
+                style={{ width: '100%', height: '300px', fontSize: '12px', fontFamily: 'monospace' }}
+                readOnly
+                value={exportCsvData}
+              />
+              <div className="modal-f">
+                <span className="note">Synthetic demo data</span>
+                <button className="btn primary" id="cpy" onClick={handleCopyToClipboard}>
+                  <Icon name="clipboard" size={15} />
+                  <span>Copy to clipboard</span>
+                </button>
+              </div>
+            </div>
+          </>,
+          document.getElementById('modal-root')!
+        )}
     </>
   );
 }
