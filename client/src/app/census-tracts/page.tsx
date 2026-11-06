@@ -120,9 +120,43 @@ function CensusTractsContent() {
   const [isClosing, setIsClosing] = useState(false);
   const [isEntered, setIsEntered] = useState(false);
 
+  // Export CSV Modal state matching prototype downloadFile modal
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportCsvData, setExportCsvData] = useState('');
+  const [exportCsvFilename, setExportCsvFilename] = useState('');
+
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Sync export modal open state to body blur & overflow
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const modalRoot = document.getElementById('modal-root');
+    if (exportModalOpen) {
+      document.body.classList.add('modal-open');
+      modalRoot?.classList.add('open');
+    } else if (!findingModalOpen) {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    }
+    return () => {
+      if (!findingModalOpen) {
+        document.body.classList.remove('modal-open');
+        modalRoot?.classList.remove('open');
+      }
+    };
+  }, [exportModalOpen, findingModalOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && exportModalOpen) {
+        setExportModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [exportModalOpen]);
 
   const handleCloseModal = () => {
     if (isClosing) return;
@@ -501,29 +535,29 @@ function CensusTractsContent() {
       'data_status'
     ];
 
+    const escapeCsv = (val: any) => {
+      const s = String(val ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
     const rowsData = filteredTracts.map(t => [
-      `"${t._id || (t as any).id}"`,
-      `"${t.name}"`,
-      `"${countyLabel(currentCounty)}"`,
+      escapeCsv(t._id || (t as any).id),
+      escapeCsv(t.name),
+      escapeCsv(countyLabel(currentCounty)),
       t.population || (t as any).pop || 0,
       getV(t, 'svi').toFixed(3),
-      `"${TIER_LABEL[t.tier] || ''}"`,
+      escapeCsv(TIER_LABEL[t.tier] || ''),
       getV(t, 'poverty').toFixed(1),
       getV(t, 'uninsured').toFixed(1),
       getV(t, 'diabetes').toFixed(1),
       getV(t, 'access').toFixed(0),
-      '"synthetic demo"'
+      'synthetic demo'
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rowsData.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `tracts-${currentCountyId}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setToastMessage(`Exported ${filteredTracts.length} tracts to tracts-${currentCountyId}.csv`);
+    const csvContent = [headers.join(','), ...rowsData.map(r => r.join(','))].join('\n');
+    setExportCsvFilename(`tracts-${currentCountyId}.csv`);
+    setExportCsvData(csvContent);
+    setExportModalOpen(true);
   };
 
   // Open finding modal matching prototype lines 1784-1794
@@ -1346,6 +1380,74 @@ function CensusTractsContent() {
         </div>,
         document.body
       )}
+
+      {/* Export CSV Dialog matching prototype downloadFile modal */}
+      {mounted && exportModalOpen && typeof document !== 'undefined' && document.getElementById('modal-root') &&
+        createPortal(
+          <>
+            <div className="modal-scrim" onClick={() => setExportModalOpen(false)} />
+            <div className="modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+              <div className="modal-h">
+                <div>
+                  <h2>Export {exportCsvFilename}</h2>
+                  <p>
+                    File saving isn&apos;t available in this view, so the export is shown below. Copy it into a file named <b>{exportCsvFilename}</b>.
+                  </p>
+                </div>
+                <button
+                  className="icon-btn"
+                  onClick={() => setExportModalOpen(false)}
+                  aria-label="Close"
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </div>
+
+              <textarea
+                id="ct-export-textarea"
+                className="input"
+                style={{
+                  width: '100%',
+                  height: '300px',
+                  fontSize: '12px',
+                  fontFamily: 'var(--font-m, monospace)',
+                  whiteSpace: 'pre',
+                  lineHeight: '1.45',
+                  padding: '12px',
+                  resize: 'vertical'
+                }}
+                readOnly
+                value={exportCsvData}
+                onFocus={e => e.target.select()}
+              />
+
+              <div className="modal-f">
+                <span className="note">Synthetic demo data</span>
+                <button
+                  className="btn primary"
+                  id="cpy"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(exportCsvData);
+                      setToastMessage('Copied to clipboard');
+                    } catch {
+                      const ta = document.getElementById('ct-export-textarea') as HTMLTextAreaElement | null;
+                      if (ta) {
+                        ta.select();
+                        document.execCommand('copy');
+                        setToastMessage('Copied to clipboard');
+                      }
+                    }
+                  }}
+                >
+                  <Icon name="clipboard" size={14} />
+                  <span>Copy to clipboard</span>
+                </button>
+              </div>
+            </div>
+          </>,
+          document.getElementById('modal-root')!
+        )}
     </>
   );
 }
