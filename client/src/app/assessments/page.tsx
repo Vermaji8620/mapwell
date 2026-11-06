@@ -210,7 +210,7 @@ function AssessmentsContent() {
   const paramOpen = searchParams.get('open');
   const paramCreate = searchParams.get('create') || searchParams.get('new');
 
-  const { activeCounty, jurisdictions, session, markWorkflowMilestone } = useSession();
+  const { activeCounty, jurisdictions, session, markWorkflowMilestone, theme } = useSession();
 
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(paramOpen || null);
@@ -793,6 +793,7 @@ function AssessmentsContent() {
                           selectedTractIds={activeAssessment.focusTracts || []}
                           onToggleTract={handleToggleTract}
                           height={320}
+                          theme={theme}
                         />
                       </div>
                       <div className="map-float" style={{ left: '10px', top: '10px', padding: '8px 12px', fontSize: '12px' }}>

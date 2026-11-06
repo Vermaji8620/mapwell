@@ -5,6 +5,7 @@ import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
 import { CensusTract } from '@/types';
 import { CountyRecord, getCountyRepository } from '@/utils/countyRepository';
+import { useSession } from '@/context/SessionContext';
 
 export interface AssessmentTractMapProps {
   countyFips: string;
@@ -12,10 +13,25 @@ export interface AssessmentTractMapProps {
   selectedTractIds: string[];
   onToggleTract: (tract: CensusTract) => void;
   height?: number;
+  theme?: 'light' | 'dark';
 }
 
 let topoCache: any = null;
 const tractCache = new Map<string, TractItem[]>();
+
+const VULN_RAMP = ['#CDE7FB', '#8CC6F4', '#4C9BEA', '#2462C9', '#163A7E'];
+
+// Exact colorScale implementation matching prototype lines 1094-1104
+function createColorScale(values: number[], isDark: boolean) {
+  const low = isDark ? '#101B45' : '#F0F7FD';
+  const interp = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
+    d3.interpolateRgb(low, VULN_RAMP[0])(0.6),
+    ...VULN_RAMP
+  ]);
+  const q = d3.scaleQuantile().domain(values.length > 0 ? values : [0, 1]).range(d3.range(7));
+  const tOf = (i: number) => (i + 0.5) / 7;
+  return (v: number) => interp(tOf(q(v)));
+}
 
 // Tooltip helpers matching standard MapWell #tooltip (entire_website.html lines 1230-1232)
 function showTip(html: string, e: MouseEvent) {
@@ -269,8 +285,13 @@ export function AssessmentTractMap({
   tracts,
   selectedTractIds,
   onToggleTract,
-  height = 320
+  height = 320,
+  theme
 }: AssessmentTractMapProps) {
+  const session = useSession();
+  const currentTheme = theme || session?.theme || 'dark';
+  const isDark = currentTheme === 'dark';
+
   const containerRef = useRef<HTMLDivElement>(null);
   const tractPathsRef = useRef<d3.Selection<SVGPathElement, any, SVGGElement, unknown> | null>(null);
   const selectedSetRef = useRef<Set<string>>(new Set(selectedTractIds));
@@ -330,20 +351,8 @@ export function AssessmentTractMap({
       if (!targetCounty) return;
 
       // Color scale matching prototype colorScale(o.metric, vals, 'vuln') lines 1094-1104
-      const countySvis = stateCounties.map(c => c.svi ?? 0.3);
-      const countyScale = d3.piecewise(d3.interpolateRgb.gamma(1.6), [
-        d3.interpolateRgb('#101B45', '#CDE7FB')(0.6),
-        '#CDE7FB',
-        '#8CC6F4',
-        '#4C9BEA',
-        '#2462C9',
-        '#163A7E'
-      ]);
-
-      // Vulnerability 5-step scale for tracts matching prototype vuln ramp
-      const vulnScale = d3.scaleQuantize<string>()
-        .domain([0, 1])
-        .range(['#CDE7FB', '#8CC6F4', '#4C9BEA', '#2462C9', '#163A7E']);
+      const countyValues = stateCounties.map(c => Number(c.svi ?? 0.3));
+      const countyScale = createColorScale(countyValues, isDark);
 
       // Unique clip id matching prototype uid + 'clip'
       const uid = `as-${normalizedFips}-${Math.random().toString(36).substring(2, 6)}`;
@@ -386,9 +395,9 @@ export function AssessmentTractMap({
             .attr('class', 'nation-b')
             .attr('d', stD)
             .attr('fill', 'none')
-            .attr('stroke', '#9CC9EE')
-            .attr('stroke-opacity', 0.95)
-            .attr('stroke-width', 1.2)
+            .attr('stroke', isDark ? 'var(--cyan)' : '#9CC9EE')
+            .attr('stroke-opacity', isDark ? 0.35 : 1)
+            .attr('stroke-width', isDark ? 1.2 : 1)
             .attr('vector-effect', 'non-scaling-stroke')
             .style('pointer-events', 'none');
         }
@@ -429,8 +438,8 @@ export function AssessmentTractMap({
         const set = selectedSetRef.current;
         gT.selectAll<SVGPathElement, any>('path.tract')
           .classed('cmp', d => set.has(tractId(d)))
-          .attr('stroke', d => set.has(tractId(d)) ? '#F2B33D' : 'rgba(255, 255, 255, 0.55)')
-          .attr('stroke-width', d => set.has(tractId(d)) ? 2.2 : 0.7);
+          .attr('stroke', d => set.has(tractId(d)) ? (isDark ? '#FFB648' : '#F2B33D') : 'rgba(255, 255, 255, 0.55)')
+          .attr('stroke-width', d => set.has(tractId(d)) ? 2 : 0.7);
       }
       markCmpRef.current = markCmp;
 
@@ -463,15 +472,18 @@ export function AssessmentTractMap({
 
         if (activeTracts.length === 0) return;
 
+        const tractValues = activeTracts.map(t => Number(t.svi ?? 0));
+        const tractScale = createColorScale(tractValues, isDark);
+
         const paths = gT.selectAll<SVGPathElement, any>('path.tract')
           .data(activeTracts, d => tractId(d))
           .join('path')
           .attr('class', t => `tract ${selectedSetRef.current.has(tractId(t)) ? 'cmp' : ''}`)
           .attr('d', d => d.d || '')
           .attr('data-id', t => tractId(t))
-          .attr('fill', t => vulnScale(t.svi ?? 0) || '#4C9BEA')
-          .attr('stroke', t => selectedSetRef.current.has(tractId(t)) ? '#F2B33D' : 'rgba(255, 255, 255, 0.55)')
-          .attr('stroke-width', t => selectedSetRef.current.has(tractId(t)) ? 2.2 : 0.7)
+          .attr('fill', t => tractScale(Number(t.svi ?? 0)))
+          .attr('stroke', t => selectedSetRef.current.has(tractId(t)) ? (isDark ? '#FFB648' : '#F2B33D') : 'rgba(255, 255, 255, 0.55)')
+          .attr('stroke-width', t => selectedSetRef.current.has(tractId(t)) ? 2 : 0.7)
           .attr('vector-effect', 'non-scaling-stroke')
           .style('cursor', 'pointer');
 
@@ -525,8 +537,8 @@ export function AssessmentTractMap({
           .on('pointerleave', function (this: SVGPathElement, _, t: any) {
             const isSel = selectedSetRef.current.has(tractId(t));
             d3.select(this)
-              .attr('stroke', isSel ? '#F2B33D' : 'rgba(255, 255, 255, 0.55)')
-              .attr('stroke-width', isSel ? 2.2 : 0.7);
+              .attr('stroke', isSel ? (isDark ? '#FFB648' : '#F2B33D') : 'rgba(255, 255, 255, 0.55)')
+              .attr('stroke-width', isSel ? 2 : 0.7);
 
             hideTip();
           })
@@ -554,10 +566,10 @@ export function AssessmentTractMap({
           .attr('class', 'sel-outline')
           .attr('d', targetD)
           .attr('fill', 'none')
-          .attr('stroke', '#102A4C')
-          .attr('stroke-width', 1.8)
+          .attr('stroke', isDark ? 'var(--cyan)' : '#102A4C')
+          .attr('stroke-width', isDark ? 2 : 1.8)
           .attr('vector-effect', 'non-scaling-stroke')
-          .style('filter', 'none')
+          .style('filter', isDark ? 'drop-shadow(0 0 6px var(--cyan))' : 'none')
           .style('pointer-events', 'none');
 
         if (zoomIn) {
@@ -580,7 +592,9 @@ export function AssessmentTractMap({
         .join('path')
         .attr('class', d => `county ${d.id === selC ? 'sel' : ''}`)
         .attr('d', d => (d.d || pathGen(d.feature)) || '')
-        .attr('fill', d => countyScale(d.svi || 0.3))
+        .attr('fill', d => countyScale(Number(d.svi || 0.3)))
+        .attr('stroke', isDark ? 'rgba(140, 180, 255, 0.12)' : 'rgba(20, 40, 120, 0.14)')
+        .attr('stroke-width', isDark ? 0.5 : 0.45)
         .attr('vector-effect', 'non-scaling-stroke')
         .style('cursor', 'pointer');
 
@@ -609,8 +623,8 @@ export function AssessmentTractMap({
         .on('pointerleave', function (this: SVGPathElement, _, d: CountyRecord) {
           if (d.id !== selC) {
             d3.select(this)
-              .attr('stroke', 'rgba(141, 170, 200, 0.45)')
-              .attr('stroke-width', 0.75);
+              .attr('stroke', isDark ? 'rgba(140, 180, 255, 0.12)' : 'rgba(20, 40, 120, 0.14)')
+              .attr('stroke-width', isDark ? 0.5 : 0.45);
           }
           hideTip();
         })
@@ -634,7 +648,7 @@ export function AssessmentTractMap({
         d3.select(containerRef.current).selectAll('*').interrupt();
       }
     };
-  }, [countyFips, height]);
+  }, [countyFips, height, isDark]);
 
   return (
     <div
@@ -647,7 +661,9 @@ export function AssessmentTractMap({
           position: absolute;
           inset: 0;
           overflow: hidden;
-          background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--cyan, #38E1FF) 8%, transparent), transparent 70%);
+          background: ${isDark
+            ? 'radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--cyan, #38E1FF) 8%, transparent), transparent 70%)'
+            : 'radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--cyan, #2584EB) 8%, transparent), transparent 70%)'};
         }
 
         .assessment-tract-map-root .map-svg {
@@ -659,8 +675,8 @@ export function AssessmentTractMap({
 
         /* Counties styling matching prototype entire_website.html lines 194-197 & 800-802 */
         .assessment-tract-map-root .county {
-          stroke: rgba(141, 170, 200, 0.45);
-          stroke-width: 0.75px;
+          stroke: ${isDark ? 'rgba(140, 180, 255, 0.12)' : 'rgba(20, 40, 120, 0.14)'};
+          stroke-width: ${isDark ? '0.5px' : '0.45px'};
           vector-effect: non-scaling-stroke;
           transition: opacity 0.35s ease, stroke 0.2s ease;
           cursor: pointer;
@@ -679,16 +695,16 @@ export function AssessmentTractMap({
         /* County in focus is full opacity (1.0) and highlighted */
         .assessment-tract-map-root .map-svg .county.sel {
           opacity: 1.0 !important;
-          stroke: #102A4C !important;
-          stroke-width: 1.8px !important;
+          stroke: ${isDark ? 'var(--cyan)' : '#102A4C'} !important;
+          stroke-width: ${isDark ? '2.2px' : '1.8px'} !important;
         }
 
         /* State coastline boundary (.nation-b) matching lines 199 & 804 */
         .assessment-tract-map-root .nation-b {
           fill: none !important;
-          stroke: #9CC9EE !important;
-          stroke-opacity: 0.95 !important;
-          stroke-width: 1.2px !important;
+          stroke: ${isDark ? 'var(--cyan)' : '#9CC9EE'} !important;
+          stroke-opacity: ${isDark ? '0.35' : '1'} !important;
+          stroke-width: ${isDark ? '1.2px' : '1px'} !important;
           vector-effect: non-scaling-stroke;
           pointer-events: none;
           filter: none !important;
@@ -697,9 +713,9 @@ export function AssessmentTractMap({
         /* Active county dark navy border matching lines 204 & 805 */
         .assessment-tract-map-root .sel-outline {
           fill: none !important;
-          stroke: #102A4C !important;
-          stroke-width: 1.8px !important;
-          filter: none !important;
+          stroke: ${isDark ? 'var(--cyan)' : '#102A4C'} !important;
+          stroke-width: ${isDark ? '2px' : '1.8px'} !important;
+          filter: ${isDark ? 'drop-shadow(0 0 6px var(--cyan))' : 'none'} !important;
           vector-effect: non-scaling-stroke;
           pointer-events: none;
         }
@@ -719,8 +735,8 @@ export function AssessmentTractMap({
         }
 
         .assessment-tract-map-root .tract.cmp {
-          stroke: #F2B33D !important;
-          stroke-width: 2.2px !important;
+          stroke: ${isDark ? '#FFB648' : '#F2B33D'} !important;
+          stroke-width: 2px !important;
         }
       `}</style>
       <div
