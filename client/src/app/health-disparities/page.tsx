@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, useRef, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import gsap from 'gsap';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -845,6 +846,7 @@ function HealthDisparitiesContent() {
   const [tracts, setTracts] = useState<CensusTract[]>([]);
 
   // Add Finding Modal state matching prototype
+  const [mounted, setMounted] = useState(false);
   const [findingModalOpen, setFindingModalOpen] = useState(false);
   const [findingTract, setFindingTract] = useState<any>(null);
   const [findingNote, setFindingNote] = useState('');
@@ -852,6 +854,37 @@ function HealthDisparitiesContent() {
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string>('');
   const [submittingFinding, setSubmittingFinding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Sync finding modal open state to body blur & overflow
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const modalRoot = document.getElementById('modal-root');
+    if (findingModalOpen) {
+      document.body.classList.add('modal-open');
+      modalRoot?.classList.add('open');
+    } else {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+      modalRoot?.classList.remove('open');
+    };
+  }, [findingModalOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && findingModalOpen) {
+        setFindingModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [findingModalOpen]);
 
   // Overall page container ref for enter and countUp animations
   const pageRef = useRef<HTMLDivElement>(null);
@@ -1483,84 +1516,86 @@ function HealthDisparitiesContent() {
       </div>
 
       {/* Add Finding Modal matching prototype lines 1788-1795 */}
-      {findingModalOpen && findingTract && (
-        <div id="modal-root" className="open">
-          <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
-          <div className="modal" role="dialog" aria-modal="true" style={{ width: '560px', maxWidth: '90vw' }}>
-            <div className="modal-h">
-              <div>
-                <h2>Add finding to an assessment</h2>
-                <p>
-                  {findingTract.name}, {countyLabel(activeCounty)}. GEOID {findingTract._id || findingTract.id}
-                </p>
+      {mounted && findingModalOpen && findingTract && typeof document !== 'undefined' && document.getElementById('modal-root') &&
+        createPortal(
+          <>
+            <div className="modal-scrim" onClick={() => setFindingModalOpen(false)} />
+            <div className="modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+              <div className="modal-h">
+                <div>
+                  <h2>Add finding to an assessment</h2>
+                  <p>
+                    {findingTract.name}, {countyLabel(activeCounty)}. GEOID {findingTract._id || findingTract.id}
+                  </p>
+                </div>
+                <button className="icon-btn" data-close aria-label="Close" onClick={() => setFindingModalOpen(false)}>
+                  <Icon name="x" />
+                </button>
               </div>
-              <button className="icon-btn" data-close aria-label="Close" onClick={() => setFindingModalOpen(false)}>
-                <Icon name="x" />
-              </button>
-            </div>
 
-            <div className="grid g-12">
-              <div className="c-6 c-lg-6">
-                <div className="kv">
-                  <dt>Vulnerability</dt>
-                  <dd>
-                    {(findingTract.svi ?? 0).toFixed(2)} (
-                    {TIER_LABEL[clamp(Math.floor((findingTract.svi ?? 0) * 5), 0, 4)] || 'Moderate'})
-                  </dd>
-                  <dt>Poverty</dt>
-                  <dd>{getV(findingTract, 'poverty').toFixed(1)}%</dd>
-                  <dt>Uninsured</dt>
-                  <dd>{getV(findingTract, 'uninsured').toFixed(1)}%</dd>
-                  <dt>Diabetes</dt>
-                  <dd>{getV(findingTract, 'diabetes').toFixed(1)}%</dd>
-                  <dt>Access score</dt>
-                  <dd>{getV(findingTract, 'access').toFixed(0)}/100</dd>
+              <div className="grid g-12">
+                <div className="c-6 c-lg-6">
+                  <div className="kv">
+                    <dt>Vulnerability</dt>
+                    <dd>
+                      {(findingTract.svi ?? 0).toFixed(2)} (
+                      {TIER_LABEL[clamp(Math.floor((findingTract.svi ?? 0) * 5), 0, 4)] || 'Moderate'})
+                    </dd>
+                    <dt>Poverty</dt>
+                    <dd>{getV(findingTract, 'poverty').toFixed(1)}%</dd>
+                    <dt>Uninsured</dt>
+                    <dd>{getV(findingTract, 'uninsured').toFixed(1)}%</dd>
+                    <dt>Diabetes</dt>
+                    <dd>{getV(findingTract, 'diabetes').toFixed(1)}%</dd>
+                    <dt>Access score</dt>
+                    <dd>{getV(findingTract, 'access').toFixed(0)}/100</dd>
+                  </div>
+                </div>
+
+                <div className="c-6 c-lg-6 stack">
+                  <label className="field">
+                    Assessment
+                    <select
+                      className="input"
+                      id="fa-a"
+                      value={selectedAssessmentId}
+                      onChange={e => setSelectedAssessmentId(e.target.value)}
+                    >
+                      {assessmentsList
+                        .filter(a => a.status !== 'Completed')
+                        .map(a => (
+                          <option key={a._id} value={a._id}>
+                            {a.title} ({a.status})
+                          </option>
+                        ))}
+                      <option value="__new">Create a new draft assessment</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    Finding
+                    <textarea
+                      className="input"
+                      id="fa-n"
+                      rows={4}
+                      value={findingNote}
+                      onChange={e => setFindingNote(e.target.value)}
+                    />
+                  </label>
                 </div>
               </div>
 
-              <div className="c-6 c-lg-6 stack">
-                <label className="field">
-                  Assessment
-                  <select
-                    className="input"
-                    id="fa-a"
-                    value={selectedAssessmentId}
-                    onChange={e => setSelectedAssessmentId(e.target.value)}
-                  >
-                    {assessmentsList
-                      .filter(a => a.status !== 'Completed')
-                      .map(a => (
-                        <option key={a._id} value={a._id}>
-                          {a.title} ({a.status})
-                        </option>
-                      ))}
-                    <option value="__new">Create a new draft assessment</option>
-                  </select>
-                </label>
-
-                <label className="field">
-                  Finding
-                  <textarea
-                    className="input"
-                    id="fa-n"
-                    rows={4}
-                    value={findingNote}
-                    onChange={e => setFindingNote(e.target.value)}
-                  />
-                </label>
+              <div className="modal-f">
+                <span className="note">Values are synthetic demo data captured at the time of the finding.</span>
+                <button className="btn primary" id="fa-go" onClick={handleSubmitFinding} disabled={submittingFinding}>
+                  <Icon name="plus" />
+                  <span>{submittingFinding ? 'Saving...' : 'Add finding'}</span>
+                </button>
               </div>
             </div>
-
-            <div className="modal-f">
-              <span className="note">Values are synthetic demo data captured at the time of the finding.</span>
-              <button className="btn primary" id="fa-go" onClick={handleSubmitFinding} disabled={submittingFinding}>
-                <Icon name="plus" />
-                <span>{submittingFinding ? 'Saving...' : 'Add finding'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </>,
+          document.getElementById('modal-root')!
+        )}
     </div>
   );
 }
