@@ -232,7 +232,13 @@ function DataManagementContent() {
         if (data.qualityIndicators) setQualityIndicators(data.qualityIndicators);
         if (data.compositeScore != null) setCompositeScore(data.compositeScore);
         if (data.lastSync) setLastSyncTime(data.lastSync);
-        if (data.stateCoverage) setStateCoverage(data.stateCoverage);
+        if (data.stateCoverage) {
+          const vals = Object.values(data.stateCoverage) as number[];
+          const allSame = vals.length > 1 && vals.every(v => v === vals[0]);
+          if (!allSame) {
+            setStateCoverage(data.stateCoverage);
+          }
+        }
       }
     } catch (e) {
       console.error('[DataManagement] refreshStats error:', e);
