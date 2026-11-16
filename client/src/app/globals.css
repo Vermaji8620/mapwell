@@ -1110,11 +1110,11 @@ button.role:hover{background:var(--surface-2)}
 .lg-side .map-shell{background:transparent}
 #lg-map{position:absolute;inset:90px 40px 120px}
 #lg-map .map-svg{width:100%;height:100%;display:block;cursor:default}
-#lg-map .county{stroke:rgba(255,255,255,.45);stroke-width:.4;vector-effect:non-scaling-stroke;cursor:pointer;transition:stroke .2s}
-#lg-map .county:hover{stroke:#fff;stroke-width:1.6}
-#lg-map .county.sel{stroke:#102A4C;stroke-width:1.8}
+#lg-map .county{stroke:none !important;stroke-width:0 !important;vector-effect:non-scaling-stroke;cursor:pointer;transition:stroke .2s}
+#lg-map .county:hover{stroke:none !important;stroke-width:0 !important}
+#lg-map .county.sel{stroke:#102A4C !important;stroke-width:1.8px !important}
 #lg-map .sel-outline{fill:none;stroke:#102A4C;stroke-width:1.8;vector-effect:non-scaling-stroke;pointer-events:none}
-#lg-map .state-b{fill:none !important;stroke:#FFFFFF;stroke-width:1.1;vector-effect:non-scaling-stroke;pointer-events:none}
+#lg-map .state-b{display:none;fill:none !important;stroke:none !important;stroke-width:0;vector-effect:non-scaling-stroke;pointer-events:none}
 #lg-map .nation-b{fill:none !important;stroke:#9CC9EE;stroke-width:1.0;vector-effect:non-scaling-stroke;pointer-events:none}
 #lg-map .pulse-m{pointer-events:none;filter:drop-shadow(0 0 6px #00C2E8) drop-shadow(0 0 10px rgba(0,194,232,.6))}
 #lg-map .pulse-m .core{fill:var(--cyan);stroke:#fff;stroke-width:2;vector-effect:non-scaling-stroke}
@@ -1268,5 +1268,92 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Dark login card shown in the MapWell reference, isolated from the map panel. */
+#login .lg-card {
+  --surface: #2A3D51;
+  --surface-solid: #FFFFFF;
+  --surface-2: #344A60;
+  --line: rgba(224, 237, 248, .16);
+  --line-strong: rgba(150, 180, 205, .48);
+  --text: #F2F6FA;
+  --muted: #9AAABD;
+  --faint: #8195AA;
+  --cyan: #31D1E8;
+  --teal: #1ED6B0;
+  --violet: #9A85FF;
+  --rose: #FF718F;
+  --amber: #FFB648;
+  --green: #3BE38E;
+  --glow: rgba(49, 209, 232, .22);
+  --shadow: 0 22px 48px -28px rgba(12, 31, 50, .55);
+  background: var(--surface);
+  border-color: rgba(226, 239, 250, .12);
+  color: var(--text);
+}
+
+#login .lg-card .lg-in input {
+  color: #344054;
+  border-color: #D9E2EC;
+}
+
+#login .lg-card .lg-in input:focus {
+  border-color: var(--cyan);
+}
+
+#login .lg-card .lg-role {
+  color: #263D54;
+  border-color: #D2DDE8;
+  background: #FFFFFF;
+  transition: border-color .2s, background .2s, box-shadow .2s;
+}
+
+#login .lg-card .lg-role small {
+  color: #8294A8;
+}
+
+#login .lg-card .lg-role.on {
+  color: #203951;
+  background: #E8F4FF;
+  border-color: #31BFE0;
+  box-shadow: 0 0 0 3px rgba(49, 209, 232, .2);
+}
+
+#login .lg-card .lg-btn {
+  background: var(--cyan);
+  color: #FFFFFF;
+  box-shadow: 0 10px 24px -12px rgba(49, 209, 232, .68);
+  transition: background .2s, transform .15s, box-shadow .2s;
+}
+
+#login .lg-card .lg-btn:hover {
+  background: #22BED7;
+  box-shadow: 0 12px 28px -12px rgba(49, 209, 232, .76);
+}
+
+#login .lg-card .lg-sso {
+  color: #263D54;
+  border-color: #D9E2EC;
+  background: #FFFFFF;
+}
+
+#login .lg-card .lg-sso:hover {
+  border-color: #9CCFE3;
+  background: #F7FBFF;
+}
+
+#login .lg-card .lg-note {
+  color: #86601A;
+}
+
+#login .lg-float .legend .ramp {
+  height: 8px;
+  border-radius: 99px;
+}
+
+#login .lg-float .legend .ends {
+  font-family: var(--font-u);
+  font-size: 11px;
 }
 
