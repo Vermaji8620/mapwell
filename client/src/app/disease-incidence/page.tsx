@@ -1189,7 +1189,7 @@ function DiseaseIncidenceContent() {
             />
           </div>
           <div className="tbl-wrap" style={{ maxHeight: '380px', overflow: 'auto' }}>
-            <table className="tbl">
+            <table className="tbl" id="di-table">
               <thead>
                 <tr>
                   <th>County</th>

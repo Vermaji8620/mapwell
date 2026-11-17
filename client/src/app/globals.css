@@ -1357,3 +1357,123 @@ html, body {
   font-size: 11px;
 }
 
+/* Keep census tract table text readable when rows are hovered in dark mode. */
+:root[data-theme="dark"] #ct-tbl tbody tr:hover,
+:root[data-theme="dark"] #ct-detail .tbl tbody tr:hover {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #ct-cmp .tbl tbody tr:hover,
+:root[data-theme="dark"] #ct-cmp .insight {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #ct-cmp .insight p small {
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] #ct-tbl tbody tr.sel {
+  background: color-mix(in srgb, var(--cyan) 12%, transparent);
+}
+
+:root[data-theme="dark"] #ct-tbl tbody tr.sel:hover {
+  background: color-mix(in srgb, var(--cyan) 12%, transparent);
+}
+
+/* Keep Health disparities analytical insights readable in dark mode. */
+:root[data-theme="dark"] #hd-i .insight {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #hd-i .insight p small {
+  color: var(--muted);
+}
+
+/* Keep Social Determinants county rows readable in dark mode. */
+:root[data-theme="dark"] #sd-top tr:hover {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #sd-top tr.sel,
+:root[data-theme="dark"] #sd-top tr.sel:hover {
+  background: color-mix(in srgb, var(--cyan) 12%, transparent);
+}
+
+/* Contrast against the pale Disease Incidence headers and insight cards. */
+:root[data-theme="dark"] #di-table th,
+:root[data-theme="dark"] #di-ins .insight p {
+  color: #263D54;
+}
+
+:root[data-theme="dark"] #di-ins .insight p small {
+  color: #4E6580;
+}
+
+/* Keep assessment project cards readable on hover in dark mode. */
+:root[data-theme="dark"] #as-list .tool-tile:hover {
+  background: var(--surface-2);
+}
+
+/* Match assessment report previews to the active dark theme. */
+:root[data-theme="dark"] #as-ws .report-paper {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Keep hovered and selected Disease Incidence county rows readable. */
+:root[data-theme="dark"] #di-table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #di-table tbody tr.sel,
+:root[data-theme="dark"] #di-table tbody tr.sel:hover {
+  background: color-mix(in srgb, var(--cyan) 12%, transparent);
+}
+
+/* Keep saved reports and the full report preview readable in dark mode. */
+:root[data-theme="dark"] #rp-list .tool-tile:hover,
+:root[data-theme="dark"] #rp-doc .tbl tbody tr:hover {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #rp-doc {
+  background: var(--surface-solid);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] #rp-doc .tbl th {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] #rp-doc .note {
+  color: var(--muted);
+}
+
+/* Data Management surfaces and supporting text in dark mode. */
+:root[data-theme="dark"] #dm-src .tool-tile:hover,
+:root[data-theme="dark"] #dm-src .btn:hover,
+:root[data-theme="dark"] #dm-drop,
+:root[data-theme="dark"] #dm-sample:hover,
+:root[data-theme="dark"] #dm-hist tr:hover {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] #dm-drop,
+:root[data-theme="dark"] #dm-sample {
+  color: var(--text);
+}
+
+:root[data-theme="dark"] #dm-drop.over {
+  background: color-mix(in srgb, var(--cyan) 12%, var(--surface-solid));
+}
+
+:root[data-theme="dark"] #dm-src .tool-tile small,
+:root[data-theme="dark"] #dm-drop .note {
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] .tbl:has(#dm-hist) th {
+  background: var(--surface-solid);
+  color: var(--text);
+}
